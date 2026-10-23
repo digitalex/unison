@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Reply, X } from "lucide-react";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
+import Linkify from "./Linkify.jsx";
 
 // The workspace chat room. Threads are one level deep: replies are listed
 // under the message that started the thread.
@@ -100,7 +101,9 @@ function Message({ message, participants, me, onReply, children }) {
         <span className="time" title={created.toLocaleString()}>
           {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · #{message.id}
         </span>
-        <div className="text">{message.body}</div>
+        <div className="text">
+          <Linkify text={message.body} />
+        </div>
         {children}
       </div>
       <Button variant="ghost" className="msg-reply" title="Reply in thread" onClick={onReply}>
