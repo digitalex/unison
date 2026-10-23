@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Reply, X } from "lucide-react";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 
@@ -35,62 +36,76 @@ export default function Chat({ messages, participants, me, call, onError }) {
   };
 
   return (
-    <section className="section">
-      <h2>Chat</h2>
-      <div className="scroll-area">
-        {roots.length === 0 && <p>No messages yet. Say hello.</p>}
+    <aside className="chat" aria-label="Chat">
+      <h2 className="chat-head">Chat</h2>
+      <div className="chat-log">
+        {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
         {roots.map((m) => (
-          <div key={m.id}>
-            <Message message={m} participants={participants} me={me} onReply={setReplyTo} />
-            <div className="thread-replies">
-              {(replies.get(m.id) || []).map((r) => (
-                <Message key={r.id} message={r} participants={participants} me={me} onReply={() => setReplyTo(m)} />
-              ))}
-            </div>
-          </div>
+          <Message key={m.id} message={m} participants={participants} me={me} onReply={() => setReplyTo(m)}>
+            {replies.has(m.id) && (
+              <div className="thread">
+                {replies.get(m.id).map((r) => (
+                  <Message key={r.id} message={r} participants={participants} me={me} onReply={() => setReplyTo(m)} />
+                ))}
+              </div>
+            )}
+          </Message>
         ))}
         <div ref={bottom} />
       </div>
-      <form className="section" onSubmit={send}>
+      <form className="composer" onSubmit={send}>
         {replyTo && (
-          <p className="row">
-            Replying in thread #{replyTo.id}{" "}
-            <Button variant="ghost" onClick={() => setReplyTo(null)}>
-              cancel
+          <p className="replying">
+            Replying in thread #{replyTo.id}
+            <Button type="button" variant="ghost" iconOnly aria-label="Cancel reply" title="Cancel reply" onClick={() => setReplyTo(null)}>
+              <X aria-hidden="true" />
             </Button>
           </p>
         )}
         <Textarea
+          aria-label="Message"
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) send(e);
           }}
           rows={3}
-          placeholder="Message (Enter to send, Shift+Enter for a newline, @Name to mention)"
+          placeholder="Message the workspace…  @Name to mention"
         />
-        <div className="row">
+        <div className="composer-foot">
+          <span className="hint">Enter to send · Shift+Enter for a new line</span>
           <Button variant="primary" type="submit">
             Send
           </Button>
         </div>
       </form>
-    </section>
+    </aside>
   );
 }
 
-function Message({ message, participants, me, onReply }) {
+function Message({ message, participants, me, onReply, children }) {
   const author = participants.find((p) => p.id === message.author_id);
   const mentioned = me && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
+  const created = new Date(message.created_at);
+  const isReply = Boolean(message.parent_id);
   return (
-    <div className={mentioned ? "message message-mentioned" : "message"}>
-      <small>
-        #{message.id} {new Date(message.created_at).toLocaleTimeString()}
-      </small>{" "}
-      <b>{author ? `${author.emoji} ${author.name}` : `participant ${message.author_id}`}</b>:{" "}
-      <span className="message-body">{message.body}</span>{" "}
-      <Button variant="ghost" onClick={() => onReply(message)}>
-        reply
+    <div className={mentioned ? "msg mention" : "msg"}>
+      {!isReply && (
+        <span className="avatar" aria-hidden="true">
+          {author?.emoji}
+        </span>
+      )}
+      <div>
+        <span className="who">{author ? (isReply ? `${author.emoji} ${author.name}` : author.name) : `participant ${message.author_id}`}</span>
+        <span className="time" title={created.toLocaleString()}>
+          {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · #{message.id}
+        </span>
+        <div className="text">{message.body}</div>
+        {children}
+      </div>
+      <Button variant="ghost" className="msg-reply" title="Reply in thread" onClick={onReply}>
+        <Reply aria-hidden="true" />
+        Reply
       </Button>
     </div>
   );

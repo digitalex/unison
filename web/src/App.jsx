@@ -4,6 +4,7 @@ import Workspace from "./Workspace.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
+import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
 // Two pages: "/" lists and creates workspaces; "/w/:id" is a workspace.
 export default function App() {
@@ -47,16 +48,23 @@ function Home({ navigate }) {
 
   return (
     <main className="page">
-      <h1>Unison</h1>
+      <header className="page-head">
+        <span className="ws-mark" aria-hidden="true">
+          U
+        </span>
+        <h1>Unison</h1>
+        <span className="spacer" />
+        <ThemeSwitch />
+      </header>
       {error && <p role="alert">Error: {error}</p>}
-      <section className="section">
-        <h2>Workspaces</h2>
+      <section className="card">
+        <h2 className="card-head">Workspaces</h2>
         {workspaces === null ? (
-          <p>Loading…</p>
+          <p className="card-body muted">Loading…</p>
         ) : workspaces.length === 0 ? (
-          <p>No workspaces yet.</p>
+          <p className="card-body muted">No workspaces yet.</p>
         ) : (
-          <ul className="list">
+          <ul className="ws-list">
             {workspaces.map((ws) => (
               <li key={ws.id}>
                 <a
@@ -74,9 +82,9 @@ function Home({ navigate }) {
           </ul>
         )}
       </section>
-      <section className="section">
-        <h2>Create a workspace</h2>
-        <form className="form" onSubmit={create}>
+      <section className="card">
+        <h2 className="card-head">Create a workspace</h2>
+        <form className="form card-body" onSubmit={create}>
           <Field label="Name">
             <Input required {...field("name")} placeholder="Unison" />
           </Field>
@@ -86,7 +94,7 @@ function Home({ navigate }) {
           <Field label="Isocan canvas URL">
             <Input {...field("canvas_url")} placeholder="https://isocan.io/p/…" />
           </Field>
-          <div className="row">
+          <div className="actions-row">
             <Button variant="primary" type="submit">
               Create
             </Button>
