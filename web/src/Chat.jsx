@@ -36,7 +36,7 @@ export default function Chat({ messages, participants, me, call, onError }) {
   };
 
   return (
-    <aside className="chat" aria-label="Chat">
+    <aside className="chat panel" aria-label="Chat">
       <h2 className="chat-head">Chat</h2>
       <div className="chat-log">
         {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}

@@ -83,7 +83,7 @@ export default function Workspace({ id, navigate }) {
         navigate={navigate}
       />
       <div className={joined ? "app-body" : "app-body app-body-single"}>
-        <main className="app-main">
+        <main className={joined ? "app-main panel" : "app-main"}>
           {error && (
             <p role="alert" className="error-bar">
               Error: {error}{" "}
