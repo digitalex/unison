@@ -35,6 +35,12 @@ endpoints for deferred surfaces (Devbox, document library, custom views,
 metrics, auth). Build a surface when its backlog item is picked up. UI styling
 is intentionally absent until the design is done on the isocan canvas.
 
+## UI work
+
+For UI work, follow [GUI.md](GUI.md) (the "Unison" Graphical theme, with
+references in `gui/`) and use the `graphical-ui`, `graphical-convert`, or
+`graphical-audit` skill in `.agents/skills/` as appropriate.
+
 ## Workflow
 
 * Branch (or `git worktree`) per task; one PR per backlog item.

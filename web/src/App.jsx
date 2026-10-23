@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
 import { api } from "./api.js";
 import Workspace from "./Workspace.jsx";
+import Button from "./ui/Button.jsx";
+import Field from "./ui/Field.jsx";
+import { Input } from "./ui/Input.jsx";
 
 // Two pages: "/" lists and creates workspaces; "/w/:id" is a workspace.
 export default function App() {
@@ -43,53 +46,53 @@ function Home({ navigate }) {
   });
 
   return (
-    <main>
+    <main className="page">
       <h1>Unison</h1>
       {error && <p role="alert">Error: {error}</p>}
-      <h2>Workspaces</h2>
-      {workspaces === null ? (
-        <p>Loading…</p>
-      ) : workspaces.length === 0 ? (
-        <p>No workspaces yet.</p>
-      ) : (
-        <ul>
-          {workspaces.map((ws) => (
-            <li key={ws.id}>
-              <a
-                href={`/w/${ws.id}`}
-                onClick={(e) => {
-                  e.preventDefault();
-                  navigate(`/w/${ws.id}`);
-                }}
-              >
-                {ws.name}
-              </a>{" "}
-              {ws.repo_url && <small>({ws.repo_url})</small>}
-            </li>
-          ))}
-        </ul>
-      )}
-      <h2>Create a workspace</h2>
-      <form onSubmit={create}>
-        <p>
-          <label>
-            Name <input required {...field("name")} placeholder="Unison" />
-          </label>
-        </p>
-        <p>
-          <label>
-            Repository URL{" "}
-            <input {...field("repo_url")} placeholder="https://github.com/digitalex/unison" size={45} />
-          </label>
-        </p>
-        <p>
-          <label>
-            Isocan canvas URL{" "}
-            <input {...field("canvas_url")} placeholder="https://isocan.io/p/…" size={45} />
-          </label>
-        </p>
-        <button type="submit">Create</button>
-      </form>
+      <section className="section">
+        <h2>Workspaces</h2>
+        {workspaces === null ? (
+          <p>Loading…</p>
+        ) : workspaces.length === 0 ? (
+          <p>No workspaces yet.</p>
+        ) : (
+          <ul className="list">
+            {workspaces.map((ws) => (
+              <li key={ws.id}>
+                <a
+                  href={`/w/${ws.id}`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate(`/w/${ws.id}`);
+                  }}
+                >
+                  {ws.name}
+                </a>{" "}
+                {ws.repo_url && <small>({ws.repo_url})</small>}
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+      <section className="section">
+        <h2>Create a workspace</h2>
+        <form className="form" onSubmit={create}>
+          <Field label="Name">
+            <Input required {...field("name")} placeholder="Unison" />
+          </Field>
+          <Field label="Repository URL">
+            <Input {...field("repo_url")} placeholder="https://github.com/digitalex/unison" />
+          </Field>
+          <Field label="Isocan canvas URL">
+            <Input {...field("canvas_url")} placeholder="https://isocan.io/p/…" />
+          </Field>
+          <div className="row">
+            <Button variant="primary" type="submit">
+              Create
+            </Button>
+          </div>
+        </form>
+      </section>
       <p>
         <small>
           Agents: read <a href="/agent.md">/agent.md</a>.
