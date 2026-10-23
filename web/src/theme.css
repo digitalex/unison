@@ -117,11 +117,12 @@
 
   --radius-zero: 0px;
   --radius-xs: 4px;
-  --radius-s: 6px;
+  --radius-s: 8px;
   --radius-m: 12px;
   --radius-l: 24px;
   --radius-xl: 36px;
   --radius-full: 9999px;
+  --radius-panel: 14px;
 
   --border-none: 0px;
   --border-s: 1px;
@@ -231,6 +232,16 @@
   --presence-active: #22a06b;
   --presence-away: var(--status-open);
 
+  /* Floating panels (design/floating.css): panels rest on a soft base. */
+  --base: light-dark(#f0f0f0, #0b0b0b);
+  --panel: light-dark(#ffffff, #191919);
+  --panel-head: light-dark(#fafafa, #202020);
+  --panel-edge: light-dark(#0000000f, #ffffff14);
+  --panel-shadow: 0 1px 2px light-dark(#0000000d, #00000080), 0 4px 12px light-dark(#0000000f, #00000066),
+    0 12px 32px light-dark(#00000008, #0000004d);
+  --control-shadow: 0 1px 2px light-dark(#00000014, #00000066);
+  --accent-glow: 0 1px 2px #0000001f, 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
+
   /* Earlier Unison aliases, now resolved through the semantic roles. */
   --border-default-color: var(--border);
   --border-shadow-none: 0 0 0 0 transparent;
@@ -263,7 +274,7 @@ body {
 }
 
 body {
-  background: var(--canvas);
+  background: var(--base);
   color: var(--text);
   font-family: var(--font-ui);
   font-weight: var(--weight-ui-regular);
@@ -338,9 +349,9 @@ svg.lucide {
   padding: 0 var(--space-s);
   border: 0;
   border-radius: var(--radius-s);
-  background: var(--canvas);
+  background: var(--panel);
   color: var(--text);
-  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
   font: inherit;
   font-weight: var(--weight-ui-medium);
   white-space: nowrap;
@@ -357,7 +368,7 @@ svg.lucide {
 .button-primary {
   background: var(--accent);
   color: var(--accent-text);
-  box-shadow: none;
+  box-shadow: var(--accent-glow);
 }
 
 .button-primary:hover:not(:disabled) {
@@ -450,6 +461,8 @@ textarea.control {
   width: auto;
   height: 28px;
   padding: 0 calc(var(--space-xs) + 16px) 0 var(--space-xs);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
   cursor: pointer;
 }
 
@@ -509,9 +522,9 @@ textarea.control {
   width: 360px;
   max-width: calc(100vw - 2 * var(--space-m));
   padding: var(--space-m);
-  border-radius: var(--radius-s);
-  background: var(--canvas);
-  box-shadow: inset 0 0 0 var(--border-s) var(--border), 0 8px 24px #0000001f;
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
   display: flex;
   flex-direction: column;
   gap: var(--space-s);
@@ -526,7 +539,7 @@ textarea.control {
   display: inline-flex;
   padding: 2px;
   border-radius: var(--radius-s);
-  background: var(--surface-muted);
+  background: var(--panel-edge);
 }
 
 .seg button {
@@ -542,9 +555,9 @@ textarea.control {
 }
 
 .seg button[aria-pressed="true"] {
-  background: var(--canvas);
+  background: var(--panel);
   color: var(--text);
-  box-shadow: 0 0 0 var(--border-s) var(--border);
+  box-shadow: var(--control-shadow);
 }
 
 /* ---- Simple pages: home, loading ---- */
@@ -566,9 +579,9 @@ textarea.control {
 }
 
 .card {
-  border-radius: var(--radius-s);
-  background: var(--surface);
-  box-shadow: inset 0 0 0 var(--border-s) var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
   overflow: hidden;
 }
 
@@ -577,8 +590,8 @@ textarea.control {
   align-items: center;
   height: 32px;
   padding: 0 var(--space-m);
-  background: var(--surface-muted);
-  border-bottom: var(--border-s) solid var(--border);
+  background: var(--panel-head);
+  border-bottom: var(--border-s) solid var(--panel-edge);
   font-size: var(--size-xs);
   font-weight: var(--weight-ui-semibold);
 }
@@ -598,7 +611,7 @@ textarea.control {
   gap: var(--space-s);
   height: 38px;
   padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--border);
+  border-bottom: var(--border-s) solid var(--panel-edge);
 }
 
 .ws-list > li:last-child {
@@ -619,7 +632,7 @@ textarea.control {
 /* ---- Workspace shell ---- */
 .app {
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: 52px minmax(0, 1fr);
   height: 100vh;
   overflow: hidden;
 }
@@ -627,7 +640,17 @@ textarea.control {
 .app-body {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 360px;
+  gap: var(--space-s);
   min-height: 0;
+  padding: 0 var(--space-s) var(--space-s);
+}
+
+/* Backlog and chat float above the base. */
+.panel {
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
+  overflow: hidden;
 }
 
 .app-body-single {
@@ -645,8 +668,8 @@ textarea.control {
   gap: var(--space-xs);
   min-height: 40px;
   padding: 0 var(--space-m);
-  background: var(--surface-muted);
-  border-bottom: var(--border-s) solid var(--border);
+  background: var(--panel-head);
+  border-bottom: var(--border-s) solid var(--panel-edge);
 }
 
 .join-card {
@@ -661,9 +684,11 @@ textarea.control {
   align-items: center;
   gap: var(--space-s);
   min-width: 0;
-  padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--border);
-  background: var(--surface);
+  padding: 0 20px;
+}
+
+.topbar .button-ghost:hover:not(:disabled) {
+  background: var(--panel-edge);
 }
 
 .ws {
@@ -778,8 +803,8 @@ a.ws-mark:hover {
   padding: 0;
   border: 0;
   border-radius: var(--radius-full);
-  background: var(--surface-muted);
-  box-shadow: 0 0 0 var(--border-l) var(--surface);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-l) var(--base);
   font-size: var(--size-s);
   line-height: 1;
 }
@@ -800,7 +825,7 @@ button.avatar {
   height: 8px;
   border-radius: var(--radius-full);
   background: var(--presence-away);
-  box-shadow: 0 0 0 var(--border-l) var(--surface);
+  box-shadow: 0 0 0 var(--border-l) var(--base);
 }
 
 .avatar.active .dot {
@@ -848,7 +873,8 @@ button.avatar {
 .chip {
   padding: 0 6px;
   border-radius: var(--radius-full);
-  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong);
+  background: var(--panel-head);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
   color: var(--text-secondary);
   font-size: var(--size-xxs);
   line-height: 18px;
@@ -862,7 +888,7 @@ button.avatar {
   gap: var(--space-xs);
   height: 40px;
   padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--border);
+  border-bottom: var(--border-s) solid var(--panel-edge);
 }
 
 .group-head {
@@ -873,13 +899,18 @@ button.avatar {
   height: 32px;
   padding: 0 var(--space-m);
   border: 0;
-  border-bottom: var(--border-s) solid var(--border);
-  background: var(--surface-muted);
+  border-top: var(--border-s) solid var(--panel-edge);
+  border-bottom: var(--border-s) solid var(--panel-edge);
+  background: var(--panel-head);
   color: var(--text);
   font: inherit;
   font-size: var(--size-xs);
   font-weight: var(--weight-ui-semibold);
   text-align: left;
+}
+
+.toolbar + .group-head {
+  border-top: 0;
 }
 
 button.group-head {
@@ -891,16 +922,14 @@ button.group-head {
   font-weight: var(--weight-ui-regular);
 }
 
-.item {
-  border-bottom: var(--border-s) solid var(--border);
-}
-
 .row {
   display: flex;
   align-items: center;
   gap: var(--space-s);
-  height: 38px;
-  padding: 0 var(--space-m);
+  height: 34px;
+  margin: 2px 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-s);
   cursor: pointer;
 }
 
@@ -973,9 +1002,10 @@ button.group-head {
   display: flex;
   align-items: center;
   gap: var(--space-s);
-  height: 38px;
-  padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--border);
+  height: 34px;
+  margin: 2px 6px;
+  padding: 0 10px;
+  border-radius: var(--radius-s);
 }
 
 .add-row input {
@@ -1003,9 +1033,9 @@ button.group-head {
 .empty-row {
   display: flex;
   align-items: center;
-  height: 38px;
-  padding: 0 var(--space-m) 0 calc(var(--space-m) + 18px + var(--space-s));
-  border-bottom: var(--border-s) solid var(--border);
+  height: 34px;
+  margin: 2px 6px;
+  padding: 0 10px 0 calc(10px + 18px + var(--space-s));
   color: var(--text-muted);
 }
 
@@ -1014,15 +1044,13 @@ button.group-head {
   display: grid;
   grid-template-rows: 40px minmax(0, 1fr) auto;
   min-height: 0;
-  border-left: var(--border-s) solid var(--border);
-  background: var(--surface);
 }
 
 .chat-head {
   display: flex;
   align-items: center;
   padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--border);
+  border-bottom: var(--border-s) solid var(--panel-edge);
   font-weight: var(--weight-ui-semibold);
 }
 
@@ -1042,7 +1070,9 @@ button.group-head {
   display: grid;
   grid-template-columns: 24px minmax(0, 1fr);
   gap: var(--space-xs);
-  padding: 6px var(--space-m);
+  margin: 0 6px;
+  padding: 6px 10px;
+  border-radius: var(--radius-s);
 }
 
 .msg:hover {
@@ -1051,7 +1081,7 @@ button.group-head {
 
 .msg.mention {
   background: var(--mention);
-  box-shadow: inset 2px 0 0 var(--mention-edge);
+  box-shadow: inset 3px 0 0 var(--mention-edge);
 }
 
 .msg .who {
@@ -1091,7 +1121,9 @@ button.group-head {
 
 .thread .msg {
   grid-template-columns: minmax(0, 1fr);
+  margin: 0;
   padding: 2px 0;
+  border-radius: 0;
 }
 
 .thread .msg:hover {
@@ -1103,12 +1135,19 @@ button.group-head {
   flex-direction: column;
   gap: var(--space-xxs);
   padding: var(--space-s) var(--space-m);
-  border-top: var(--border-s) solid var(--border);
+  border-top: var(--border-s) solid var(--panel-edge);
 }
 
 .composer textarea.control {
   min-height: 60px;
+  border-radius: 10px;
+  background: var(--panel-head);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
   resize: none;
+}
+
+.composer textarea.control:focus-visible {
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus), 0 0 0 3px var(--focus-ring);
 }
 
 .composer-foot {
@@ -1145,8 +1184,6 @@ button.group-head {
 
   .chat {
     height: 70vh;
-    border-left: 0;
-    border-top: var(--border-s) solid var(--border);
   }
 
   .crumb,
