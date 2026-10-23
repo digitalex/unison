@@ -2,6 +2,9 @@ import { useEffect, useMemo, useState } from "react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
+import Button from "./ui/Button.jsx";
+import Field from "./ui/Field.jsx";
+import { Input, Textarea } from "./ui/Input.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -62,11 +65,11 @@ export default function Workspace({ id, navigate }) {
     };
   }, [id, joined]);
 
-  if (!workspace) return <main>{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
+  if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
   return (
-    <main>
-      <p>
+    <main className="page">
+      <p className="meta">
         <a
           href="/"
           onClick={(e) => {
@@ -79,12 +82,15 @@ export default function Workspace({ id, navigate }) {
       </p>
       <h1>{workspace.name}</h1>
       {error && (
-        <p role="alert">
-          Error: {error} <button onClick={() => setError("")}>dismiss</button>
+        <p role="alert" className="row">
+          Error: {error}{" "}
+          <Button variant="ghost" onClick={() => setError("")}>
+            dismiss
+          </Button>
         </p>
       )}
       <WorkspaceLinks workspace={workspace} call={call} canEdit={Boolean(me)} onError={setError} />
-      <p>
+      <p className="meta">
         <small>{live ? "🟢 live" : "🔴 reconnecting…"}</small>
         {me && (
           <small>
@@ -122,19 +128,25 @@ function JoinForm({ id, call, onJoined }) {
     }
   };
   return (
-    <form onSubmit={join}>
+    <form className="form" onSubmit={join}>
       <h2>Join this workspace</h2>
-      {error && <p role="alert">{error}</p>}
-      <label>
-        Name <input value={name} onChange={(e) => setName(e.target.value)} placeholder="one word" />
-      </label>{" "}
-      <label>
-        Emoji <input value={emoji} onChange={(e) => setEmoji(e.target.value)} size={4} placeholder="🦊" />
-      </label>{" "}
-      <button type="submit">Join</button>
-      <p>
-        <small>Leave either blank to be assigned one.</small>
-      </p>
+      {error && (
+        <p role="alert" className="field-error">
+          {error}
+        </p>
+      )}
+      <Field label="Name">
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="one word" />
+      </Field>
+      <Field label="Emoji">
+        <Input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="🦊" />
+      </Field>
+      <p className="field-description">Leave either blank to be assigned one.</p>
+      <div className="row">
+        <Button variant="primary" type="submit">
+          Join
+        </Button>
+      </div>
     </form>
   );
 }
@@ -154,35 +166,40 @@ function WorkspaceLinks({ workspace, call, canEdit, onError }) {
   if (editing) {
     const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
     return (
-      <form onSubmit={save}>
-        <label>
-          Name <input {...field("name")} />
-        </label>{" "}
-        <label>
-          Repository <input {...field("repo_url")} size={40} />
-        </label>{" "}
-        <label>
-          Canvas <input {...field("canvas_url")} size={40} />
-        </label>{" "}
-        <button type="submit">Save</button> <button onClick={() => setEditing(false)}>Cancel</button>
+      <form className="form" onSubmit={save}>
+        <Field label="Name">
+          <Input {...field("name")} />
+        </Field>
+        <Field label="Repository">
+          <Input {...field("repo_url")} />
+        </Field>
+        <Field label="Canvas">
+          <Input {...field("canvas_url")} />
+        </Field>
+        <div className="row">
+          <Button variant="primary" type="submit">
+            Save
+          </Button>
+          <Button onClick={() => setEditing(false)}>Cancel</Button>
+        </div>
       </form>
     );
   }
-  const link = (url) => (url ? <a href={url} target="_blank" rel="noreferrer">{url}</a> : <i>not set</i>);
+  const link = (url) => (url ? <a href={url} target="_blank" rel="noreferrer">{url}</a> : <span className="meta">not set</span>);
   return (
-    <ul>
+    <ul className="list">
       <li>Repository: {link(workspace.repo_url)}</li>
       <li>Isocan canvas: {link(workspace.canvas_url)}</li>
       {canEdit && (
         <li>
-          <button
+          <Button
             onClick={() => {
               setForm(workspace);
               setEditing(true);
             }}
           >
             Edit workspace
-          </button>
+          </Button>
         </li>
       )}
     </ul>
@@ -198,14 +215,17 @@ function Invite({ workspace }) {
     `join with a name and emoji of your own, say hello in chat, pick up work from the backlog, ` +
     `and park on \`unison wait\` between laps.`;
   return (
-    <section>
-      <button onClick={() => setOpen(!open)}>{open ? "Hide invite" : "Invite an agent"}</button>
+    <section className="section">
+      <div className="row">
+        <Button onClick={() => setOpen(!open)}>{open ? "Hide invite" : "Invite an agent"}</Button>
+      </div>
       {open && (
-        <div>
+        <div className="section">
           <p>Paste this into any coding agent:</p>
-          <textarea readOnly value={prompt} rows={4} cols={90} onFocus={(e) => e.target.select()} />
-          <br />
-          <button onClick={() => navigator.clipboard.writeText(prompt)}>Copy</button>
+          <Textarea readOnly value={prompt} rows={4} onFocus={(e) => e.target.select()} />
+          <div className="row">
+            <Button onClick={() => navigator.clipboard.writeText(prompt)}>Copy</Button>
+          </div>
         </div>
       )}
     </section>
@@ -224,9 +244,9 @@ function Roster({ participants, me, call, onError }) {
   };
   const now = Date.now();
   return (
-    <section>
+    <section className="section">
       <h2>Who's here</h2>
-      <ul>
+      <ul className="list">
         {participants.map((p) => (
           <li key={p.id}>
             {now - p.last_seen_at < ACTIVE_WINDOW_MS ? "🟢" : "⚪"} {p.emoji} <b>{p.name}</b>
@@ -234,7 +254,9 @@ function Roster({ participants, me, call, onError }) {
             {me && p.id === me.id && (
               <>
                 {" "}
-                <button onClick={setStatus}>set status</button>
+                <Button variant="ghost" onClick={setStatus}>
+                  set status
+                </Button>
               </>
             )}
           </li>

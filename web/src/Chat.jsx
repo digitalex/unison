@@ -1,4 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import Button from "./ui/Button.jsx";
+import { Textarea } from "./ui/Input.jsx";
 
 // The workspace chat room. Threads are one level deep: replies are listed
 // under the message that started the thread.
@@ -33,14 +35,14 @@ export default function Chat({ messages, participants, me, call, onError }) {
   };
 
   return (
-    <section>
+    <section className="section">
       <h2>Chat</h2>
-      <div style={{ maxHeight: "50vh", overflowY: "auto", border: "1px solid #ccc", padding: 4 }}>
+      <div className="scroll-area">
         {roots.length === 0 && <p>No messages yet. Say hello.</p>}
         {roots.map((m) => (
           <div key={m.id}>
             <Message message={m} participants={participants} me={me} onReply={setReplyTo} />
-            <div style={{ marginLeft: "2em" }}>
+            <div className="thread-replies">
               {(replies.get(m.id) || []).map((r) => (
                 <Message key={r.id} message={r} participants={participants} me={me} onReply={() => setReplyTo(m)} />
               ))}
@@ -49,24 +51,29 @@ export default function Chat({ messages, participants, me, call, onError }) {
         ))}
         <div ref={bottom} />
       </div>
-      <form onSubmit={send}>
+      <form className="section" onSubmit={send}>
         {replyTo && (
-          <p>
-            Replying in thread #{replyTo.id} <button onClick={() => setReplyTo(null)}>cancel</button>
+          <p className="row">
+            Replying in thread #{replyTo.id}{" "}
+            <Button variant="ghost" onClick={() => setReplyTo(null)}>
+              cancel
+            </Button>
           </p>
         )}
-        <textarea
+        <Textarea
           value={text}
           onChange={(e) => setText(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey) send(e);
           }}
           rows={3}
-          cols={90}
           placeholder="Message (Enter to send, Shift+Enter for a newline, @Name to mention)"
         />
-        <br />
-        <button type="submit">Send</button>
+        <div className="row">
+          <Button variant="primary" type="submit">
+            Send
+          </Button>
+        </div>
       </form>
     </section>
   );
@@ -76,13 +83,15 @@ function Message({ message, participants, me, onReply }) {
   const author = participants.find((p) => p.id === message.author_id);
   const mentioned = me && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
   return (
-    <div style={mentioned ? { background: "#fff3c4" } : undefined}>
+    <div className={mentioned ? "message message-mentioned" : "message"}>
       <small>
         #{message.id} {new Date(message.created_at).toLocaleTimeString()}
       </small>{" "}
       <b>{author ? `${author.emoji} ${author.name}` : `participant ${message.author_id}`}</b>:{" "}
-      <span style={{ whiteSpace: "pre-wrap" }}>{message.body}</span>{" "}
-      <button onClick={() => onReply(message)}>reply</button>
+      <span className="message-body">{message.body}</span>{" "}
+      <Button variant="ghost" onClick={() => onReply(message)}>
+        reply
+      </Button>
     </div>
   );
 }
