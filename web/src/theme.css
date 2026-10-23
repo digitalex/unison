@@ -1183,6 +1183,132 @@ button.group-head {
   font-size: var(--size-xs);
 }
 
+/* ---- Metrics (above the backlog, same panel) ---- */
+.metrics {
+  border-bottom: var(--border-s) solid var(--panel-edge);
+  padding-bottom: var(--space-xxs);
+}
+
+.section-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  margin-left: calc(-1 * var(--space-xxs));
+  padding: var(--space-xxs);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.section-toggle:hover {
+  background: var(--surface-hover);
+}
+
+.metric-row {
+  cursor: default;
+}
+
+.metric-arrow {
+  color: var(--accent);
+}
+
+.metric-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: var(--weight-ui-medium);
+}
+
+.metric-description {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+}
+
+.metric-row:hover .meta,
+.metric-row:focus-within .meta {
+  display: inline;
+}
+
+.item-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.item-link:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.item-link .status {
+  width: 10px;
+  height: 10px;
+}
+
+.item-link .status.done::after {
+  display: none;
+}
+
+.item {
+  scroll-margin: var(--space-xl);
+}
+
+.metric-form {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 34px;
+  margin: 2px 6px;
+  padding: 3px 10px;
+  border-radius: var(--radius-s);
+}
+
+.metric-form:focus-within {
+  box-shadow: inset 2px 0 0 var(--focus);
+}
+
+.metric-form.editing {
+  background: var(--surface-hover);
+}
+
+.metric-form .bare {
+  flex: 1 1 160px;
+  min-width: 0;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  outline: none;
+}
+
+.metric-form .bare::placeholder {
+  color: var(--text-muted);
+}
+
+.metric-form .control.compact {
+  width: 76px;
+  height: 28px;
+  padding: 0 var(--space-xs);
+}
+
+.metric-form .control.compact[type="number"] {
+  width: 88px;
+}
+
 /* Narrow screens: chat stacks below the backlog instead of disappearing. */
 @media (max-width: 860px) {
   .app {
@@ -1264,6 +1390,38 @@ button.group-head {
   .add-row input + input {
     flex: 1 1 100%;
     order: 3;
+  }
+
+  .metric-row .meta {
+    display: inline;
+  }
+
+  .metric-description {
+    display: none;
+  }
+
+  .metric-name {
+    flex: 1;
+  }
+
+  .metric-form {
+    row-gap: 4px;
+  }
+
+  .metric-form > .lucide {
+    display: none;
+  }
+
+  .metric-form .bare {
+    flex-basis: 100%;
+  }
+
+  .metric-form .control.compact {
+    width: 64px;
+  }
+
+  .metric-form .control.compact[type="number"] {
+    width: 72px;
   }
 }
 

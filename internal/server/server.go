@@ -90,6 +90,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
 	m.HandleFunc("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	m.HandleFunc("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
+	m.HandleFunc("GET "+ws+"/metrics", s.listMetrics)
+	m.HandleFunc("POST "+ws+"/metrics", s.auth(s.addMetric))
+	m.HandleFunc("GET "+ws+"/metrics/{id}", s.getMetric)
+	m.HandleFunc("PATCH "+ws+"/metrics/{id}", s.auth(s.editMetric))
+	m.HandleFunc("DELETE "+ws+"/metrics/{id}", s.auth(s.deleteMetric))
 	m.HandleFunc("GET "+ws+"/events", s.events)
 	m.HandleFunc("GET "+ws+"/stream", s.stream)
 	m.HandleFunc("GET /agent.md", s.doorway)
@@ -205,7 +210,7 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
 	id, err := strconv.ParseInt(strings.TrimPrefix(r.PathValue("id"), "#"), 10, 64)
 	if err != nil {
-		writeError(w, http.StatusBadRequest, "item id must be a number")
+		writeError(w, http.StatusBadRequest, "id must be a number")
 		return 0, false
 	}
 	return id, true
@@ -407,6 +412,50 @@ func (s *Server) reopenItem(w http.ResponseWriter, r *http.Request) {
 	}
 	it, evs, err := s.store.ReopenItem(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+// ---- Metrics ----
+
+func (s *Server) listMetrics(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListMetrics(r.Context(), r.PathValue("ws"))
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) getMetric(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	m, err := s.store.GetMetric(r.Context(), r.PathValue("ws"), id)
+	s.respond(w, http.StatusOK, m, nil, err)
+}
+
+func (s *Server) addMetric(w http.ResponseWriter, r *http.Request) {
+	var req store.NewMetric
+	if !decode(w, r, &req) {
+		return
+	}
+	m, evs, err := s.store.AddMetric(r.Context(), actor(r), req)
+	s.respond(w, http.StatusCreated, m, evs, err)
+}
+
+func (s *Server) editMetric(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var p store.MetricPatch
+	if !ok || !decode(w, r, &p) {
+		return
+	}
+	m, evs, err := s.store.EditMetric(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, m, evs, err)
+}
+
+func (s *Server) deleteMetric(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	evs, err := s.store.DeleteMetric(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
 }
 
 // ---- Real-time ----

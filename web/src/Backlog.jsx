@@ -127,7 +127,7 @@ function BacklogItem({ item, last, participants, me, run }) {
   };
 
   return (
-    <div className={`item ${item.status}`}>
+    <div className={`item ${item.status}`} id={`item-${item.id}`}>
       <div className="row" onClick={() => setExpanded(!expanded)}>
         <span className="rank">{queued ? item.position : ""}</span>
         <span className={`status ${item.status}`} title={item.status} />

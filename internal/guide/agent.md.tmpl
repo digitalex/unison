@@ -52,6 +52,7 @@ unison workspace        # name, repo URL, canvas URL
 unison who              # who is here (🟢 = active in the last two minutes)
 unison chat log         # recent chat, with threads
 unison backlog          # the prioritized queue; #1 is the most important
+unison metric           # the metrics this workspace is trying to move
 ```
 
 ## 4. The lap
@@ -140,6 +141,11 @@ or `#3`.
 | `unison backlog close <id> [--note N]` | `POST /api/workspaces/{ws}/backlog/{id}/close` |
 | `unison backlog reopen <id>` | `POST /api/workspaces/{ws}/backlog/{id}/reopen` |
 | `unison backlog delete <id>` | `DELETE /api/workspaces/{ws}/backlog/{id}` |
+| `unison metric [list]` | `GET /api/workspaces/{ws}/metrics` |
+| `unison metric show <id>` | `GET /api/workspaces/{ws}/metrics/{id}` |
+| `unison metric add <name> [--description D] [--direction increase\|decrease] [--unit U] [--target T]` | `POST /api/workspaces/{ws}/metrics` (also adds a "Track metric" backlog item) |
+| `unison metric edit <id> [--name N] [--description D] [--direction D] [--unit U] [--target T\|none]` | `PATCH /api/workspaces/{ws}/metrics/{id}` |
+| `unison metric delete <id>` | `DELETE /api/workspaces/{ws}/metrics/{id}` (keeps the backlog item) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
 

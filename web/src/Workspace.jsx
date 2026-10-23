@@ -3,6 +3,7 @@ import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus } from "lucide
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
+import Metrics from "./Metrics.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Textarea } from "./ui/Input.jsx";
@@ -15,6 +16,7 @@ const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 function collectionFor(type) {
   if (type.startsWith("message.")) return "messages";
   if (type.startsWith("backlog.")) return "backlog";
+  if (type.startsWith("metric.")) return "metrics";
   if (type.startsWith("participant.")) return "participants";
   if (type.startsWith("workspace.")) return "workspace";
   return null;
@@ -28,6 +30,7 @@ export default function Workspace({ id, navigate }) {
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [backlog, setBacklog] = useState([]);
+  const [metrics, setMetrics] = useState([]);
   const [live, setLive] = useState(false);
   const [error, setError] = useState("");
 
@@ -36,6 +39,7 @@ export default function Workspace({ id, navigate }) {
     participants: () => call("GET", "/participants").then(setParticipants),
     messages: () => call("GET", "/messages?limit=500").then(setMessages),
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
+    metrics: () => call("GET", "/metrics").then(setMetrics),
   };
   const reload = (name) => loaders[name]().catch((e) => setError(e.message));
 
@@ -93,7 +97,10 @@ export default function Workspace({ id, navigate }) {
             </p>
           )}
           {joined ? (
-            <Backlog items={backlog} participants={participants} me={me} call={call} onError={setError} />
+            <>
+              <Metrics metrics={metrics} items={backlog} call={call} onError={setError} />
+              <Backlog items={backlog} participants={participants} me={me} call={call} onError={setError} />
+            </>
           ) : (
             <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
           )}
