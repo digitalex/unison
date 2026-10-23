@@ -27,8 +27,12 @@ type Server struct {
 	web   fs.FS
 	mux   *http.ServeMux
 
+	// notify is closed and replaced whenever new events are recorded; it
+	// wakes long-polls (`unison wait`) and SSE streams. The broadcast is
+	// in-process, so every client must reach the same server: deployments run
+	// a single instance (Cloud Run max-instances=1), even with Postgres.
 	mu     sync.Mutex
-	notify chan struct{} // Closed and replaced whenever new events are recorded.
+	notify chan struct{}
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at

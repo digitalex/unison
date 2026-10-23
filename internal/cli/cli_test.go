@@ -12,6 +12,7 @@ import (
 
 	"github.com/digitalex/unison/internal/server"
 	"github.com/digitalex/unison/internal/store"
+	"github.com/digitalex/unison/internal/store/storetest"
 )
 
 // testEnv runs a real server and CLI invocations against it, each in its
@@ -23,7 +24,7 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) *testEnv {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "unison.db"))
+	st, err := store.Open(storetest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}

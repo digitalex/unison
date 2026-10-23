@@ -1,0 +1,11 @@
+.git
+.github
+.agents
+web/node_modules
+gui
+skills
+*.db
+*.db-*
+.unison.json
+unison
+Dockerfile

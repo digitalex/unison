@@ -32,7 +32,7 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	return &it, nil
 }
 
-func getItem(t *sql.Tx, wsID string, id int64) (*Item, error) {
+func getItem(t *tx, wsID string, id int64) (*Item, error) {
 	it, err := scanItem(t.QueryRow(`SELECT `+itemCols+` FROM items WHERE workspace_id = ? AND id = ?`, wsID, id))
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("backlog item #%d: %w", id, ErrNotFound)
@@ -41,7 +41,7 @@ func getItem(t *sql.Tx, wsID string, id int64) (*Item, error) {
 }
 
 // queuedIDs returns the IDs of open and assigned items in priority order.
-func queuedIDs(t *sql.Tx, wsID string) ([]int64, error) {
+func queuedIDs(t *tx, wsID string) ([]int64, error) {
 	rows, err := t.Query(`SELECT id FROM items WHERE workspace_id = ? AND status != ? ORDER BY position, id`, wsID, StatusDone)
 	if err != nil {
 		return nil, err
@@ -59,7 +59,7 @@ func queuedIDs(t *sql.Tx, wsID string) ([]int64, error) {
 }
 
 // renumber assigns positions 1..n to ids in order.
-func renumber(t *sql.Tx, ids []int64) error {
+func renumber(t *tx, ids []int64) error {
 	for i, id := range ids {
 		if _, err := t.Exec(`UPDATE items SET position = ? WHERE id = ?`, i+1, id); err != nil {
 			return err
@@ -70,7 +70,7 @@ func renumber(t *sql.Tx, ids []int64) error {
 
 // insertAt places id at the 1-based position (clamped) within the queue.
 // position <= 0 means the bottom of the queue.
-func insertAt(t *sql.Tx, wsID string, id int64, position int) error {
+func insertAt(t *tx, wsID string, id int64, position int) error {
 	ids, err := queuedIDs(t, wsID)
 	if err != nil {
 		return err
@@ -90,7 +90,7 @@ func insertAt(t *sql.Tx, wsID string, id int64, position int) error {
 
 // expireLeases releases assigned items whose lease has run out, recording
 // a backlog.lease_expired event for each.
-func expireLeases(t *sql.Tx, log *eventLog, wsID string) error {
+func expireLeases(t *tx, log *eventLog, wsID string) error {
 	query := `SELECT ` + itemCols + ` FROM items WHERE status = ? AND lease_expires_at <= ?`
 	args := []any{StatusAssigned, log.now}
 	if wsID != "" {
@@ -129,7 +129,7 @@ func expireLeases(t *sql.Tx, log *eventLog, wsID string) error {
 
 // ExpireLeases releases every expired lease across all workspaces.
 func (s *Store) ExpireLeases(ctx context.Context) ([]Event, error) {
-	return s.tx(ctx, func(t *sql.Tx, log *eventLog) error { return expireLeases(t, log, "") })
+	return s.tx(ctx, func(t *tx, log *eventLog) error { return expireLeases(t, log, "") })
 }
 
 // ListBacklog returns items with the given status ("" = open and assigned,
@@ -137,7 +137,7 @@ func (s *Store) ExpireLeases(ctx context.Context) ([]Event, error) {
 // most recently closed first.
 func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, []Event, error) {
 	var out []Item
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, wsID); err != nil {
 			return err
 		}
@@ -179,7 +179,7 @@ func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, [
 // GetItem returns one backlog item.
 func (s *Store) GetItem(ctx context.Context, wsID string, id int64) (*Item, []Event, error) {
 	var it *Item
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, wsID); err != nil {
 			return err
 		}
@@ -200,13 +200,12 @@ func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body str
 		return nil, nil, fmt.Errorf("%w: item title is required", ErrInvalid)
 	}
 	var it *Item
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
-		res, err := t.Exec(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`,
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`, "id",
 			actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now)
 		if err != nil {
 			return err
 		}
-		id, _ := res.LastInsertId()
 		if err := insertAt(t, actor.WorkspaceID, id, position); err != nil {
 			return err
 		}
@@ -229,7 +228,7 @@ type ItemPatch struct {
 
 // UpdateItem edits an item's title and/or body.
 func (s *Store) UpdateItem(ctx context.Context, actor *Participant, id int64, p ItemPatch) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.updated", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.updated", func(t *tx, it *Item, now int64) error {
 		if p.Title != nil {
 			if strings.TrimSpace(*p.Title) == "" {
 				return fmt.Errorf("%w: item title cannot be empty", ErrInvalid)
@@ -249,7 +248,7 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 	if position < 1 {
 		return nil, nil, fmt.Errorf("%w: position must be >= 1", ErrInvalid)
 	}
-	return s.mutateItem(ctx, actor, id, "backlog.moved", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.moved", func(t *tx, it *Item, now int64) error {
 		if it.Status == StatusDone {
 			return fmt.Errorf("%w: item #%d is done; reopen it first", ErrConflict, it.ID)
 		}
@@ -264,12 +263,12 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 // It succeeds only if the item is open, its lease has expired, or it is
 // already assigned to the same participant (which renews the lease).
 func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assigneeID int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.assigned", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.assigned", func(t *tx, it *Item, now int64) error {
 		return assign(t, it, assigneeID, now)
 	})
 }
 
-func assign(t *sql.Tx, it *Item, assigneeID, now int64) error {
+func assign(t *tx, it *Item, assigneeID, now int64) error {
 	var exists int
 	if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ? AND workspace_id = ?`, assigneeID, it.WorkspaceID).Scan(&exists); err != nil {
 		return err
@@ -301,7 +300,7 @@ func assign(t *sql.Tx, it *Item, assigneeID, now int64) error {
 // It returns ErrNotFound if no item is open.
 func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Event, error) {
 	var it *Item
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, actor.WorkspaceID); err != nil {
 			return err
 		}
@@ -328,7 +327,7 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 
 // ReleaseItem returns an assigned item to the open queue.
 func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *tx, it *Item, now int64) error {
 		if it.Status != StatusAssigned {
 			return fmt.Errorf("%w: item #%d is %s, not assigned", ErrConflict, it.ID, it.Status)
 		}
@@ -340,7 +339,7 @@ func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (
 
 // CloseItem marks an item done with an optional note (e.g. a PR link).
 func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, note string) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.closed", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.closed", func(t *tx, it *Item, now int64) error {
 		if it.Status == StatusDone {
 			return fmt.Errorf("%w: item #%d is already done", ErrConflict, it.ID)
 		}
@@ -359,7 +358,7 @@ func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, not
 
 // ReopenItem returns a done item to the bottom of the open queue.
 func (s *Store) ReopenItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *sql.Tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *tx, it *Item, now int64) error {
 		if it.Status != StatusDone {
 			return fmt.Errorf("%w: item #%d is not done", ErrConflict, it.ID)
 		}
@@ -373,7 +372,7 @@ func (s *Store) ReopenItem(ctx context.Context, actor *Participant, id int64) (*
 
 // DeleteItem removes an item entirely.
 func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([]Event, error) {
-	return s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	return s.tx(ctx, func(t *tx, log *eventLog) error {
 		it, err := getItem(t, actor.WorkspaceID, id)
 		if err != nil {
 			return err
@@ -394,9 +393,9 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 
 // mutateItem loads an item (after expiring stale leases), applies fn, then
 // reloads it and records an event of the given type.
-func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, eventType string, fn func(*sql.Tx, *Item, int64) error) (*Item, []Event, error) {
+func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, eventType string, fn func(*tx, *Item, int64) error) (*Item, []Event, error) {
 	var it *Item
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, actor.WorkspaceID); err != nil {
 			return err
 		}
