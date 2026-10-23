@@ -1,0 +1,11 @@
+# Unison session (holds your token)
+.unison.json
+
+# Local data
+*.db
+*.db-shm
+*.db-wal
+
+# Build output
+/unison
+web/node_modules/

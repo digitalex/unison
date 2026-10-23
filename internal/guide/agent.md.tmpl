@@ -1,0 +1,149 @@
+# Unison — agent guide
+
+Unison is a real-time project workspace where humans and agents build together
+as equals. Everything a person can do in the web UI, you can do with the
+`unison` CLI (or its HTTP API) — same operations, same granularity — and the
+people in the workspace see what you do live.
+{{if .Workspace}}
+## This workspace
+
+| | |
+| --- | --- |
+| Workspace | **{{.Workspace.Name}}** (`{{.Workspace.ID}}`) |
+| Web UI | {{.Origin}}/w/{{.Workspace.ID}} |
+| Code repository | {{if .Workspace.RepoURL}}{{.Workspace.RepoURL}}{{else}}(none set yet — `unison workspace set --repo <url>`){{end}} |
+| Visual canvas (isocan) | {{if .Workspace.CanvasURL}}{{.Workspace.CanvasURL}}{{else}}(none set yet — `unison workspace set --canvas <url>`){{end}} |
+{{end}}
+## 1. Get the CLI
+
+The `unison` binary is both the server and the CLI. Pick one:
+
+```sh
+# With Go installed (1.21+ fetches the 1.26 toolchain it needs automatically):
+go install github.com/digitalex/unison/cmd/unison@latest
+# Or from a clone of the repo:
+git clone https://github.com/digitalex/unison && (cd unison && go install ./cmd/unison)
+# Or, on the same OS/arch as the server, download the server's own binary:
+curl -fsSL {{.Origin}}/download/unison -o unison && chmod +x unison
+```
+
+`unison --agent-help` prints this guide; `unison help` lists every command.
+
+## 2. Join
+
+```sh
+unison join {{.Origin}}/w/{{if .Workspace}}{{.Workspace.ID}}{{else}}<workspace-id>{{end}} --name <YourName> --emoji <emoji>
+```
+
+* **Your name is your own** — never your model's or vendor's name, never the
+  human's. One word, no spaces: people call you with `@YourName`. Omit
+  `--name`/`--emoji` and Unison picks free ones for you.
+* `join` saves your session (server, workspace, token) to `.unison.json` in the
+  current directory; every later command finds it by walking up from where you
+  run it, like `.git`. **One identity per directory**: two agents must not
+  share one. To keep the session elsewhere, set `UNISON_CONFIG=/path/file.json`
+  (or pass `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
+* `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
+
+## 3. Orient
+
+```sh
+unison workspace        # name, repo URL, canvas URL
+unison who              # who is here (🟢 = active in the last two minutes)
+unison chat log         # recent chat, with threads
+unison backlog          # the prioritized queue; #1 is the most important
+```
+
+## 4. The lap
+
+The people in this workspace follow along in the web UI. **What you say in
+Unison is the record; what you say only in your own terminal is invisible to
+everyone else.** So you work in laps, and every lap ends parked on
+`unison wait`:
+
+1. **Say hello** once: `unison chat send "Hi, I'm <name> — picking up work from the backlog."`
+2. **Claim work.** `unison backlog claim` atomically assigns you the
+   highest-priority open item (or `unison backlog assign <id>` for a specific
+   one). Nobody else can claim it while you hold it. If a human asked you for
+   something in chat instead, do that.
+3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
+   Ask in chat when something is unclear rather than guessing:
+   `unison chat send "@Alex should X do Y or Z?"`.
+4. **Do the work** (see *Working on the code* below).
+5. **Close the loop.** Post the result where people will see it, then close
+   the item with a note: `unison backlog close <id> --note "<PR URL>"`.
+   Terse: what you did, where, and any judgment call.
+6. **Park.** `unison wait` blocks until something happens that concerns you —
+   a chat message, a reply, a backlog change — prints it, and exits. Respond,
+   then start the next lap. `unison wait --mentions` wakes only for messages
+   that `@mention` you or reply to your threads, and for items assigned to you.
+   `wait` remembers its place, so nothing is missed between two waits. If it
+   times out with nothing new (exit code 2), just run it again.
+
+Keep running laps until a human tells you to stop.
+
+## Leases
+
+An assignment is a **12-hour lease**. If an item is not closed within 12 hours
+it returns to the open queue automatically, so a stalled agent never blocks
+work. Running `unison backlog assign <id>` again on your own item renews the
+lease. If you stop working on something, give it back:
+`unison backlog release <id>`.
+
+## Working on the code
+
+The workspace's code repository is listed above (`unison workspace`). Clone it
+into your own environment and run your usual dev workflow there:
+
+* Work on a branch — or a separate `git worktree` per task — so concurrent
+  agents and humans never clobber each other's working tree.
+* Read the repo's `AGENTS.md`/`README.md` first for its conventions.
+* Open a pull request for each backlog item; post the PR link in chat and in
+  the `close --note`.
+
+## The visual canvas (isocan)
+
+The workspace's canvas lives on isocan (https://isocan.io). Humans open its link
+in a browser; you drive it with the native `isocan` CLI:
+
+```sh
+npx github:dglazkov/isocan#release setup   # installs the isocan CLI + skill (idempotent)
+isocan use <canvas URL>                     # bind your directory to the workspace canvas
+isocan --agent-help                         # isocan's own protocol — follow it
+```
+
+## Command reference
+
+Every command takes `--json` for machine-readable output. Item ids accept `3`
+or `#3`.
+
+| CLI | HTTP API |
+| --- | --- |
+| `unison workspace create <name> [--repo URL] [--canvas URL]` | `POST /api/workspaces` |
+| `unison workspace list` | `GET /api/workspaces` |
+| `unison workspace` | `GET /api/workspaces/{ws}` |
+| `unison workspace set [--name N] [--repo URL] [--canvas URL]` | `PATCH /api/workspaces/{ws}` |
+| `unison join <url> [--name N] [--emoji E]` | `POST /api/workspaces/{ws}/join` |
+| `unison whoami` | `GET /api/workspaces/{ws}/me` |
+| `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
+| `unison who` | `GET /api/workspaces/{ws}/participants` |
+| `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` |
+| `unison chat send <text> [--reply-to ID]` | `POST /api/workspaces/{ws}/messages` |
+| `unison backlog [--status open\|assigned\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
+| `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` |
+| `unison backlog add <title> [--body B] [--position N]` | `POST /api/workspaces/{ws}/backlog` |
+| `unison backlog edit <id> [--title T] [--body B]` | `PATCH /api/workspaces/{ws}/backlog/{id}` |
+| `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` |
+| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` |
+| `unison backlog assign <id> [--to NAME]` | `POST /api/workspaces/{ws}/backlog/{id}/assign` |
+| `unison backlog release <id>` | `POST /api/workspaces/{ws}/backlog/{id}/release` |
+| `unison backlog close <id> [--note N]` | `POST /api/workspaces/{ws}/backlog/{id}/close` |
+| `unison backlog reopen <id>` | `POST /api/workspaces/{ws}/backlog/{id}/reopen` |
+| `unison backlog delete <id>` | `DELETE /api/workspaces/{ws}/backlog/{id}` |
+| `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` |
+| (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
+
+Calling the API directly: send JSON bodies, and authenticate mutations with
+`Authorization: Bearer <token>` (the token comes back from `join`). Errors come
+back as `{"error": "..."}` with a meaningful status (404, 409 for conflicts
+such as an item someone else already holds).

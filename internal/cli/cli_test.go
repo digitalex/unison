@@ -1,0 +1,158 @@
+package cli
+
+import (
+	"bytes"
+	"encoding/json"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/digitalex/unison/internal/server"
+	"github.com/digitalex/unison/internal/store"
+)
+
+// testEnv runs a real server and CLI invocations against it, each in its
+// own directory (and so with its own .unison.json identity).
+type testEnv struct {
+	t   *testing.T
+	url string
+}
+
+func newTestEnv(t *testing.T) *testEnv {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "unison.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	ts := httptest.NewServer(server.New(st, nil))
+	t.Cleanup(ts.Close)
+	for _, k := range []string{"UNISON_SERVER", "UNISON_WORKSPACE", "UNISON_TOKEN", "UNISON_CONFIG"} {
+		t.Setenv(k, "")
+	}
+	return &testEnv{t: t, url: ts.URL}
+}
+
+// run executes the CLI in dir and returns stdout, stderr and the exit code.
+func (e *testEnv) run(dir string, args ...string) (string, string, int) {
+	e.t.Helper()
+	e.t.Chdir(dir)
+	var out, errOut bytes.Buffer
+	code := Run(append([]string{"--server", e.url}, args...), &out, &errOut)
+	return out.String(), errOut.String(), code
+}
+
+// ok runs the CLI and fails the test on a non-zero exit.
+func (e *testEnv) ok(dir string, args ...string) string {
+	e.t.Helper()
+	out, errOut, code := e.run(dir, args...)
+	if code != 0 {
+		e.t.Fatalf("unison %v: exit %d\nstdout: %s\nstderr: %s", args, code, out, errOut)
+	}
+	return out
+}
+
+func TestEndToEnd(t *testing.T) {
+	e := newTestEnv(t)
+	human, agent := t.TempDir(), t.TempDir()
+
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--repo", "https://github.com/digitalex/unison", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+	invite := e.url + "/w/" + ws.ID
+	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑")
+	e.ok(agent, "join", invite, "--name", "Ada", "--emoji", "🦊")
+	if _, err := os.Stat(filepath.Join(agent, ConfigFile)); err != nil {
+		t.Fatalf("join did not save a session: %v", err)
+	}
+	if out := e.ok(agent, "whoami"); !strings.Contains(out, "Ada") {
+		t.Errorf("whoami = %q", out)
+	}
+	if out := e.ok(agent, "workspace"); !strings.Contains(out, "github.com/digitalex/unison") {
+		t.Errorf("workspace = %q, want the repo URL", out)
+	}
+
+	e.ok(human, "backlog", "add", "Second", "--body", "later")
+	e.ok(human, "backlog", "add", "First", "--position", "1")
+	if out := e.ok(agent, "backlog"); strings.Index(out, "First") > strings.Index(out, "Second") {
+		t.Errorf("backlog not in priority order:\n%s", out)
+	}
+
+	// The agent claims the top item; the human can no longer take it.
+	if out := e.ok(agent, "backlog", "claim"); !strings.Contains(out, "First") || !strings.Contains(out, "Ada") {
+		t.Errorf("claim = %q", out)
+	}
+	if _, errOut, code := e.run(human, "backlog", "assign", "2"); code == 0 || !strings.Contains(errOut, "already assigned") {
+		t.Errorf("double assign: exit %d, stderr %q", code, errOut)
+	}
+
+	// The human's message wakes the parked agent.
+	done := make(chan string)
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		var out, errOut bytes.Buffer
+		Run([]string{"--server", e.url, "--workspace", ws.ID, "--token", tokenOf(t, human), "chat", "send", "@Ada", "how", "is", "it", "going?"}, &out, &errOut)
+		done <- errOut.String()
+	}()
+	out := e.ok(agent, "wait", "--mentions", "--timeout", "10")
+	if errOut := <-done; errOut != "" {
+		t.Fatalf("chat send: %s", errOut)
+	}
+	if !strings.Contains(out, "@Ada how is it going?") {
+		t.Errorf("wait = %q, want the mention", out)
+	}
+
+	e.ok(agent, "chat", "send", "Done!", "--reply-to", "1")
+	e.ok(agent, "backlog", "close", "2", "--note", "https://github.com/digitalex/unison/pull/1")
+	if out := e.ok(human, "chat", "log"); !strings.Contains(out, "↳") || !strings.Contains(out, "Done!") {
+		t.Errorf("chat log missing thread reply:\n%s", out)
+	}
+	if out := e.ok(human, "backlog", "--status", "done"); !strings.Contains(out, "pull/1") {
+		t.Errorf("done list = %q", out)
+	}
+
+	// The agent's own reply and close must not wake it: with nothing else
+	// new, wait times out with exit code 2.
+	if _, _, code := e.run(agent, "wait", "--timeout", "1"); code != 2 {
+		t.Errorf("idle wait exit = %d, want 2", code)
+	}
+
+	// No open items left after claiming the remaining one.
+	e.ok(agent, "backlog", "claim")
+	if _, _, code := e.run(agent, "backlog", "claim"); code != 3 {
+		t.Errorf("claim on empty backlog exit = %d, want 3", code)
+	}
+
+	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, ws.ID) || !strings.Contains(out, "unison wait") {
+		t.Errorf("agent help is not tailored to the workspace")
+	}
+}
+
+func tokenOf(t *testing.T, dir string) string {
+	t.Helper()
+	cfg, err := loadConfig(filepath.Join(dir, ConfigFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return cfg.Token
+}
+
+func TestParseInvite(t *testing.T) {
+	for _, tc := range []struct{ in, server, ws string }{
+		{"http://localhost:4600/w/ws_abc", "http://localhost:4600", "ws_abc"},
+		{"http://localhost:4600/w/ws_abc/agent.md", "http://localhost:4600", "ws_abc"},
+		{"https://unison.example.com", "https://unison.example.com", ""},
+	} {
+		server, ws, err := parseInvite(tc.in)
+		if err != nil || server != tc.server || ws != tc.ws {
+			t.Errorf("parseInvite(%q) = %q, %q, %v; want %q, %q", tc.in, server, ws, err, tc.server, tc.ws)
+		}
+	}
+	if _, _, err := parseInvite("ws_abc"); err == nil {
+		t.Error("parseInvite(bare id) succeeded, want error")
+	}
+}
