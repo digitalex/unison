@@ -1467,6 +1467,87 @@ button.group-head {
   overflow-wrap: anywhere;
 }
 
+/* ---- Repositories (top-bar list, settings) ---- */
+.popover-start {
+  left: 0;
+  right: auto;
+}
+
+.repo-trigger {
+  gap: 2px;
+}
+
+.repo-count {
+  font-size: var(--size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.repo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.repo-list a {
+  display: flex;
+  flex-direction: column;
+  padding: 6px var(--space-xs);
+  border-radius: var(--radius-s);
+  color: var(--text);
+}
+
+.repo-list a:hover {
+  background: var(--surface-hover);
+  text-decoration: none;
+}
+
+.repo-label {
+  font-weight: var(--weight-ui-medium);
+}
+
+.repo-url {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.settings-section h3 {
+  margin: 0;
+  font-size: inherit;
+}
+
+.settings-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-top: var(--space-s);
+  border-top: var(--border-s) solid var(--panel-edge);
+}
+
+.repo-form {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.repo-form .control {
+  min-width: 0;
+  height: 28px;
+}
+
+.repo-form .repo-label-input {
+  flex: 0 0 88px;
+}
+
+.repo-form .control[type="url"] {
+  flex: 1;
+}
+
 /* Narrow screens: chat stacks below the backlog instead of disappearing. */
 @media (max-width: 860px) {
   .app {
@@ -1556,6 +1637,24 @@ button.group-head {
 
   .pr-chip {
     display: none;
+  }
+
+  .popover-start {
+    position: fixed;
+    top: 52px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+
+  .repo-form {
+    flex-wrap: wrap;
+  }
+
+  .repo-form .control[type="url"] {
+    flex-basis: 100%;
+    order: 3;
   }
 
   .pr-count {

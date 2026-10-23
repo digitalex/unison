@@ -215,6 +215,36 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("deleting a metric removed its backlog item:\n%s", out)
 	}
 
+	// Repositories: a workspace can have several.
+	if out := e.ok(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web", "--label", "frontend"); !strings.Contains(out, "(frontend)") {
+		t.Errorf("repo add = %q", out)
+	}
+	if _, errOut, code := e.run(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web"); code == 0 || !strings.Contains(errOut, "already connected") {
+		t.Errorf("duplicate repo: exit %d, stderr %q", code, errOut)
+	}
+	e.ok(agent, "workspace", "repo", "edit", "1", "--label", "backend")
+	out = e.ok(agent, "workspace", "repos")
+	if !strings.Contains(out, "1   https://github.com/digitalex/unison  (backend)") || !strings.Contains(out, "2   https://github.com/digitalex/unison-web  (frontend)") {
+		t.Errorf("repos = %q", out)
+	}
+	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Repos      1   https://github.com/digitalex/unison  (backend)") || !strings.Contains(out, "unison-web") {
+		t.Errorf("workspace show = %q", out)
+	}
+	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository (backend) | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository (frontend) | https://github.com/digitalex/unison-web |") {
+		t.Errorf("agent help lacks the repositories:\n%s", out)
+	}
+	e.ok(human, "workspace", "repo", "remove", "1")
+	var after store.Workspace
+	json.Unmarshal([]byte(e.ok(human, "workspace", "--json")), &after)
+	if len(after.Repos) != 1 || after.RepoURL != "https://github.com/digitalex/unison-web" {
+		t.Errorf("after removing the first repo: %+v", after)
+	}
+	var multi store.Workspace
+	json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Multi", "--repo", "https://github.com/acme/api=backend", "--repo", "https://github.com/acme/web", "--json")), &multi)
+	if len(multi.Repos) != 2 || multi.Repos[0].Label != "backend" || multi.Repos[1].Label != "" || multi.RepoURL != "https://github.com/acme/api" {
+		t.Errorf("create with two repos = %+v", multi)
+	}
+
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, ws.ID) || !strings.Contains(out, "unison wait") {
 		t.Errorf("agent help is not tailored to the workspace")
 	}

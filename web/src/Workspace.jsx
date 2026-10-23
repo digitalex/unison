@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus } from "lucide-react";
+import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus, X } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
@@ -18,7 +18,7 @@ function collectionFor(type) {
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return "backlog";
   if (type.startsWith("metric.")) return "metrics";
   if (type.startsWith("participant.")) return "participants";
-  if (type.startsWith("workspace.")) return "workspace";
+  if (type.startsWith("workspace.") || type.startsWith("repo.")) return "workspace";
   return null;
 }
 
@@ -144,11 +144,7 @@ function TopBar({ workspace, me, joined, participants, live, call, onError, navi
           <ArrowUpRight aria-hidden="true" />
         </a>
       )}
-      {workspace.repo_url && (
-        <a className="icon-link" href={workspace.repo_url} target="_blank" rel="noreferrer" title={`Repository: ${workspace.repo_url}`}>
-          <FolderGit2 aria-label="Repository" />
-        </a>
-      )}
+      <RepoLinks repos={workspace.repos || []} />
       <span className="spacer" />
       <span className={live ? "live live-on" : "live"}>{live ? "live" : "reconnecting…"}</span>
       <ThemeSwitch />
@@ -171,6 +167,51 @@ function TopBar({ workspace, me, joined, participants, live, call, onError, navi
       )}
     </header>
   );
+}
+
+// One repository links directly; several open a small list.
+function RepoLinks({ repos }) {
+  if (repos.length === 0) return null;
+  if (repos.length === 1) {
+    return (
+      <a className="icon-link" href={repos[0].url} target="_blank" rel="noreferrer" title={`Repository: ${repos[0].url}`}>
+        <FolderGit2 aria-label="Repository" />
+      </a>
+    );
+  }
+  return (
+    <Popover
+      title="Repositories"
+      align="start"
+      className="button button-ghost repo-trigger"
+      trigger={
+        <>
+          <FolderGit2 aria-hidden="true" />
+          <span className="repo-count">{repos.length}</span>
+        </>
+      }
+    >
+      {() => (
+        <>
+          <h2 className="popover-title">Repositories</h2>
+          <ul className="repo-list">
+            {repos.map((r) => (
+              <li key={r.id}>
+                <a href={r.url} target="_blank" rel="noreferrer">
+                  <span className="repo-label">{r.label || repoName(r.url)}</span>
+                  <span className="repo-url">{r.url}</span>
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+    </Popover>
+  );
+}
+
+function repoName(url) {
+  return url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, "");
 }
 
 function JoinForm({ id, call, onJoined }) {
@@ -216,7 +257,7 @@ function WorkspaceSettings({ workspace, call, onError, onDone }) {
   const save = async (e) => {
     e.preventDefault();
     try {
-      await call("PATCH", "", { name: form.name, repo_url: form.repo_url, canvas_url: form.canvas_url });
+      await call("PATCH", "", { name: form.name, canvas_url: form.canvas_url });
       onDone();
     } catch (err) {
       onError(err.message);
@@ -224,25 +265,87 @@ function WorkspaceSettings({ workspace, call, onError, onDone }) {
   };
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
   return (
-    <form className="form" onSubmit={save}>
-      <h2 className="popover-title">Workspace settings</h2>
-      <Field label="Name">
-        <Input {...field("name")} />
-      </Field>
-      <Field label="Repository">
-        <Input {...field("repo_url")} />
-      </Field>
-      <Field label="Canvas">
-        <Input {...field("canvas_url")} />
-      </Field>
-      <div className="actions-row">
-        <Button variant="primary" type="submit">
-          Save
-        </Button>
-        <Button type="button" onClick={onDone}>
-          Cancel
-        </Button>
-      </div>
+    <>
+      <form className="form" onSubmit={save}>
+        <h2 className="popover-title">Workspace settings</h2>
+        <Field label="Name">
+          <Input {...field("name")} />
+        </Field>
+        <Field label="Canvas">
+          <Input {...field("canvas_url")} />
+        </Field>
+        <div className="actions-row">
+          <Button variant="primary" type="submit">
+            Save
+          </Button>
+          <Button type="button" onClick={onDone}>
+            Cancel
+          </Button>
+        </div>
+      </form>
+      <Repositories repos={workspace.repos || []} call={call} onError={onError} />
+    </>
+  );
+}
+
+// Repository changes apply immediately (each is its own API call).
+function Repositories({ repos, call, onError }) {
+  const [url, setUrl] = useState("");
+  const [label, setLabel] = useState("");
+  const run = (method, suffix, body) =>
+    call(method, suffix, body).then(
+      () => true,
+      (e) => {
+        onError(e.message);
+        return false;
+      },
+    );
+  const add = async (e) => {
+    e.preventDefault();
+    if (await run("POST", "/repos", { url, label })) {
+      setUrl("");
+      setLabel("");
+    }
+  };
+  return (
+    <section className="settings-section" aria-label="Repositories">
+      <h3 className="field-label">Repositories</h3>
+      {repos.map((r) => (
+        <RepoRow key={r.id} repo={r} run={run} />
+      ))}
+      <form className="repo-form" onSubmit={add}>
+        <Input className="repo-label-input" aria-label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" />
+        <Input type="url" required aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" />
+        <Button type="submit">Add</Button>
+      </form>
+    </section>
+  );
+}
+
+function RepoRow({ repo, run }) {
+  const [label, setLabel] = useState(repo.label);
+  const [url, setUrl] = useState(repo.url);
+  const dirty = label !== repo.label || url !== repo.url;
+  const save = (e) => {
+    e.preventDefault();
+    run("PATCH", `/repos/${repo.id}`, { label, url });
+  };
+  return (
+    <form className="repo-form" onSubmit={save}>
+      <Input className="repo-label-input" aria-label={`Label for ${repo.url}`} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" />
+      <Input type="url" required aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} />
+      {dirty && <Button type="submit">Save</Button>}
+      <Button
+        type="button"
+        iconOnly
+        variant="ghost"
+        className="button-danger"
+        aria-label={`Remove ${repo.url}`}
+        title="Remove"
+        onClick={() => window.confirm(`Remove ${repo.url} from this workspace?`) && run("DELETE", `/repos/${repo.id}`)}
+      >
+        <X aria-hidden="true" />
+      </Button>
     </form>
   );
 }

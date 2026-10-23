@@ -45,9 +45,10 @@ type Store struct {
 type Workspace struct {
 	ID        string `json:"id"`
 	Name      string `json:"name"`
-	RepoURL   string `json:"repo_url"`
+	RepoURL   string `json:"repo_url"` // The first repository's URL (legacy).
 	CanvasURL string `json:"canvas_url"`
 	CreatedAt int64  `json:"created_at"`
+	Repos     []Repo `json:"repos"`
 }
 
 // Participant is a registered human or agent. Unison makes no distinction
@@ -190,19 +191,34 @@ func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 		}
 		return nil, err
 	}
+	w.Repos = []Repo{}
 	return &w, nil
 }
 
-// CreateWorkspace creates a workspace.
-func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL string) (*Workspace, []Event, error) {
+// CreateWorkspace creates a workspace. repoURL (if set) becomes its first
+// repository, followed by repos.
+func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, nil, fmt.Errorf("%w: workspace name is required", ErrInvalid)
 	}
-	w := &Workspace{ID: "ws_" + randomHex(4), Name: name, RepoURL: strings.TrimSpace(repoURL), CanvasURL: strings.TrimSpace(canvasURL), CreatedAt: s.nowMillis()}
+	if u := strings.TrimSpace(repoURL); u != "" {
+		repos = append([]RepoInput{{URL: u}}, repos...)
+	}
+	id := "ws_" + randomHex(4)
+	var w *Workspace
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`INSERT INTO workspaces (`+workspaceCols+`) VALUES (?, ?, ?, ?, ?)`,
-			w.ID, w.Name, w.RepoURL, w.CanvasURL, w.CreatedAt); err != nil {
+		if _, err := t.Exec(`INSERT INTO workspaces (`+workspaceCols+`) VALUES (?, ?, '', ?, ?)`,
+			id, name, strings.TrimSpace(canvasURL), log.now); err != nil {
+			return err
+		}
+		for _, in := range repos {
+			if _, err := insertRepo(t, id, in, log.now); err != nil {
+				return err
+			}
+		}
+		var err error
+		if w, err = getWorkspaceTx(t, id); err != nil {
 			return err
 		}
 		return log.add(w.ID, "workspace.created", 0, w)
@@ -220,23 +236,40 @@ func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := []Workspace{}
+	var list []*Workspace
 	for rows.Next() {
 		w, err := scanWorkspace(rows)
 		if err != nil {
 			return nil, err
 		}
+		list = append(list, w)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	rows.Close()
+	if err := s.attachRepos(ctx, list); err != nil {
+		return nil, err
+	}
+	out := make([]Workspace, 0, len(list))
+	for _, w := range list {
 		out = append(out, *w)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 
-// GetWorkspace returns a workspace by ID.
+// GetWorkspace returns a workspace by ID, with its repositories.
 func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error) {
-	return scanWorkspace(s.db.QueryRowContext(ctx, `SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, id))
+	w, err := scanWorkspace(s.db.QueryRowContext(ctx, `SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, id))
+	if err != nil {
+		return nil, err
+	}
+	return w, s.attachRepos(ctx, []*Workspace{w})
 }
 
-// WorkspacePatch holds optional workspace field updates.
+// WorkspacePatch holds optional workspace field updates. RepoURL is the
+// legacy single-repository field: it edits (or adds, or with "" removes) the
+// first repository.
 type WorkspacePatch struct {
 	Name      *string `json:"name"`
 	RepoURL   *string `json:"repo_url"`
@@ -248,7 +281,7 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 	var w *Workspace
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		var err error
-		if w, err = scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, id)); err != nil {
+		if w, err = getWorkspaceTx(t, id); err != nil {
 			return err
 		}
 		if p.Name != nil {
@@ -257,14 +290,18 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 			}
 			w.Name = strings.TrimSpace(*p.Name)
 		}
-		if p.RepoURL != nil {
-			w.RepoURL = strings.TrimSpace(*p.RepoURL)
-		}
 		if p.CanvasURL != nil {
 			w.CanvasURL = strings.TrimSpace(*p.CanvasURL)
 		}
-		if _, err := t.Exec(`UPDATE workspaces SET name = ?, repo_url = ?, canvas_url = ? WHERE id = ?`,
-			w.Name, w.RepoURL, w.CanvasURL, id); err != nil {
+		if _, err := t.Exec(`UPDATE workspaces SET name = ?, canvas_url = ? WHERE id = ?`, w.Name, w.CanvasURL, id); err != nil {
+			return err
+		}
+		if p.RepoURL != nil {
+			if err := setPrimaryRepoURL(t, log, id, actor, *p.RepoURL); err != nil {
+				return err
+			}
+		}
+		if w, err = getWorkspaceTx(t, id); err != nil {
 			return err
 		}
 		return log.add(id, "workspace.updated", actor, w)
