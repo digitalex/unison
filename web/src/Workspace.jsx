@@ -124,9 +124,16 @@ function TopBar({ workspace, me, joined, participants, live, call, onError, navi
       </div>
       {joined && <span className="crumb">/ Backlog</span>}
       {workspace.canvas_url && (
-        <a className="canvas-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">
+        <a
+          className="canvas-link"
+          href={workspace.canvas_url}
+          target="_blank"
+          rel="noreferrer"
+          title="Open the design canvas"
+          aria-label="Canvas (opens in a new tab)"
+        >
           <LayoutGrid aria-hidden="true" />
-          Canvas
+          <span className="label">Canvas</span>
           <ArrowUpRight aria-hidden="true" />
         </a>
       )}
@@ -143,7 +150,7 @@ function TopBar({ workspace, me, joined, participants, live, call, onError, navi
         trigger={
           <>
             <UserPlus aria-hidden="true" />
-            Invite
+            <span className="label">Invite</span>
           </>
         }
       >

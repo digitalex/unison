@@ -1192,6 +1192,85 @@ button.group-head {
   }
 }
 
+/* The theme switch shows text labels; phones swap them for icons. */
+.seg .lucide {
+  display: none;
+  width: 14px;
+  height: 14px;
+}
+
+/* Phones: everything fits the viewport width (no horizontal scroll). The top
+   bar keeps every control but drops text labels, and secondary text in the
+   backlog gives way to the item titles. */
+@media (max-width: 640px) {
+  .topbar {
+    gap: var(--space-xs);
+    padding: 0 12px;
+  }
+
+  .topbar > * {
+    flex-shrink: 0;
+  }
+
+  .topbar > .ws {
+    flex-shrink: 1;
+    min-width: 22px;
+  }
+
+  .topbar .label,
+  .canvas-link .lucide-arrow-up-right,
+  .toolbar-sub,
+  .row .meta {
+    display: none;
+  }
+
+  .canvas-link {
+    padding: 0 8px;
+  }
+
+  .seg .lucide {
+    display: block;
+  }
+
+  .seg button {
+    padding: 4px 8px;
+  }
+
+  .app-body {
+    padding: 0 8px 8px;
+    gap: 8px;
+  }
+
+  .add-row {
+    flex-wrap: wrap;
+    height: auto;
+    padding-block: 6px;
+    row-gap: 4px;
+  }
+
+  .add-row input + input {
+    flex: 1 1 100%;
+    order: 3;
+  }
+}
+
+/* The smallest phones (320px): the repository link moves out of the top bar
+   (it is still in workspace settings). */
+@media (max-width: 380px) {
+  .topbar {
+    gap: 6px;
+  }
+
+  .topbar .icon-link,
+  .topbar .ws-name {
+    display: none;
+  }
+
+  .seg button {
+    padding: 4px 6px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .button,
   .control {
