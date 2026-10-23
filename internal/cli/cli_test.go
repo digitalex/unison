@@ -128,6 +128,41 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("claim on empty backlog exit = %d, want 3", code)
 	}
 
+	// Metrics: adding one also queues a backlog item to track it.
+	out = e.ok(human, "metric", "add", "Build time", "--direction", "decrease", "--unit", "s", "--target", "30", "--description", "CI wall-clock time")
+	if !strings.Contains(out, "↓ decrease") || !strings.Contains(out, "Target    30 s") || !strings.Contains(out, "Added backlog item #3") {
+		t.Errorf("metric add = %q", out)
+	}
+	if out := e.ok(agent, "backlog", "show", "3"); !strings.Contains(out, "Track metric: Build time") || !strings.Contains(out, "CI wall-clock time") {
+		t.Errorf("tracking item = %q", out)
+	}
+	var m store.Metric
+	if err := json.Unmarshal([]byte(e.ok(agent, "metric", "add", "Coverage", "--unit", "%", "--json")), &m); err != nil {
+		t.Fatal(err)
+	}
+	if m.Direction != store.DirectionIncrease || m.ItemID == nil || *m.ItemID != 4 {
+		t.Errorf("metric add --json = %+v", m)
+	}
+	if _, errOut, code := e.run(agent, "metric", "add", "build TIME"); code == 0 || !strings.Contains(errOut, "already exists") {
+		t.Errorf("duplicate metric: exit %d, stderr %q", code, errOut)
+	}
+	if _, errOut, code := e.run(agent, "metric", "add", "Speed", "--direction", "up"); code == 0 || !strings.Contains(errOut, "direction") {
+		t.Errorf("bad direction: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "metric", "edit", "1", "--target", "none", "--name", "CI build time"); !strings.Contains(out, "CI build time") || strings.Contains(out, "Target") {
+		t.Errorf("metric edit = %q", out)
+	}
+	if out := e.ok(human, "metric"); !strings.Contains(out, "CI build time") || !strings.Contains(out, "tracked by #3") || !strings.Contains(out, "Coverage") {
+		t.Errorf("metric list = %q", out)
+	}
+	e.ok(human, "metric", "delete", "2")
+	if out := e.ok(human, "metric", "show", "1"); !strings.Contains(out, "backlog item #3") {
+		t.Errorf("metric show = %q", out)
+	}
+	if out := e.ok(human, "backlog"); !strings.Contains(out, "Track metric: Coverage") {
+		t.Errorf("deleting a metric removed its backlog item:\n%s", out)
+	}
+
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, ws.ID) || !strings.Contains(out, "unison wait") {
 		t.Errorf("agent help is not tailored to the workspace")
 	}

@@ -201,23 +201,32 @@ func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body str
 	}
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`, "id",
-			actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now)
-		if err != nil {
-			return err
-		}
-		if err := insertAt(t, actor.WorkspaceID, id, position); err != nil {
-			return err
-		}
-		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
-			return err
-		}
-		return log.add(actor.WorkspaceID, "backlog.added", actor.ID, it)
+		var err error
+		it, err = addItem(t, log, actor, title, body, position)
+		return err
 	})
 	if err != nil {
 		return nil, nil, err
 	}
 	return it, evs, nil
+}
+
+// addItem inserts an open item at position (<= 0: bottom) and records
+// backlog.added. title must already be validated.
+func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int) (*Item, error) {
+	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`, "id",
+		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now)
+	if err != nil {
+		return nil, err
+	}
+	if err := insertAt(t, actor.WorkspaceID, id, position); err != nil {
+		return nil, err
+	}
+	it, err := getItem(t, actor.WorkspaceID, id)
+	if err != nil {
+		return nil, err
+	}
+	return it, log.add(actor.WorkspaceID, "backlog.added", actor.ID, it)
 }
 
 // ItemPatch holds optional item field updates.
@@ -375,6 +384,9 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 	return s.tx(ctx, func(t *tx, log *eventLog) error {
 		it, err := getItem(t, actor.WorkspaceID, id)
 		if err != nil {
+			return err
+		}
+		if err := unlinkMetrics(t, log, actor, id); err != nil {
 			return err
 		}
 		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
