@@ -128,6 +128,58 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("claim on empty backlog exit = %d, want 3", code)
 	}
 
+	// Closing with a GitHub PR URL in the note linked it to the item.
+	if out := e.ok(human, "backlog", "show", "2"); !strings.Contains(out, "PRs       https://github.com/digitalex/unison/pull/1") {
+		t.Errorf("closed item lacks its PR link:\n%s", out)
+	}
+
+	// A comment on an item assigned to the agent wakes `wait --mentions`.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		var out, errOut bytes.Buffer
+		Run([]string{"--server", e.url, "--workspace", ws.ID, "--token", tokenOf(t, human), "backlog", "comment", "1", "Is", "this", "still", "needed?"}, &out, &errOut)
+		done <- errOut.String()
+	}()
+	out = e.ok(agent, "wait", "--mentions", "--timeout", "10")
+	if errOut := <-done; errOut != "" {
+		t.Fatalf("backlog comment: %s", errOut)
+	}
+	if !strings.Contains(out, `commented on #1 "Second"`) || !strings.Contains(out, "still needed?") {
+		t.Errorf("wait = %q, want the comment", out)
+	}
+	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
+		t.Errorf("comment = %q", out)
+	}
+	if out := e.ok(human, "backlog", "comments", "1"); !strings.Contains(out, "🧑 Alex: Is this still needed?") || !strings.Contains(out, "🦊 Ada: Yes, @Alex") {
+		t.Errorf("comments = %q", out)
+	}
+	if _, errOut, code := e.run(human, "backlog", "comment", "1", "--delete", "2"); code == 0 || !strings.Contains(errOut, "only the author") {
+		t.Errorf("deleting another's comment: exit %d, stderr %q", code, errOut)
+	}
+	e.ok(agent, "backlog", "comment", "1", "--delete", "2")
+	e.ok(agent, "backlog", "pr", "1", "https://github.com/acme/auth/pull/9")
+	out = e.ok(agent, "backlog", "pr", "1", "https://github.com/digitalex/unison/pull/12")
+	if !strings.Contains(out, "acme/auth/pull/9") || !strings.Contains(out, "unison/pull/12") {
+		t.Errorf("pr link = %q, want both PRs", out)
+	}
+	if _, errOut, code := e.run(agent, "backlog", "pr", "1", "https://github.com/acme/auth/pull/9"); code == 0 || !strings.Contains(errOut, "already linked") {
+		t.Errorf("duplicate PR: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "backlog", "pr", "1", "--remove", "https://github.com/acme/auth/pull/9"); strings.Contains(out, "acme/auth") {
+		t.Errorf("pr --remove = %q", out)
+	}
+	out = e.ok(human, "backlog", "show", "1")
+	if !strings.Contains(out, "unison/pull/12") || !strings.Contains(out, "Comments  1") || !strings.Contains(out, "Is this still needed?") {
+		t.Errorf("show = %q, want PRs and comments", out)
+	}
+	var shown struct {
+		Item     store.Item      `json:"item"`
+		Comments []store.Comment `json:"comments"`
+	}
+	if err := json.Unmarshal([]byte(e.ok(human, "backlog", "show", "1", "--json")), &shown); err != nil || len(shown.Item.PRs) != 1 || len(shown.Comments) != 1 {
+		t.Errorf("show --json = %+v, %v", shown, err)
+	}
+
 	// Metrics: adding one also queues a backlog item to track it.
 	out = e.ok(human, "metric", "add", "Build time", "--direction", "decrease", "--unit", "s", "--target", "30", "--description", "CI wall-clock time")
 	if !strings.Contains(out, "↓ decrease") || !strings.Contains(out, "Target    30 s") || !strings.Contains(out, "Added backlog item #3") {

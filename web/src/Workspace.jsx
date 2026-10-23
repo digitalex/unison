@@ -15,7 +15,7 @@ const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 // Which collection each event type invalidates.
 function collectionFor(type) {
   if (type.startsWith("message.")) return "messages";
-  if (type.startsWith("backlog.")) return "backlog";
+  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return "backlog";
   if (type.startsWith("metric.")) return "metrics";
   if (type.startsWith("participant.")) return "participants";
   if (type.startsWith("workspace.")) return "workspace";
@@ -99,7 +99,7 @@ export default function Workspace({ id, navigate }) {
           {joined ? (
             <>
               <Metrics metrics={metrics} items={backlog} call={call} onError={setError} />
-              <Backlog items={backlog} participants={participants} me={me} call={call} onError={setError} />
+              <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
             </>
           ) : (
             <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />

@@ -72,9 +72,15 @@ Backlog (#1 is the highest priority):
   backlog claim                      atomically assign yourself the top open item
   backlog assign <id> [--to NAME]    take (or renew) a 12-hour lease on an item
   backlog release <id>               give an item back to the queue
-  backlog close <id> [--note N]      mark done (note: e.g. the PR URL)
+  backlog close <id> [--note N]      mark done (GitHub PR URLs in the note are
+                                     also linked to the item as PRs)
   backlog reopen <id>
   backlog delete <id>
+  backlog comments <id>              an item's comments
+  backlog comment <id> <text>        comment on an item (@Name mentions)
+  backlog comment <id> --delete CID  delete one of your comments
+  backlog pr <id> <url>              link a pull request (several are allowed)
+  backlog pr <id> --remove <url>     unlink a pull request
 
 Metrics (what the workspace is optimizing; adding one also adds a backlog
 item to make sure it gets tracked):
@@ -693,7 +699,13 @@ func (a *app) backlog(args []string) error {
 	case "list", "ls":
 		return a.backlogList(args)
 	case "show":
-		return a.itemCommand(args, "GET", "", nil, false)
+		return a.backlogShow(args)
+	case "comments":
+		return a.backlogComments(args)
+	case "comment":
+		return a.backlogComment(args)
+	case "pr":
+		return a.backlogPR(args)
 	case "add":
 		return a.backlogAdd(args)
 	case "edit":
@@ -826,10 +838,141 @@ func (a *app) printItemDetail(it *store.Item) error {
 	}
 	a.printf("State     %s\n", itemState(people, it))
 	a.printf("Created   by %s, %s\n", label(people, it.CreatedBy), ago(it.CreatedAt))
+	for i, pr := range it.PRs {
+		heading := "PRs      "
+		if i > 0 {
+			heading = "         "
+		}
+		a.printf("%s %s\n", heading, pr.URL)
+	}
+	if it.CommentCount > 0 {
+		a.printf("Comments  %d (unison backlog comments %d)\n", it.CommentCount, it.ID)
+	}
 	if it.Body != "" {
 		a.printf("\n%s\n", it.Body)
 	}
 	return nil
+}
+
+// backlogShow prints an item with its PR links and comments.
+func (a *app) backlogShow(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: backlog show <id>", errUsage)
+	}
+	id, err := parseID(args[0])
+	if err != nil {
+		return err
+	}
+	if a.jsonOut {
+		var it, comments json.RawMessage
+		path, err := a.wsPath(fmt.Sprintf("/backlog/%d", id))
+		if err != nil {
+			return err
+		}
+		if err := a.client().do("GET", path, nil, &it); err != nil {
+			return err
+		}
+		if err := a.client().do("GET", path+"/comments", nil, &comments); err != nil {
+			return err
+		}
+		return a.printJSON(json.RawMessage(fmt.Sprintf(`{"item":%s,"comments":%s}`, it, comments)))
+	}
+	var it store.Item
+	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d", id), nil, &it, false); err != nil {
+		return err
+	}
+	if err := a.printItemDetail(&it); err != nil {
+		return err
+	}
+	if it.CommentCount == 0 {
+		return nil
+	}
+	a.printf("\n")
+	return a.printComments(id)
+}
+
+func (a *app) printComments(id int64) error {
+	var list []store.Comment
+	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d/comments", id), nil, &list, false); err != nil {
+		return err
+	}
+	people, err := a.participants()
+	if err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		a.printf("No comments on #%d yet.\n", id)
+	}
+	for _, c := range list {
+		when := time.UnixMilli(c.CreatedAt).Format("Jan 2 15:04")
+		a.printf("[comment %d, %s] %s: %s\n", c.ID, when, label(people, c.AuthorID), strings.ReplaceAll(c.Body, "\n", "\n      "))
+	}
+	return nil
+}
+
+func (a *app) backlogComments(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: backlog comments <id>", errUsage)
+	}
+	id, err := parseID(args[0])
+	if err != nil {
+		return err
+	}
+	if a.jsonOut {
+		_, err := a.call("GET", fmt.Sprintf("/backlog/%d/comments", id), nil, nil, false)
+		return err
+	}
+	return a.printComments(id)
+}
+
+func (a *app) backlogComment(args []string) error {
+	fs := flag.NewFlagSet("backlog comment", flag.ContinueOnError)
+	del := fs.String("delete", "", "comment id to delete (your own)")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 || (*del == "" && len(pos) < 2) {
+		return fmt.Errorf("%w: backlog comment <id> <text> | backlog comment <id> --delete <comment-id>", errUsage)
+	}
+	id, err := parseID(pos[0])
+	if err != nil {
+		return err
+	}
+	if *del != "" {
+		cid, err := parseID(*del)
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/backlog/%d/comments/%d", id, cid), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Deleted comment %d on #%d.\n", cid, id)
+		return nil
+	}
+	var c store.Comment
+	if ok, err := a.call("POST", fmt.Sprintf("/backlog/%d/comments", id), map[string]string{"body": strings.Join(pos[1:], " ")}, &c, true); !ok {
+		return err
+	}
+	a.printf("Commented on #%d (comment %d).\n", id, c.ID)
+	return nil
+}
+
+func (a *app) backlogPR(args []string) error {
+	fs := flag.NewFlagSet("backlog pr", flag.ContinueOnError)
+	remove := fs.String("remove", "", "PR URL to unlink")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	switch {
+	case *remove != "" && len(pos) == 1:
+		return a.itemCommand(pos, "DELETE", "/prs", map[string]string{"url": *remove}, true)
+	case *remove == "" && len(pos) == 2:
+		return a.itemCommand(pos[:1], "POST", "/prs", map[string]string{"url": pos[1]}, true)
+	}
+	return fmt.Errorf("%w: backlog pr <id> <url> | backlog pr <id> --remove <url>", errUsage)
 }
 
 func (a *app) backlogAdd(args []string) error {
@@ -1130,6 +1273,15 @@ func (f *eventFilter) relevant(e store.Event) bool {
 			return false
 		}
 		return !f.mentionsOnly || mentions(m.Body, f.me.Name) || (m.ParentID != nil && f.authorOf(*m.ParentID) == f.me.ID)
+	case e.Type == "comment.added":
+		var ce store.CommentEvent
+		if json.Unmarshal(e.Data, &ce) != nil || ce.Comment == nil {
+			return false
+		}
+		mine := ce.Item != nil && ce.Item.AssigneeID != nil && *ce.Item.AssigneeID == f.me.ID
+		return !f.mentionsOnly || mentions(ce.Comment.Body, f.me.Name) || mine
+	case e.Type == "comment.deleted", strings.HasPrefix(e.Type, "pr."):
+		return !f.mentionsOnly
 	case strings.HasPrefix(e.Type, "backlog."):
 		if !f.mentionsOnly {
 			return true
@@ -1204,6 +1356,22 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		return fmt.Sprintf("👋 %s %s joined", p.Emoji, p.Name)
 	case e.Type == "workspace.updated":
 		return fmt.Sprintf("🛠  %s updated the workspace settings", who)
+	case strings.HasPrefix(e.Type, "comment."):
+		var ce store.CommentEvent
+		json.Unmarshal(e.Data, &ce)
+		if ce.Comment == nil || ce.Item == nil {
+			break
+		}
+		if e.Type == "comment.deleted" {
+			return fmt.Sprintf("💬 %s deleted a comment on #%d %q", who, ce.Item.ID, ce.Item.Title)
+		}
+		return fmt.Sprintf("💬 %s commented on #%d %q (answer with `unison backlog comment %d <text>`): %s",
+			who, ce.Item.ID, ce.Item.Title, ce.Item.ID, ce.Comment.Body)
+	case strings.HasPrefix(e.Type, "pr."):
+		var it store.Item
+		json.Unmarshal(e.Data, &it)
+		verb := map[string]string{"pr.linked": "linked a PR to", "pr.unlinked": "unlinked a PR from"}[e.Type]
+		return fmt.Sprintf("🔗 %s %s #%d %q", who, verb, it.ID, it.Title)
 	case strings.HasPrefix(e.Type, "metric."):
 		var m store.Metric
 		json.Unmarshal(e.Data, &m)

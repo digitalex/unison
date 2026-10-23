@@ -30,6 +30,9 @@ var (
 	ErrConflict = errors.New("conflict")
 	// ErrInvalid is returned for malformed input.
 	ErrInvalid = errors.New("invalid input")
+	// ErrForbidden is returned when the actor may not perform an operation
+	// (e.g. deleting someone else's comment).
+	ErrForbidden = errors.New("forbidden")
 )
 
 // Store wraps the database.
@@ -92,6 +95,10 @@ type Item struct {
 	UpdatedAt      int64  `json:"updated_at"`
 	ClosedAt       *int64 `json:"closed_at,omitempty"`
 	CloseNote      string `json:"close_note,omitempty"`
+	// PRs are the pull requests linked to the item (several are allowed);
+	// CommentCount is how many comments it has.
+	PRs          []ItemPR `json:"prs"`
+	CommentCount int      `json:"comment_count"`
 }
 
 // Event records a change in a workspace. Seq is globally increasing.

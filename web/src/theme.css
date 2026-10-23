@@ -1309,6 +1309,164 @@ button.group-head {
   width: 88px;
 }
 
+/* ---- Backlog curation: drag-and-drop, PR links, comments ---- */
+.item {
+  position: relative;
+}
+
+.item.dragging {
+  opacity: 0.45;
+}
+
+.item.drop-before::before,
+.item.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  height: 2px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.item.drop-before::before {
+  top: -1px;
+}
+
+.item.drop-after::after {
+  bottom: -1px;
+}
+
+.rank .grip {
+  display: none;
+  width: 14px;
+  height: 14px;
+  cursor: grab;
+}
+
+.row[draggable="true"]:hover .rank .grip {
+  display: inline-block;
+}
+
+.row[draggable="true"]:hover .rank .rank-number {
+  display: none;
+}
+
+.pr-chips {
+  display: inline-flex;
+  flex: none;
+  gap: var(--space-xxs);
+}
+
+.pr-chip,
+.pr-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-chip:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.pr-chip svg.lucide,
+.pr-count svg.lucide {
+  width: 12px;
+  height: 12px;
+}
+
+.pr-count {
+  display: none;
+}
+
+.comment-count {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 3px;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.comment-count svg.lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.detail-section {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  margin-top: var(--space-xs);
+}
+
+.detail-section h4 {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.pr-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.pr-line a {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.detail-form {
+  display: flex;
+  gap: var(--space-xs);
+  max-width: 560px;
+}
+
+.detail-form .control {
+  flex: 1;
+  height: 28px;
+}
+
+.comment {
+  padding: 2px 0;
+}
+
+.comment-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.comment-head .who {
+  font-weight: var(--weight-ui-semibold);
+}
+
+.comment-head .time {
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+}
+
+.comment-delete.button {
+  width: 22px;
+  height: 22px;
+}
+
+.comment-body {
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 /* Narrow screens: chat stacks below the backlog instead of disappearing. */
 @media (max-width: 860px) {
   .app {
@@ -1394,6 +1552,18 @@ button.group-head {
 
   .metric-row .meta {
     display: inline;
+  }
+
+  .pr-chip {
+    display: none;
+  }
+
+  .pr-count {
+    display: inline-flex;
+  }
+
+  .item-detail {
+    padding-left: var(--space-m);
   }
 
   .metric-description {
