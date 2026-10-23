@@ -93,11 +93,11 @@ export default function Workspace({ id, navigate }) {
           </small>
         )}
       </p>
+      <Invite workspace={workspace} />
       {!joined ? (
         <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
       ) : (
         <>
-          <Invite workspace={workspace} />
           <Roster participants={participants} me={me} call={call} onError={setError} />
           <Backlog items={backlog} participants={participants} me={me} call={call} onError={setError} />
           <Chat messages={messages} participants={participants} me={me} call={call} onError={setError} />
