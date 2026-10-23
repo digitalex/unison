@@ -29,7 +29,7 @@ export default function Backlog({ items, participants, me, call, onError }) {
     <section aria-label="Backlog">
       <div className="toolbar">
         <h2>Backlog</h2>
-        <span className="muted">· prioritized queue, top is most important</span>
+        <span className="muted toolbar-sub">· prioritized queue, top is most important</span>
         <span className="spacer" />
         <Button variant="primary" onClick={() => run("POST", "/backlog/claim")}>
           Claim next
