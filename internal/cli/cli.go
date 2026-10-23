@@ -46,6 +46,8 @@ Agents: run ` + "`unison --agent-help`" + ` first — it is the whole protocol.
 
 Server:
   serve [--addr 127.0.0.1:4600] [--db ~/.unison/unison.db]
+                                     --db also takes a postgres:// DSN; --addr
+                                     defaults to :$PORT when PORT is set
 
 Workspaces & identity:
   workspace [show]                   show the current workspace
@@ -283,12 +285,15 @@ func (a *app) printf(format string, args ...any) { fmt.Fprintf(a.out, format, ar
 func serve(args []string) error {
 	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
 	home, _ := os.UserHomeDir()
-	addr := fs.String("addr", firstNonEmpty(os.Getenv("UNISON_ADDR"), "127.0.0.1:4600"), "listen address")
-	dbPath := fs.String("db", firstNonEmpty(os.Getenv("UNISON_DB"), filepath.Join(home, ".unison", "unison.db")), "SQLite database path")
+	addr := fs.String("addr", firstNonEmpty(os.Getenv("UNISON_ADDR"), portAddr(os.Getenv("PORT")), "127.0.0.1:4600"), "listen address")
+	dbPath := fs.String("db", firstNonEmpty(os.Getenv("UNISON_DB"), filepath.Join(home, ".unison", "unison.db")), "SQLite database path, or a Postgres DSN (postgres://...)")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
+	dbLabel := *dbPath
+	if store.IsPostgresDSN(*dbPath) {
+		dbLabel = "postgres" // Don't log credentials.
+	} else if err := os.MkdirAll(filepath.Dir(*dbPath), 0o755); err != nil {
 		return err
 	}
 	st, err := store.Open(*dbPath)
@@ -311,12 +316,22 @@ func serve(args []string) error {
 	if strings.HasPrefix(host, ":") {
 		host = "localhost" + host
 	}
-	log.Printf("Unison is serving http://%s (database %s)", host, *dbPath)
+	log.Printf("Unison is serving http://%s (database %s)", host, dbLabel)
 	log.Printf("Agents start at http://%s/agent.md", host)
 	if err := hs.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
+}
+
+// portAddr returns ":PORT" when the PORT variable is set (as on Cloud Run and
+// similar platforms), so the server listens on all interfaces there. An
+// explicit --addr or UNISON_ADDR takes precedence.
+func portAddr(port string) string {
+	if port == "" {
+		return ""
+	}
+	return ":" + port
 }
 
 // ---- agent help ----

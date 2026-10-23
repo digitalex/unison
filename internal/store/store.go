@@ -1,4 +1,5 @@
-// Package store is Unison's SQLite persistence layer.
+// Package store is Unison's persistence layer: SQLite for local use and
+// tests, Postgres in production (see dialect.go).
 //
 // Every mutation runs in a single transaction and records an Event alongside
 // the change it describes. Events are the one feed that powers real-time
@@ -15,8 +16,6 @@ import (
 	"fmt"
 	"strings"
 	"time"
-
-	_ "modernc.org/sqlite" // Registers the pure-Go "sqlite" driver.
 )
 
 // LeaseDuration is how long an assignment holds a backlog item before it is
@@ -33,9 +32,9 @@ var (
 	ErrInvalid = errors.New("invalid input")
 )
 
-// Store wraps the SQLite database.
+// Store wraps the database.
 type Store struct {
-	db  *sql.DB
+	db  db
 	now func() time.Time
 }
 
@@ -105,77 +104,14 @@ type Event struct {
 	CreatedAt   int64           `json:"created_at"`
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS workspaces (
-	id TEXT PRIMARY KEY,
-	name TEXT NOT NULL,
-	repo_url TEXT NOT NULL DEFAULT '',
-	canvas_url TEXT NOT NULL DEFAULT '',
-	created_at INTEGER NOT NULL
-);
-CREATE TABLE IF NOT EXISTS participants (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-	name TEXT NOT NULL,
-	emoji TEXT NOT NULL,
-	status TEXT NOT NULL DEFAULT '',
-	token TEXT NOT NULL UNIQUE,
-	created_at INTEGER NOT NULL,
-	last_seen_at INTEGER NOT NULL
-);
-CREATE UNIQUE INDEX IF NOT EXISTS participants_name
-	ON participants(workspace_id, name COLLATE NOCASE);
-CREATE TABLE IF NOT EXISTS messages (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-	author_id INTEGER NOT NULL REFERENCES participants(id),
-	parent_id INTEGER REFERENCES messages(id),
-	body TEXT NOT NULL,
-	created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS messages_ws ON messages(workspace_id, id);
-CREATE TABLE IF NOT EXISTS items (
-	id INTEGER PRIMARY KEY AUTOINCREMENT,
-	workspace_id TEXT NOT NULL REFERENCES workspaces(id),
-	title TEXT NOT NULL,
-	body TEXT NOT NULL DEFAULT '',
-	status TEXT NOT NULL,
-	position INTEGER NOT NULL,
-	assignee_id INTEGER REFERENCES participants(id),
-	lease_expires_at INTEGER,
-	created_by INTEGER NOT NULL REFERENCES participants(id),
-	created_at INTEGER NOT NULL,
-	updated_at INTEGER NOT NULL,
-	closed_at INTEGER,
-	close_note TEXT NOT NULL DEFAULT ''
-);
-CREATE INDEX IF NOT EXISTS items_ws ON items(workspace_id, status, position);
-CREATE TABLE IF NOT EXISTS events (
-	seq INTEGER PRIMARY KEY AUTOINCREMENT,
-	workspace_id TEXT NOT NULL,
-	type TEXT NOT NULL,
-	actor_id INTEGER,
-	data TEXT NOT NULL,
-	created_at INTEGER NOT NULL
-);
-CREATE INDEX IF NOT EXISTS events_ws ON events(workspace_id, seq);
-`
-
-// Open opens (creating if needed) the database at path. Use ":memory:" for
-// an ephemeral database.
-func Open(path string) (*Store, error) {
-	db, err := sql.Open("sqlite", path+"?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+// Open opens (creating the schema if needed) the database named by dsn: a
+// Postgres DSN (see IsPostgresDSN) or a SQLite file path.
+func Open(dsn string) (*Store, error) {
+	d, err := openDB(dsn)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("opening database: %w", err)
 	}
-	// A single connection serializes all access, which makes every
-	// transaction (notably the backlog assign) trivially atomic.
-	db.SetMaxOpenConns(1)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("applying schema: %w", err)
-	}
-	return &Store{db: db, now: time.Now}, nil
+	return &Store{db: d, now: time.Now}, nil
 }
 
 // Close closes the database.
@@ -195,8 +131,8 @@ func randomHex(n int) string {
 }
 
 // tx runs fn in a transaction and returns the events it recorded.
-func (s *Store) tx(ctx context.Context, fn func(*sql.Tx, *eventLog) error) ([]Event, error) {
-	t, err := s.db.BeginTx(ctx, nil)
+func (s *Store) tx(ctx context.Context, fn func(*tx, *eventLog) error) ([]Event, error) {
+	t, err := s.db.begin(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -212,7 +148,7 @@ func (s *Store) tx(ctx context.Context, fn func(*sql.Tx, *eventLog) error) ([]Ev
 }
 
 type eventLog struct {
-	tx     *sql.Tx
+	tx     *tx
 	now    int64
 	events []Event
 }
@@ -226,12 +162,8 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 	if actor != 0 {
 		actorArg = actor
 	}
-	res, err := l.tx.Exec(`INSERT INTO events (workspace_id, type, actor_id, data, created_at) VALUES (?, ?, ?, ?, ?)`,
+	seq, err := l.tx.insert(`INSERT INTO events (workspace_id, type, actor_id, data, created_at) VALUES (?, ?, ?, ?, ?)`, "seq",
 		ws, typ, actorArg, string(raw), l.now)
-	if err != nil {
-		return err
-	}
-	seq, err := res.LastInsertId()
 	if err != nil {
 		return err
 	}
@@ -261,7 +193,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL st
 		return nil, nil, fmt.Errorf("%w: workspace name is required", ErrInvalid)
 	}
 	w := &Workspace{ID: "ws_" + randomHex(4), Name: name, RepoURL: strings.TrimSpace(repoURL), CanvasURL: strings.TrimSpace(canvasURL), CreatedAt: s.nowMillis()}
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if _, err := t.Exec(`INSERT INTO workspaces (`+workspaceCols+`) VALUES (?, ?, ?, ?, ?)`,
 			w.ID, w.Name, w.RepoURL, w.CanvasURL, w.CreatedAt); err != nil {
 			return err
@@ -307,7 +239,7 @@ type WorkspacePatch struct {
 // UpdateWorkspace applies a patch to a workspace.
 func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p WorkspacePatch) (*Workspace, []Event, error) {
 	var w *Workspace
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		var err error
 		if w, err = scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, id)); err != nil {
 			return err
@@ -365,7 +297,7 @@ func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participan
 	}
 	token := randomHex(16)
 	var p *Participant
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if _, err := scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, wsID)); err != nil {
 			return err
 		}
@@ -383,15 +315,14 @@ func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participan
 			}
 		}
 		now := log.now
-		res, err := t.Exec(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`,
+		id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`, "id",
 			wsID, name, emoji, token, now, now)
 		if err != nil {
-			if strings.Contains(err.Error(), "UNIQUE") {
+			if isUniqueViolation(err) {
 				return fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
 			}
 			return err
 		}
-		id, _ := res.LastInsertId()
 		p = &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now}
 		return log.add(wsID, "participant.joined", id, p)
 	})
@@ -401,14 +332,14 @@ func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participan
 	return p, token, evs, nil
 }
 
-func freeName(t *sql.Tx, wsID string) (string, error) {
+func freeName(t *tx, wsID string) (string, error) {
 	for round := 1; ; round++ {
 		for _, n := range defaultNames {
 			if round > 1 {
 				n = fmt.Sprintf("%s%d", n, round)
 			}
 			var exists int
-			if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE workspace_id = ? AND name = ? COLLATE NOCASE`, wsID, n).Scan(&exists); err != nil {
+			if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE workspace_id = ? AND lower(name) = lower(?)`, wsID, n).Scan(&exists); err != nil {
 				return "", err
 			}
 			if exists == 0 {
@@ -459,7 +390,7 @@ func (s *Store) GetParticipant(ctx context.Context, wsID string, id int64) (*Par
 // SetStatus updates a participant's free-form status line.
 func (s *Store) SetStatus(ctx context.Context, p *Participant, status string) (*Participant, []Event, error) {
 	status = strings.TrimSpace(status)
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if _, err := t.Exec(`UPDATE participants SET status = ?, last_seen_at = ? WHERE id = ?`, status, log.now, p.ID); err != nil {
 			return err
 		}
@@ -498,7 +429,7 @@ func (s *Store) PostMessage(ctx context.Context, author *Participant, body strin
 		return nil, nil, fmt.Errorf("%w: message body is required", ErrInvalid)
 	}
 	var m *Message
-	evs, err := s.tx(ctx, func(t *sql.Tx, log *eventLog) error {
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if parentID != nil {
 			parent, err := scanMessage(t.QueryRow(`SELECT `+messageCols+` FROM messages WHERE id = ? AND workspace_id = ?`, *parentID, author.WorkspaceID))
 			if err != nil {
@@ -509,12 +440,11 @@ func (s *Store) PostMessage(ctx context.Context, author *Participant, body strin
 				parentID = parent.ParentID
 			}
 		}
-		res, err := t.Exec(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at) VALUES (?, ?, ?, ?, ?)`,
+		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
 			author.WorkspaceID, author.ID, parentID, body, log.now)
 		if err != nil {
 			return err
 		}
-		id, _ := res.LastInsertId()
 		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now}
 		return log.add(author.WorkspaceID, "message.created", author.ID, m)
 	})
@@ -529,7 +459,7 @@ func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Mes
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT `+messageCols+` FROM messages WHERE workspace_id = ? ORDER BY id DESC LIMIT ?) ORDER BY id ASC`, wsID, limit)
+	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT `+messageCols+` FROM messages WHERE workspace_id = ? ORDER BY id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)
 	if err != nil {
 		return nil, err
 	}

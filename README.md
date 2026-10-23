@@ -19,7 +19,8 @@ This is **Phase 0** — the minimal slice needed to use Unison to build Unison:
   `unison --agent-help`), plus an "Invite an agent" prompt in the UI.
 
 Stack: Go (server + CLI, one binary), React (web UI, embedded in the binary),
-SQLite (pure-Go driver, no cgo). Zero external infrastructure.
+SQLite locally (pure-Go driver, no cgo) or Postgres in production. Zero
+external infrastructure for local use.
 
 ## Quick start
 
@@ -85,10 +86,46 @@ Layout:
 | `cmd/unison` | entry point |
 | `internal/cli` | CLI commands (1:1 with the API) and `unison serve` |
 | `internal/server` | HTTP API, SSE stream, long-poll events, agent doorway |
-| `internal/store` | SQLite schema and all mutations (each records an event) |
+| `internal/store` | schema (SQLite and Postgres) and all mutations (each records an event) |
 | `internal/guide` | the agent guide template |
 | `internal/webui` | embeds the built UI |
 | `web` | React UI source |
 
+To run the store, server and CLI tests against Postgres as well, point
+`UNISON_TEST_POSTGRES` at a database you can create schemas in (each test
+uses, then drops, a private schema):
+
+```sh
+UNISON_TEST_POSTGRES='postgres://postgres@localhost:5432/postgres?sslmode=disable' go test ./...
+```
+
 See [AGENTS.md](AGENTS.md) for the conventions contributors (human or agent)
 follow.
+
+## Deploying
+
+Production runs on **Cloud Run** (service `unison-git`, project
+`unison-512518`, region `europe-west1`) with **Cloud SQL for PostgreSQL**
+(instance `unison-pg`). The service was set up with Cloud Run's "continuously
+deploy from repository" flow: every push to `main` rebuilds the image from the
+root [`Dockerfile`](Dockerfile) and deploys it. The runtime configuration lives
+on the Cloud Run service, not in this repo:
+
+* service account `unison-run`;
+* the Cloud SQL connection `unison-512518:europe-west1:unison-pg`, mounted as
+  a Unix socket under `/cloudsql/`;
+* `UNISON_DB` from the Secret Manager secret `unison-db-url`, a Postgres DSN
+  such as
+  `postgres://unison:PASSWORD@/unison?host=/cloudsql/unison-512518:europe-west1:unison-pg`
+  (URL-encode special characters in the password);
+* **max-instances = 1**: live updates (`unison wait`, the web UI stream) are an
+  in-process broadcast, so all clients must reach the same instance.
+
+`unison serve` picks the database from `--db` / `UNISON_DB`: a value starting
+with `postgres://` or `postgresql://` (or a `key=value` DSN with `host=`)
+selects Postgres, anything else is a SQLite file path. The schema is created on
+startup. When `PORT` is set (as Cloud Run does) and `--addr` / `UNISON_ADDR`
+are not, the server listens on `:$PORT`.
+
+Build and run the image locally with `docker build -t unison . && docker run
+-p 8080:8080 -e UNISON_DB='postgres://...' unison`.

@@ -3,14 +3,17 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/digitalex/unison/internal/store/storetest"
 )
 
 func newStore(t *testing.T) (*Store, *time.Time) {
 	t.Helper()
-	s, err := Open(t.TempDir() + "/test.db")
+	s, err := Open(storetest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -255,5 +258,68 @@ func TestMessagesThreadOneLevel(t *testing.T) {
 	evs, _ := s.EventsAfter(ctx, a.WorkspaceID, 0, 0)
 	if len(evs) == 0 || evs[len(evs)-1].Type != "message.created" {
 		t.Errorf("last event = %+v, want message.created", evs[len(evs)-1])
+	}
+}
+
+// TestConcurrentWriters exercises the writer serialization that Postgres
+// relies on (SQLite serializes anyway): auto-named joins get distinct names,
+// concurrent adds and moves keep positions a dense 1..n, and event seqs are
+// unique and increasing in commit order.
+func TestConcurrentWriters(t *testing.T) {
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+	const n = 8
+	var wg sync.WaitGroup
+	errs := make(chan error, 3*n)
+	for i := 0; i < n; i++ {
+		wg.Add(3)
+		go func() {
+			defer wg.Done()
+			_, _, _, err := s.Join(ctx, a.WorkspaceID, "", "")
+			errs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			_, _, err := s.AddItem(ctx, a, "task", "", 1)
+			errs <- err
+		}()
+		go func() {
+			defer wg.Done()
+			items, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+			if err == nil && len(items) > 0 {
+				_, _, err = s.MoveItem(ctx, a, items[len(items)-1].ID, 1)
+			}
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Error(err)
+		}
+	}
+	people, _ := s.ListParticipants(ctx, a.WorkspaceID)
+	names := map[string]bool{}
+	for _, p := range people {
+		if names[strings.ToLower(p.Name)] {
+			t.Errorf("duplicate name %q", p.Name)
+		}
+		names[strings.ToLower(p.Name)] = true
+	}
+	items, _, _ := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if len(items) != n {
+		t.Fatalf("got %d items, want %d", len(items), n)
+	}
+	for i, it := range items {
+		if it.Position != int64(i+1) {
+			t.Errorf("item %d at position %d, want %d", it.ID, it.Position, i+1)
+		}
+	}
+	evs, _ := s.EventsAfter(ctx, a.WorkspaceID, 0, 1000)
+	for i := 1; i < len(evs); i++ {
+		if evs[i].Seq <= evs[i-1].Seq {
+			t.Errorf("event seq %d after %d", evs[i].Seq, evs[i-1].Seq)
+		}
 	}
 }

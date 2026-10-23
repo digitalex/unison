@@ -5,17 +5,17 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
-	"path/filepath"
 	"strings"
 	"testing"
 	"testing/fstest"
 
 	"github.com/digitalex/unison/internal/store"
+	"github.com/digitalex/unison/internal/store/storetest"
 )
 
 func newServer(t *testing.T) (*httptest.Server, *store.Store) {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "unison.db"))
+	st, err := store.Open(storetest.DSN(t))
 	if err != nil {
 		t.Fatal(err)
 	}
