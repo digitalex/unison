@@ -1067,6 +1067,51 @@ button.group-head {
   font-weight: var(--weight-ui-semibold);
 }
 
+/* Minimized chat: the backlog takes the width back; chat becomes a slim rail. */
+.app-body-chat-minimized {
+  grid-template-columns: minmax(0, 1fr) 44px;
+}
+
+.chat-minimized {
+  display: block;
+}
+
+.chat-rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  height: 100%;
+  padding: var(--space-s) 0;
+  border: 0;
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-weight: var(--weight-ui-semibold);
+  cursor: pointer;
+}
+
+.chat-rail:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.chat-rail-label {
+  writing-mode: vertical-rl;
+}
+
+.chat-unread {
+  min-width: 18px;
+  padding: 0 5px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--size-xxs);
+  line-height: 18px;
+  text-align: center;
+}
+
 .chat-log {
   overflow: auto;
   overscroll-behavior: contain;
@@ -1692,10 +1737,30 @@ button.group-head {
 
   .app-body {
     grid-template-columns: minmax(0, 1fr);
+    align-content: start;
   }
 
   .chat {
     height: 70vh;
+  }
+
+  .app-body-chat-minimized {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .chat.chat-minimized {
+    height: auto;
+  }
+
+  .chat-rail {
+    flex-direction: row;
+    justify-content: flex-start;
+    height: 40px;
+    padding: 0 var(--space-m);
+  }
+
+  .chat-rail-label {
+    writing-mode: horizontal-tb;
   }
 
   .crumb,

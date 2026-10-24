@@ -1,12 +1,14 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Pencil, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react";
+import { Pencil, Plus, Trash2, TrendingDown, TrendingUp } from "lucide-react";
 import Button from "./ui/Button.jsx";
 import { Input, Select } from "./ui/Input.jsx";
+import SectionToggle from "./ui/SectionToggle.jsx";
+import useSectionOpen from "./useSectionOpen.js";
 
 // What the workspace is trying to optimize. Adding a metric also queues a
 // "Track metric" backlog item (done by the server, in the same transaction).
 export default function Metrics({ metrics, items, call, onError }) {
-  const [open, setOpen] = useState(true);
+  const [open, setOpen] = useSectionOpen("metrics", false);
   const [editing, setEditing] = useState(null);
   const itemsById = new Map(items.map((it) => [it.id, it]));
   const run = (method, suffix, payload) =>
@@ -22,10 +24,9 @@ export default function Metrics({ metrics, items, call, onError }) {
     <section aria-label="Metrics" className="metrics">
       <div className="toolbar">
         <h2>
-          <button type="button" className="section-toggle" aria-expanded={open} onClick={() => setOpen(!open)}>
-            {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+          <SectionToggle open={open} onToggle={setOpen}>
             Metrics
-          </button>
+          </SectionToggle>
         </h2>
         <span className="muted">{metrics.length}</span>
       </div>

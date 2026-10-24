@@ -10,6 +10,7 @@ import Field from "./ui/Field.jsx";
 import { Input, Textarea } from "./ui/Input.jsx";
 import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
+import useSectionOpen from "./useSectionOpen.js";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -35,6 +36,7 @@ export default function Workspace({ id, navigate }) {
   const [metrics, setMetrics] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
   const [live, setLive] = useState(false);
+  const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
   const [error, setError] = useState("");
 
   const loaders = {
@@ -91,7 +93,7 @@ export default function Workspace({ id, navigate }) {
         onError={setError}
         navigate={navigate}
       />
-      <div className={joined ? "app-body" : "app-body app-body-single"}>
+      <div className={!joined ? "app-body app-body-single" : chatOpen ? "app-body" : "app-body app-body-chat-minimized"}>
         <main className={joined ? "app-main panel" : "app-main"}>
           {error && (
             <p role="alert" className="error-bar">
@@ -110,7 +112,18 @@ export default function Workspace({ id, navigate }) {
             <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
           )}
         </main>
-        {joined && <Chat messages={messages} participants={participants} me={me} call={call} onError={setError} />}
+        {joined && (
+          <Chat
+            workspaceId={id}
+            messages={messages}
+            participants={participants}
+            me={me}
+            call={call}
+            onError={setError}
+            open={chatOpen}
+            onToggle={setChatOpen}
+          />
+        )}
       </div>
     </div>
   );
