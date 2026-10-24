@@ -2,7 +2,12 @@ package cli
 
 import (
 	"bytes"
+	"crypto/hmac"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -243,6 +248,64 @@ func TestEndToEnd(t *testing.T) {
 	json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Multi", "--repo", "https://github.com/acme/api=backend", "--repo", "https://github.com/acme/web", "--json")), &multi)
 	if len(multi.Repos) != 2 || multi.Repos[0].Label != "backend" || multi.Repos[1].Label != "" || multi.RepoURL != "https://github.com/acme/api" {
 		t.Errorf("create with two repos = %+v", multi)
+	}
+
+	// Webhooks: a delivery wakes `wait --mentions` with the instructions.
+	out = e.ok(human, "webhook", "add", "GitHub", "--instructions", "Review new PRs", "--signing-secret", "shh")
+	if !strings.Contains(out, "Receive URL") || !strings.Contains(out, "/hooks/wh_") || !strings.Contains(out, "application/json") {
+		t.Errorf("webhook add = %q", out)
+	}
+	hookURL := strings.TrimSpace(e.ok(agent, "webhook", "url", "1"))
+	if !strings.Contains(out, hookURL) {
+		t.Errorf("webhook url %q is not the one printed by add", hookURL)
+	}
+	if out := e.ok(agent, "webhook"); strings.Contains(out, "wh_") || !strings.Contains(out, "[enabled, signed]") {
+		t.Errorf("webhook list = %q", out)
+	}
+	post := func(event string, body []byte) {
+		mac := hmac.New(sha256.New, []byte("shh"))
+		mac.Write(body)
+		req, _ := http.NewRequest("POST", hookURL, bytes.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-GitHub-Event", event)
+		req.Header.Set("X-Hub-Signature-256", "sha256="+hex.EncodeToString(mac.Sum(nil)))
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil || resp.StatusCode != http.StatusAccepted {
+			done <- fmt.Sprintf("POST %s: %v %v", event, err, resp.Status)
+			return
+		}
+		resp.Body.Close()
+	}
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		post("ping", []byte(`{"zen":"Design for failure."}`))
+		post("pull_request", []byte(`{"action":"opened","pull_request":{"number":14,"title":"Add metrics"}}`))
+		done <- ""
+	}()
+	out = e.ok(agent, "wait", "--mentions", "--timeout", "10")
+	if errOut := <-done; errOut != "" {
+		t.Fatal(errOut)
+	}
+	want := `🪝 Webhook "GitHub" (#1) received github: pull_request opened #14 "Add metrics" — delivery 2. Instructions: Review new PRs. Details: unison webhook delivery 2`
+	if strings.TrimSpace(out) != want {
+		t.Errorf("wait = %q\nwant  %q", out, want)
+	}
+	if out := e.ok(agent, "webhook", "deliveries", "1"); !strings.Contains(out, "github: ping") || !strings.Contains(out, "pull_request opened #14") {
+		t.Errorf("deliveries = %q", out)
+	}
+	if out := e.ok(agent, "webhook", "delivery", "2"); !strings.Contains(out, "X-GitHub-Event: pull_request") || !strings.Contains(out, `  "action": "opened",`) {
+		t.Errorf("delivery = %q", out)
+	}
+	rotated := strings.TrimSpace(e.ok(human, "webhook", "rotate", "1"))
+	if !strings.Contains(rotated, "/hooks/wh_") || strings.Contains(rotated, hookURL) {
+		t.Errorf("rotate = %q", rotated)
+	}
+	if out := e.ok(human, "webhook", "edit", "1", "--disable", "--signing-secret", "none"); !strings.Contains(out, "[disabled]") {
+		t.Errorf("webhook edit = %q", out)
+	}
+	e.ok(human, "webhook", "delete", "1")
+	if _, errOut, code := e.run(agent, "webhook", "delivery", "2"); code == 0 || !strings.Contains(errOut, "not found") {
+		t.Errorf("delivery after delete: exit %d, stderr %q", code, errOut)
 	}
 
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, ws.ID) || !strings.Contains(out, "unison wait") {

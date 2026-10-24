@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -15,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -93,6 +95,18 @@ item to make sure it gets tracked):
   metric add <name> [--description D] [--direction increase|decrease] [--unit U] [--target T]
   metric edit <id> [--name N] [--description D] [--direction increase|decrease] [--unit U] [--target T|none]
   metric delete <id>                 (keeps its tracking backlog item)
+
+Webhooks (e.g. from GitHub; each delivery wakes agents with the webhook's
+plain-text instructions):
+  webhook [list]
+  webhook show <id>
+  webhook add <name> --instructions "..." [--signing-secret S]   prints the receive URL
+  webhook edit <id> [--name N] [--instructions I] [--enable|--disable] [--signing-secret S|none]
+  webhook url <id>                   the receive URL (keep it secret)
+  webhook rotate <id>                issue a new receive URL; the old one stops working
+  webhook delete <id>                (also deletes its deliveries)
+  webhook deliveries <id>            recent deliveries
+  webhook delivery <delivery-id>     headers and payload
 
 Real time:
   wait [--mentions] [--timeout SECONDS]   block until something concerns you
@@ -179,6 +193,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.backlog(rest)
 	case "metric", "metrics":
 		return a.metric(rest)
+	case "webhook", "webhooks":
+		return a.webhook(rest)
 	case "wait":
 		return a.wait(rest)
 	}
@@ -1288,6 +1304,220 @@ func (a *app) metricEdit(args []string) error {
 	return a.metricCommand(pos, "PATCH", patch, true)
 }
 
+// ---- webhooks ----
+
+// webhookSecret is the create/rotate/url response.
+type webhookSecret struct {
+	store.Webhook
+	Token string `json:"token"`
+	URL   string `json:"url"`
+}
+
+func (a *app) webhook(args []string) error {
+	sub := "list"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "list", "ls":
+		var list []store.Webhook
+		if ok, err := a.call("GET", "/webhooks", nil, &list, false); !ok {
+			return err
+		}
+		if len(list) == 0 {
+			a.printf("No webhooks yet. Add one: unison webhook add <name> --instructions \"...\"\n")
+		}
+		for _, h := range list {
+			a.printf("%s\n", webhookLine(&h))
+		}
+		return nil
+	case "show":
+		return a.webhookCommand(args, "GET", "", nil, false)
+	case "add":
+		return a.webhookAdd(args)
+	case "edit":
+		return a.webhookEdit(args)
+	case "url":
+		return a.webhookSecretCommand(args, "GET", "/secret", "")
+	case "rotate":
+		return a.webhookSecretCommand(args, "POST", "/rotate", "New receive URL (the old one no longer works):")
+	case "delete", "rm":
+		id, err := oneID(args, "webhook delete <id>")
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/webhooks/%d", id), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Deleted webhook %d and its deliveries.\n", id)
+		return nil
+	case "deliveries":
+		id, err := oneID(args, "webhook deliveries <id>")
+		if err != nil {
+			return err
+		}
+		var list []store.Delivery
+		if ok, err := a.call("GET", fmt.Sprintf("/webhooks/%d/deliveries", id), nil, &list, false); !ok {
+			return err
+		}
+		if len(list) == 0 {
+			a.printf("No deliveries yet.\n")
+		}
+		for _, d := range list {
+			a.printf("%-5d %s  %s\n", d.ID, time.UnixMilli(d.ReceivedAt).Format("Jan 2 15:04:05"), d.Summary)
+		}
+		return nil
+	case "delivery":
+		id, err := oneID(args, "webhook delivery <delivery-id>")
+		if err != nil {
+			return err
+		}
+		var d store.Delivery
+		if ok, err := a.call("GET", fmt.Sprintf("/deliveries/%d", id), nil, &d, true); !ok {
+			return err
+		}
+		a.printDelivery(&d)
+		return nil
+	}
+	return fmt.Errorf("%w: unknown webhook subcommand %q", errUsage, sub)
+}
+
+func oneID(args []string, usage string) (int64, error) {
+	if len(args) != 1 {
+		return 0, fmt.Errorf("%w: %s", errUsage, usage)
+	}
+	return parseID(args[0])
+}
+
+func webhookLine(h *store.Webhook) string {
+	state := "enabled"
+	if !h.Enabled {
+		state = "disabled"
+	}
+	if h.HasSigningSecret {
+		state += ", signed"
+	}
+	last := "no deliveries"
+	if h.LastDeliveryAt != nil {
+		last = fmt.Sprintf("%d deliveries, last %s", h.DeliveryCount, ago(*h.LastDeliveryAt))
+	}
+	return fmt.Sprintf("%-4d %-24s [%s] %s", h.ID, h.Name, state, last)
+}
+
+func (a *app) printWebhook(h *store.Webhook) {
+	a.printf("%s\n", webhookLine(h))
+	if h.Instructions != "" {
+		a.printf("Instructions: %s\n", h.Instructions)
+	}
+}
+
+func (a *app) webhookCommand(args []string, method, suffix string, body any, auth bool) error {
+	id, err := oneID(args, "expected exactly one webhook id")
+	if err != nil {
+		return err
+	}
+	var h store.Webhook
+	if ok, err := a.call(method, fmt.Sprintf("/webhooks/%d%s", id, suffix), body, &h, auth); !ok {
+		return err
+	}
+	a.printWebhook(&h)
+	return nil
+}
+
+func (a *app) webhookSecretCommand(args []string, method, suffix, heading string) error {
+	id, err := oneID(args, "expected exactly one webhook id")
+	if err != nil {
+		return err
+	}
+	var h webhookSecret
+	if ok, err := a.call(method, fmt.Sprintf("/webhooks/%d%s", id, suffix), nil, &h, true); !ok {
+		return err
+	}
+	if heading != "" {
+		a.printf("%s\n", heading)
+	}
+	a.printf("%s\n", h.URL)
+	return nil
+}
+
+func (a *app) webhookAdd(args []string) error {
+	fs := flag.NewFlagSet("webhook add", flag.ContinueOnError)
+	instructions := fs.String("instructions", "", "what agents should do when it fires (plain text)")
+	secret := fs.String("signing-secret", "", "GitHub webhook secret (verifies X-Hub-Signature-256)")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) == 0 {
+		return fmt.Errorf("%w: webhook add <name> --instructions \"...\"", errUsage)
+	}
+	var h webhookSecret
+	req := map[string]string{"name": strings.Join(pos, " "), "instructions": *instructions, "signing_secret": *secret}
+	if ok, err := a.call("POST", "/webhooks", req, &h, true); !ok {
+		return err
+	}
+	a.printWebhook(&h.Webhook)
+	a.printf("\nReceive URL (keep it secret; `unison webhook url %d` shows it again):\n  %s\n", h.ID, h.URL)
+	a.printf("\nGitHub: Settings → Webhooks → Add webhook. Payload URL: the URL above;\n")
+	a.printf("content type: application/json; secret: ")
+	if h.HasSigningSecret {
+		a.printf("the --signing-secret you gave.\n")
+	} else {
+		a.printf("none (add one with `unison webhook edit %d --signing-secret S`).\n", h.ID)
+	}
+	return nil
+}
+
+func (a *app) webhookEdit(args []string) error {
+	fs := flag.NewFlagSet("webhook edit", flag.ContinueOnError)
+	patch := map[string]any{}
+	fs.Func("name", "new name", func(v string) error { patch["name"] = v; return nil })
+	fs.Func("instructions", "new instructions", func(v string) error { patch["instructions"] = v; return nil })
+	fs.Func("signing-secret", "new signing secret, or none to remove it", func(v string) error {
+		if strings.EqualFold(v, "none") {
+			v = ""
+		}
+		patch["signing_secret"] = v
+		return nil
+	})
+	fs.BoolFunc("enable", "accept deliveries", func(string) error { patch["enabled"] = true; return nil })
+	fs.BoolFunc("disable", "reject deliveries (404)", func(string) error { patch["enabled"] = false; return nil })
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	return a.webhookCommand(pos, "PATCH", "", patch, true)
+}
+
+func (a *app) printDelivery(d *store.Delivery) {
+	a.printf("Delivery %d  %s\n", d.ID, d.Summary)
+	a.printf("Webhook   %d\n", d.WebhookID)
+	a.printf("Received  %s\n", time.UnixMilli(d.ReceivedAt).Format(time.RFC3339))
+	keys := make([]string, 0, len(d.Headers))
+	for k := range d.Headers {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		a.printf("%s: %s\n", k, d.Headers[k])
+	}
+	size := fmt.Sprintf("%d bytes", d.Size)
+	if d.Truncated {
+		size += fmt.Sprintf(", truncated to %d", len(*d.Payload))
+	}
+	a.printf("Payload   (%s)\n\n", size)
+	if d.Payload == nil {
+		return
+	}
+	var pretty bytes.Buffer
+	if json.Indent(&pretty, []byte(*d.Payload), "", "  ") == nil {
+		a.printf("%s\n", pretty.String())
+	} else {
+		a.printf("%s\n", *d.Payload)
+	}
+}
+
 // ---- wait ----
 
 func (a *app) wait(args []string) error {
@@ -1387,7 +1617,13 @@ func (f *eventFilter) relevant(e store.Event) bool {
 		}
 		var it store.Item
 		return json.Unmarshal(e.Data, &it) == nil && e.Type == "backlog.assigned" && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
-	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "metric."), strings.HasPrefix(e.Type, "repo."):
+	case e.Type == "webhook.received":
+		// Webhooks are instructions for agents: they wake even --mentions,
+		// except GitHub's setup ping.
+		var d store.DeliveryEvent
+		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
+	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "metric."), strings.HasPrefix(e.Type, "repo."),
+		strings.HasPrefix(e.Type, "webhook."):
 		return !f.mentionsOnly
 	}
 	return false
@@ -1471,6 +1707,21 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		json.Unmarshal(e.Data, &it)
 		verb := map[string]string{"pr.linked": "linked a PR to", "pr.unlinked": "unlinked a PR from"}[e.Type]
 		return fmt.Sprintf("🔗 %s %s #%d %q", who, verb, it.ID, it.Title)
+	case e.Type == "webhook.received":
+		var d store.DeliveryEvent
+		json.Unmarshal(e.Data, &d)
+		line := fmt.Sprintf("🪝 Webhook %q (#%d) received %s — delivery %d.", d.WebhookName, d.WebhookID, d.Summary, d.DeliveryID)
+		if d.Instructions != "" {
+			line += " Instructions: " + d.Instructions
+			if !strings.HasSuffix(d.Instructions, ".") {
+				line += "."
+			}
+		}
+		return line + fmt.Sprintf(" Details: unison webhook delivery %d", d.DeliveryID)
+	case strings.HasPrefix(e.Type, "webhook."):
+		var h store.Webhook
+		json.Unmarshal(e.Data, &h)
+		return fmt.Sprintf("🪝 %s %s webhook %q (#%d)", who, strings.TrimPrefix(e.Type, "webhook."), h.Name, h.ID)
 	case strings.HasPrefix(e.Type, "repo."):
 		var r store.Repo
 		json.Unmarshal(e.Data, &r)
