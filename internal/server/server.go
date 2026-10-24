@@ -90,6 +90,11 @@ func (s *Server) routes() {
 	m.HandleFunc("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
 	m.HandleFunc("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	m.HandleFunc("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
+	m.HandleFunc("GET "+ws+"/backlog/{id}/comments", s.listComments)
+	m.HandleFunc("POST "+ws+"/backlog/{id}/comments", s.auth(s.addComment))
+	m.HandleFunc("DELETE "+ws+"/backlog/{id}/comments/{cid}", s.auth(s.deleteComment))
+	m.HandleFunc("POST "+ws+"/backlog/{id}/prs", s.auth(s.linkPR))
+	m.HandleFunc("DELETE "+ws+"/backlog/{id}/prs", s.auth(s.unlinkPR))
 	m.HandleFunc("GET "+ws+"/metrics", s.listMetrics)
 	m.HandleFunc("POST "+ws+"/metrics", s.auth(s.addMetric))
 	m.HandleFunc("GET "+ws+"/metrics/{id}", s.getMetric)
@@ -180,6 +185,8 @@ func storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrForbidden):
+		writeError(w, http.StatusForbidden, err.Error())
 	default:
 		log.Printf("internal error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -207,8 +214,10 @@ func decode(w http.ResponseWriter, r *http.Request, v any) bool {
 	return true
 }
 
-func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) {
-	id, err := strconv.ParseInt(strings.TrimPrefix(r.PathValue("id"), "#"), 10, 64)
+func pathID(w http.ResponseWriter, r *http.Request) (int64, bool) { return pathInt(w, r, "id") }
+
+func pathInt(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	id, err := strconv.ParseInt(strings.TrimPrefix(r.PathValue(name), "#"), 10, 64)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "id must be a number")
 		return 0, false
@@ -411,6 +420,88 @@ func (s *Server) reopenItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, evs, err := s.store.ReopenItem(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+// ---- Comments and PR links ----
+
+func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.store.ListComments(r.Context(), r.PathValue("ws"), id)
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var req struct {
+		Body string `json:"body"`
+	}
+	if !ok || !decode(w, r, &req) {
+		return
+	}
+	c, evs, err := s.store.AddComment(r.Context(), actor(r), id, req.Body)
+	s.respond(w, http.StatusCreated, c, evs, err)
+}
+
+func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	cid, ok := pathInt(w, r, "cid")
+	if !ok {
+		return
+	}
+	evs, err := s.store.DeleteComment(r.Context(), actor(r), id, cid)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": cid}, evs, err)
+}
+
+// prURL reads the PR URL from a JSON body ({"url": ...}) or ?url=.
+func prURL(w http.ResponseWriter, r *http.Request) (string, bool) {
+	var req struct {
+		URL string `json:"url"`
+	}
+	if !decode(w, r, &req) {
+		return "", false
+	}
+	return firstNonEmpty(req.URL, r.URL.Query().Get("url")), true
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if v != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+func (s *Server) linkPR(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	u, ok := prURL(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.LinkPR(r.Context(), actor(r), id, u)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) unlinkPR(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	u, ok := prURL(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.UnlinkPR(r.Context(), actor(r), id, u)
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 

@@ -29,6 +29,7 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	if closed.Valid {
 		it.ClosedAt = &closed.Int64
 	}
+	it.PRs = []ItemPR{}
 	return &it, nil
 }
 
@@ -37,7 +38,10 @@ func getItem(t *tx, wsID string, id int64) (*Item, error) {
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("backlog item #%d: %w", id, ErrNotFound)
 	}
-	return it, err
+	if err != nil {
+		return nil, err
+	}
+	return it, attachExtras(t, wsID, []*Item{it})
 }
 
 // queuedIDs returns the IDs of open and assigned items in priority order.
@@ -159,16 +163,27 @@ func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, [
 		if err != nil {
 			return err
 		}
-		defer rows.Close()
-		out = []Item{}
+		var list []*Item
 		for rows.Next() {
 			it, err := scanItem(rows)
 			if err != nil {
+				rows.Close()
 				return err
 			}
+			list = append(list, it)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if err := attachExtras(t, wsID, list); err != nil {
+			return err
+		}
+		out = make([]Item, 0, len(list))
+		for _, it := range list {
 			out = append(out, *it)
 		}
-		return rows.Err()
+		return nil
 	})
 	if err != nil {
 		return nil, nil, err
@@ -237,7 +252,8 @@ type ItemPatch struct {
 
 // UpdateItem edits an item's title and/or body.
 func (s *Store) UpdateItem(ctx context.Context, actor *Participant, id int64, p ItemPatch) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.updated", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.updated", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		if p.Title != nil {
 			if strings.TrimSpace(*p.Title) == "" {
 				return fmt.Errorf("%w: item title cannot be empty", ErrInvalid)
@@ -257,7 +273,8 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 	if position < 1 {
 		return nil, nil, fmt.Errorf("%w: position must be >= 1", ErrInvalid)
 	}
-	return s.mutateItem(ctx, actor, id, "backlog.moved", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.moved", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		if it.Status == StatusDone {
 			return fmt.Errorf("%w: item #%d is done; reopen it first", ErrConflict, it.ID)
 		}
@@ -272,7 +289,8 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 // It succeeds only if the item is open, its lease has expired, or it is
 // already assigned to the same participant (which renews the lease).
 func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assigneeID int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.assigned", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.assigned", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		return assign(t, it, assigneeID, now)
 	})
 }
@@ -325,6 +343,9 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 		if err := assign(t, it, actor.ID, log.now); err != nil {
 			return err
 		}
+		if err := attachExtras(t, actor.WorkspaceID, []*Item{it}); err != nil {
+			return err
+		}
 		it.UpdatedAt = log.now
 		return log.add(actor.WorkspaceID, "backlog.assigned", actor.ID, it)
 	})
@@ -336,7 +357,8 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 
 // ReleaseItem returns an assigned item to the open queue.
 func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		if it.Status != StatusAssigned {
 			return fmt.Errorf("%w: item #%d is %s, not assigned", ErrConflict, it.ID, it.Status)
 		}
@@ -348,13 +370,17 @@ func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (
 
 // CloseItem marks an item done with an optional note (e.g. a PR link).
 func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, note string) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.closed", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.closed", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		if it.Status == StatusDone {
 			return fmt.Errorf("%w: item #%d is already done", ErrConflict, it.ID)
 		}
 		it.Status, it.LeaseExpiresAt, it.ClosedAt, it.CloseNote = StatusDone, nil, &now, strings.TrimSpace(note)
 		if _, err := t.Exec(`UPDATE items SET status = ?, position = 0, lease_expires_at = NULL, closed_at = ?, close_note = ?, updated_at = ? WHERE id = ?`,
 			StatusDone, now, it.CloseNote, now, it.ID); err != nil {
+			return err
+		}
+		if err := linkPRsInNote(t, log, actor, it, it.CloseNote); err != nil {
 			return err
 		}
 		ids, err := queuedIDs(t, it.WorkspaceID)
@@ -367,7 +393,8 @@ func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, not
 
 // ReopenItem returns a done item to the bottom of the open queue.
 func (s *Store) ReopenItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *tx, it *Item, now int64) error {
+	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *tx, log *eventLog, it *Item) error {
+		now := log.now
 		if it.Status != StatusDone {
 			return fmt.Errorf("%w: item #%d is not done", ErrConflict, it.ID)
 		}
@@ -389,6 +416,11 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 		if err := unlinkMetrics(t, log, actor, id); err != nil {
 			return err
 		}
+		for _, table := range []string{"item_comments", "item_prs"} {
+			if _, err := t.Exec(`DELETE FROM `+table+` WHERE item_id = ?`, id); err != nil {
+				return err
+			}
+		}
 		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}
@@ -405,7 +437,7 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 
 // mutateItem loads an item (after expiring stale leases), applies fn, then
 // reloads it and records an event of the given type.
-func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, eventType string, fn func(*tx, *Item, int64) error) (*Item, []Event, error) {
+func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, eventType string, fn func(*tx, *eventLog, *Item) error) (*Item, []Event, error) {
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, actor.WorkspaceID); err != nil {
@@ -415,7 +447,7 @@ func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, ev
 		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
 			return err
 		}
-		if err := fn(t, it, log.now); err != nil {
+		if err := fn(t, log, it); err != nil {
 			return err
 		}
 		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
