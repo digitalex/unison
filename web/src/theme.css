@@ -2246,3 +2246,24 @@ button.group-head {
     max-width: none;
   }
 }
+
+/* ---- Agent passes ---- */
+.msg .agent-of {
+  margin-left: 4px;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.pass-status {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  margin: 0;
+  font-size: var(--size-xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.pass-status .lucide {
+  width: 14px;
+  height: 14px;
+}

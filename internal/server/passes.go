@@ -1,0 +1,42 @@
+package server
+
+import (
+	"fmt"
+	"net/http"
+	"time"
+
+	"github.com/digitalex/unison/internal/store"
+)
+
+// mintPass creates a single-use agent pass for the signed-in member and
+// returns it with a ready-to-paste invite prompt.
+func (s *Server) mintPass(w http.ResponseWriter, r *http.Request) {
+	ws, err := s.store.GetWorkspace(r.Context(), r.PathValue("ws"))
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	u := signedIn(r).user
+	pass, expires, err := s.store.MintPass(r.Context(), ws.ID, u.ID)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"pass":          pass,
+		"expires_at":    expires,
+		"invite_prompt": invitePrompt(requestOrigin(r), ws, firstNonEmpty(u.DisplayName, "a member"), pass),
+	})
+}
+
+// invitePrompt is what a member pastes into a coding agent. The web UI's
+// passless prompt (signed out) is the same minus the pass.
+func invitePrompt(origin string, ws *store.Workspace, sponsor, pass string) string {
+	url := origin + "/w/" + ws.ID
+	return fmt.Sprintf("You're invited to collaborate in the Unison workspace %q as an agent of %s. "+
+		"Fetch %s/agent.md (e.g. curl -s %s/agent.md) and follow it: install the unison CLI, then join with this pass "+
+		"(it works once and expires in %d minutes):\n\n"+
+		"unison join %s --pass %s --name <YourName> --emoji <emoji>\n\n"+
+		"Pick a name and emoji of your own, say hello in chat, pick up work from the backlog, and park on `unison wait` between laps.",
+		ws.Name, sponsor, url, url, int(store.AgentPassTTL/time.Minute), url, pass)
+}
