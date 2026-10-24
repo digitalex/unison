@@ -61,6 +61,9 @@ type Participant struct {
 	Status      string `json:"status"`
 	CreatedAt   int64  `json:"created_at"`
 	LastSeenAt  int64  `json:"last_seen_at"`
+	// UserID is the account this participant is linked to (by joining while
+	// signed in, or by a claim); 0 when unlinked.
+	UserID int64 `json:"user_id,omitempty"`
 }
 
 // Message is a chat message. ParentID is set for replies in a thread.
@@ -314,16 +317,18 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 
 // ---- Participants ----
 
-const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at`
+const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at, user_id`
 
 func scanParticipant(row interface{ Scan(...any) error }) (*Participant, error) {
 	var p Participant
-	if err := row.Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt); err != nil {
+	var userID sql.NullInt64
+	if err := row.Scan(&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
+	p.UserID = userID.Int64
 	return &p, nil
 }
 
@@ -335,45 +340,58 @@ var (
 // Join registers a participant in a workspace and returns it with its
 // session token. Empty name or emoji are auto-assigned.
 func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participant, string, []Event, error) {
-	name, emoji = strings.TrimSpace(name), strings.TrimSpace(emoji)
-	if strings.ContainsAny(name, " \t\n@") {
-		return nil, "", nil, fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
-	}
-	token := randomHex(16)
 	var p *Participant
+	var token string
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, wsID)); err != nil {
-			return err
-		}
-		var count int
-		if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE workspace_id = ?`, wsID).Scan(&count); err != nil {
-			return err
-		}
-		if emoji == "" {
-			emoji = defaultEmojis[count%len(defaultEmojis)]
-		}
-		if name == "" {
-			var err error
-			if name, err = freeName(t, wsID); err != nil {
-				return err
-			}
-		}
-		now := log.now
-		id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at) VALUES (?, ?, ?, ?, ?, ?)`, "id",
-			wsID, name, emoji, token, now, now)
-		if err != nil {
-			if isUniqueViolation(err) {
-				return fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
-			}
-			return err
-		}
-		p = &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now}
-		return log.add(wsID, "participant.joined", id, p)
+		var err error
+		p, token, err = insertParticipant(t, log, wsID, name, emoji, 0)
+		return err
 	})
 	if err != nil {
 		return nil, "", nil, err
 	}
 	return p, token, evs, nil
+}
+
+// insertParticipant creates a participant (linked to userID when non-zero)
+// and records participant.joined.
+func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, userID int64) (*Participant, string, error) {
+	name, emoji = strings.TrimSpace(name), strings.TrimSpace(emoji)
+	if strings.ContainsAny(name, " \t\n@") {
+		return nil, "", fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+	}
+	if _, err := scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, wsID)); err != nil {
+		return nil, "", err
+	}
+	var count int
+	if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE workspace_id = ?`, wsID).Scan(&count); err != nil {
+		return nil, "", err
+	}
+	if emoji == "" {
+		emoji = defaultEmojis[count%len(defaultEmojis)]
+	}
+	if name == "" {
+		var err error
+		if name, err = freeName(t, wsID); err != nil {
+			return nil, "", err
+		}
+	}
+	var userArg any
+	if userID != 0 {
+		userArg = userID
+	}
+	token := randomHex(16)
+	now := log.now
+	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id) VALUES (?, ?, ?, ?, ?, ?, ?)`, "id",
+		wsID, name, emoji, token, now, now, userArg)
+	if err != nil {
+		if isUniqueViolation(err) {
+			return nil, "", fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
+		}
+		return nil, "", err
+	}
+	p := &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now, UserID: userID}
+	return p, token, log.add(wsID, "participant.joined", id, p)
 }
 
 func freeName(t *tx, wsID string) (string, error) {
@@ -410,7 +428,7 @@ func (s *Store) Touch(ctx context.Context, id int64) error {
 // ListParticipants returns a workspace's participants, most recently seen
 // first.
 func (s *Store) ListParticipants(ctx context.Context, wsID string) ([]Participant, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+participantCols+` FROM participants WHERE workspace_id = ? ORDER BY last_seen_at DESC`, wsID)
+	rows, err := s.db.QueryContext(ctx, `SELECT `+participantCols+` FROM participants WHERE workspace_id = ? ORDER BY last_seen_at DESC, id DESC`, wsID)
 	if err != nil {
 		return nil, err
 	}

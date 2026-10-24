@@ -60,7 +60,10 @@ Workspaces & identity:
   workspace repo add <url> [--label L]
   workspace repo edit <id> [--label L] [--url U]
   workspace repo remove <id>
-  join <workspace-url> [--name N] [--emoji E]   register; saves .unison.json here
+  join <workspace-url> [--name N] [--emoji E] [--account]
+                                     register; saves .unison.json here. --account
+                                     (humans, after login) links you to your account
+                                     and reuses your participant if you have one
   whoami                             your identity in this workspace
   status <text>                      set your status line ("" clears it)
   who                                participants and who is active
@@ -70,6 +73,12 @@ Accounts (optional for now; workspaces still work by joining):
                                      (device code); saves a token per server
   logout                             sign out (revokes the token)
   whoami --user                      your account on this server
+  claim                              link the participant joined here (.unison.json)
+                                     to your account, e.g. old Alex, Alexmobile...
+  members                            the workspace's members (accounts) and their
+                                     participants
+  members remove <user-id>           remove a member (any member may; their
+                                     participants stay, for history)
 
 Chat:
   chat log [--limit N]               recent messages, with threads
@@ -195,6 +204,10 @@ func run(args []string, stdout io.Writer) error {
 		return a.login(rest)
 	case "logout":
 		return a.logout(rest)
+	case "claim":
+		return a.claim(rest)
+	case "members", "member":
+		return a.members(rest)
 	case "status":
 		return a.status(rest)
 	case "who":
@@ -592,6 +605,7 @@ func (a *app) join(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	name := fs.String("name", "", "your name (one word; auto-assigned if omitted)")
 	emoji := fs.String("emoji", "", "your emoji (auto-assigned if omitted)")
+	account := fs.Bool("account", false, "link the participant to your account (from `unison login`); humans only")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -613,11 +627,20 @@ func (a *app) join(args []string) error {
 	var resp struct {
 		Participant store.Participant `json:"participant"`
 		Token       string            `json:"token"`
+		Existing    bool              `json:"existing,omitempty"`
 	}
-	c := newClient(a.server, "")
-	if err := c.do("POST", path, map[string]string{"name": *name, "emoji": *emoji}, &resp); err != nil {
+	// Joins are anonymous unless --account: agents often run in a shell where
+	// their human has run `unison login`, and must not become that human.
+	userToken := ""
+	if *account {
+		if userToken, err = a.needUserToken(); err != nil {
+			return err
+		}
+	}
+	if err := newClient(a.server, userToken).do("POST", path, map[string]string{"name": *name, "emoji": *emoji}, &resp); err != nil {
 		return err
 	}
+	c := newClient(a.server, "")
 	var events struct {
 		Cursor int64 `json:"cursor"`
 	}
@@ -635,8 +658,17 @@ func (a *app) join(args []string) error {
 		raw, _ := json.Marshal(resp)
 		return a.printJSON(raw)
 	}
-	a.printf("Joined as %s %s (participant %d). Session saved to %s — keep it out of git.\n",
-		resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
+	switch {
+	case resp.Existing:
+		a.printf("Welcome back: you are %s %s (participant %d), linked to your account. Session saved to %s — keep it out of git.\n",
+			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
+	case *account:
+		a.printf("Joined as %s %s (participant %d), linked to your account. Session saved to %s — keep it out of git.\n",
+			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
+	default:
+		a.printf("Joined as %s %s (participant %d). Session saved to %s — keep it out of git.\n",
+			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
+	}
 	a.printf("Next: `unison --agent-help` for the protocol, `unison workspace` to orient.\n")
 	return nil
 }
@@ -650,13 +682,22 @@ func (a *app) whoami(args []string) error {
 	if *user {
 		return a.whoamiUser()
 	}
-	var p store.Participant
+	var p struct {
+		store.Participant
+		User *struct {
+			ID          int64  `json:"id"`
+			DisplayName string `json:"display_name"`
+		} `json:"user"`
+	}
 	if ok, err := a.call("GET", "/me", nil, &p, true); !ok {
 		return err
 	}
 	a.printf("%s %s (participant %d) in workspace %s\n", p.Emoji, p.Name, p.ID, p.WorkspaceID)
 	if p.Status != "" {
 		a.printf("Status: %s\n", p.Status)
+	}
+	if p.User != nil {
+		a.printf("Account: %s (user %d)\n", firstNonEmpty(p.User.DisplayName, "(no name)"), p.User.ID)
 	}
 	return nil
 }

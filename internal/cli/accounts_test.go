@@ -44,23 +44,7 @@ func TestLoginLogout(t *testing.T) {
 		t.Errorf("create before login: exit %d %q, want refused", code, errOut)
 	}
 
-	// Approve whatever code `unison login` prints, the way the device page does.
-	r, w, _ := os.Pipe()
-	done := make(chan string, 1)
-	go func() {
-		var out, errOut bytes.Buffer
-		Run([]string{"--server", ts.URL, "login"}, io.MultiWriter(&out, w), &errOut)
-		w.Close()
-		done <- out.String() + errOut.String()
-	}()
-	code := waitForCode(t, r)
-	req, _ := http.NewRequest("POST", ts.URL+"/api/auth/device/approve", strings.NewReader(`{"user_code":"`+code+`","approve":true}`))
-	req.AddCookie(&http.Cookie{Name: "unison_session", Value: browser})
-	req.Header.Set("X-Unison-CSRF", "1")
-	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
-		t.Fatalf("approve: %v %v", resp, err)
-	}
-	out := <-done
+	out := deviceLogin(t, ts.URL, browser)
 	if !strings.Contains(out, "Signed in as Ada <ada@example.com>") {
 		t.Fatalf("login output:\n%s", out)
 	}
@@ -140,4 +124,27 @@ func TestServerKey(t *testing.T) {
 			t.Errorf("serverKey(%q) = %q, want %q", in, got, want)
 		}
 	}
+}
+
+// deviceLogin runs `unison login` and approves the code it prints, the way
+// the device page does, with the browser session cookie. It returns the
+// command's output.
+func deviceLogin(t *testing.T, server, browserSession string) string {
+	t.Helper()
+	r, w, _ := os.Pipe()
+	done := make(chan string, 1)
+	go func() {
+		var out, errOut bytes.Buffer
+		Run([]string{"--server", server, "login"}, io.MultiWriter(&out, w), &errOut)
+		w.Close()
+		done <- out.String() + errOut.String()
+	}()
+	code := waitForCode(t, r)
+	req, _ := http.NewRequest("POST", server+"/api/auth/device/approve", strings.NewReader(`{"user_code":"`+code+`","approve":true}`))
+	req.AddCookie(&http.Cookie{Name: "unison_session", Value: browserSession})
+	req.Header.Set("X-Unison-CSRF", "1")
+	if resp, err := http.DefaultClient.Do(req); err != nil || resp.StatusCode != 200 {
+		t.Fatalf("approve: %v %v", resp, err)
+	}
+	return <-done
 }

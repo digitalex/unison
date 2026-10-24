@@ -83,6 +83,9 @@ func (s *Server) routes() {
 	m.HandleFunc("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
 	m.HandleFunc("GET "+ws+"/me", s.auth(s.me))
 	m.HandleFunc("PATCH "+ws+"/me", s.auth(s.updateMe))
+	m.HandleFunc("POST "+ws+"/claim", s.requireUser(s.claim))
+	m.HandleFunc("GET "+ws+"/members", s.listMembers)
+	m.HandleFunc("DELETE "+ws+"/members/{user}", s.requireUser(s.removeMember))
 	m.HandleFunc("GET "+ws+"/participants", s.listParticipants)
 	m.HandleFunc("GET "+ws+"/messages", s.listMessages)
 	m.HandleFunc("POST "+ws+"/messages", s.auth(s.postMessage))
@@ -324,12 +327,16 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	if !decode(w, r, &req) {
 		return
 	}
+	if u := s.joiningUser(r); u != nil {
+		s.joinAsUser(w, r, u, req.Name, req.Emoji)
+		return
+	}
 	p, tok, evs, err := s.store.Join(r.Context(), r.PathValue("ws"), req.Name, req.Emoji)
 	s.respond(w, http.StatusCreated, map[string]any{"participant": p, "token": tok}, evs, err)
 }
 
 func (s *Server) me(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, actor(r))
+	s.respondMe(w, r, actor(r))
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
