@@ -12,7 +12,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import Linkify from "./Linkify.jsx";
+import Markdown from "./Markdown.jsx";
 import Button from "./ui/Button.jsx";
 import SectionToggle from "./ui/SectionToggle.jsx";
 import useSectionOpen from "./useSectionOpen.js";
@@ -451,7 +451,7 @@ function Comments({ item, path, participants, me, call, run }) {
             )}
           </div>
           <div className="comment-body">
-            <Linkify text={c.body} />
+            <Markdown text={c.body} />
           </div>
         </div>
       ))}

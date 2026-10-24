@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { MessageSquare, Reply, X } from "lucide-react";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
-import Linkify from "./Linkify.jsx";
+import Markdown from "./Markdown.jsx";
 import SectionToggle from "./ui/SectionToggle.jsx";
 
 // The workspace chat room. Threads are one level deep: replies are listed
@@ -124,7 +124,7 @@ function Message({ message, participants, me, onReply, children }) {
           {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · #{message.id}
         </span>
         <div className="text">
-          <Linkify text={message.body} />
+          <Markdown text={message.body} />
         </div>
         {children}
       </div>
