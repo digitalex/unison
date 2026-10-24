@@ -39,6 +39,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	for _, k := range []string{"UNISON_SERVER", "UNISON_WORKSPACE", "UNISON_TOKEN", "UNISON_CONFIG"} {
 		t.Setenv(k, "")
 	}
+	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
 	return &testEnv{t: t, url: ts.URL}
 }
 

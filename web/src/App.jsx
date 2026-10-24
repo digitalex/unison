@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { AccountMenu, DevicePage, useAccount } from "./Account.jsx";
 import { api } from "./api.js";
 import Workspace from "./Workspace.jsx";
 import Button from "./ui/Button.jsx";
@@ -6,8 +7,10 @@ import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
-// Two pages: "/" lists and creates workspaces; "/w/:id" is a workspace.
+// Pages: "/" lists and creates workspaces; "/w/:id" is a workspace;
+// "/auth/device" approves a `unison login`.
 export default function App() {
+  const account = useAccount();
   const [path, setPath] = useState(window.location.pathname);
   useEffect(() => {
     const onPop = () => setPath(window.location.pathname);
@@ -19,11 +22,12 @@ export default function App() {
     setPath(to);
   };
   const match = path.match(/^\/w\/([^/]+)/);
-  if (match) return <Workspace id={match[1]} navigate={navigate} />;
-  return <Home navigate={navigate} />;
+  if (match) return <Workspace id={match[1]} navigate={navigate} account={account} />;
+  if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
+  return <Home navigate={navigate} account={account} />;
 }
 
-function Home({ navigate }) {
+function Home({ navigate, account }) {
   const [workspaces, setWorkspaces] = useState(null);
   const [error, setError] = useState("");
   const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "" });
@@ -55,6 +59,7 @@ function Home({ navigate }) {
         <h1>Unison</h1>
         <span className="spacer" />
         <ThemeSwitch />
+        <AccountMenu account={account} />
       </header>
       {error && <p role="alert">Error: {error}</p>}
       <section className="card">

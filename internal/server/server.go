@@ -33,12 +33,15 @@ type Server struct {
 	// a single instance (Cloud Run max-instances=1), even with Postgres.
 	mu     sync.Mutex
 	notify chan struct{}
+
+	authCfg AuthConfig
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at
 // its root) and may be nil.
 func New(st *store.Store, web fs.FS) *Server {
 	s := &Server{store: st, web: web, mux: http.NewServeMux(), notify: make(chan struct{})}
+	s.SetAuth(AuthConfig{})
 	s.routes()
 	return s
 }
@@ -120,6 +123,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET /agent.md", s.doorway)
 	m.HandleFunc("GET /w/{ws}/agent.md", s.doorway)
 	m.HandleFunc("GET /download/unison", s.download)
+	s.authRoutes()
 	m.HandleFunc("/", s.serveWeb)
 }
 
@@ -254,7 +258,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Repos     []store.RepoInput `json:"repos"`
 		CanvasURL string            `json:"canvas_url"`
 	}
-	if !decode(w, r, &req) {
+	if !s.mayCreateWorkspace(w, r) || !decode(w, r, &req) {
 		return
 	}
 	ws, evs, err := s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)

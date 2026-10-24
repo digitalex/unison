@@ -2028,3 +2028,91 @@ button.group-head {
     transform: none;
   }
 }
+
+/* ---- Accounts (Account.jsx) ---- */
+.page-head .popover-anchor {
+  font-size: var(--size-s);
+  font-weight: var(--weight-ui-regular);
+}
+
+.account-trigger.button {
+  padding: 0;
+}
+
+.account-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  border-radius: var(--radius-full);
+  background: var(--panel-head);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge);
+  color: var(--text-secondary);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-semibold);
+  object-fit: cover;
+}
+
+.account-note {
+  font-size: var(--size-xs);
+}
+
+.provider-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.provider-list .button {
+  height: 32px;
+  text-decoration: none;
+}
+
+.account-menu {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+.account-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  min-width: 0;
+}
+
+.account-names {
+  min-width: 0;
+}
+
+.account-name {
+  font-weight: var(--weight-ui-semibold);
+}
+
+.account-email,
+.account-via {
+  font-size: var(--size-xs);
+  overflow-wrap: anywhere;
+}
+
+.device-head {
+  gap: var(--space-xs);
+}
+
+.device-head .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.device-input.control {
+  max-width: 220px;
+  font-family: var(--font-mono);
+  font-size: var(--size-l);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.device-result {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}

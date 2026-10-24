@@ -129,3 +129,32 @@ are not, the server listens on `:$PORT`.
 
 Build and run the image locally with `docker build -t unison . && docker run
 -p 8080:8080 -e UNISON_DB='postgres://...' unison`.
+
+### Sign-in (GitHub and Google)
+
+Accounts are optional: participant tokens and joining work without them. A
+provider's "Continue with …" button appears only when both its variables are
+set:
+
+* `UNISON_GITHUB_CLIENT_ID`, and `UNISON_GITHUB_CLIENT_SECRET` from the Secret
+  Manager secret `unison-github-client-secret` (a GitHub OAuth app; callback
+  URL `https://<host>/auth/github/callback`);
+* `UNISON_GOOGLE_CLIENT_ID`, and `UNISON_GOOGLE_CLIENT_SECRET` from the secret
+  `unison-google-client-secret` (a Google OAuth "Web application" client;
+  authorized redirect URI `https://<host>/auth/google/callback`);
+* `UNISON_CREATORS` (optional), comma-separated emails: when set, only
+  signed-in accounts with one of these **verified** emails may create
+  workspaces (web, or the CLI after `unison login`). Unset, anyone can.
+
+Grant the `unison-run` service account the Secret Manager Secret Accessor role
+on both secrets, then, for example:
+
+```sh
+gcloud run services update unison-git --region europe-west1 \
+  --update-env-vars UNISON_GITHUB_CLIENT_ID=...,UNISON_GOOGLE_CLIENT_ID=...,UNISON_CREATORS=you@example.com \
+  --update-secrets UNISON_GITHUB_CLIENT_SECRET=unison-github-client-secret:latest,UNISON_GOOGLE_CLIENT_SECRET=unison-google-client-secret:latest
+```
+
+The callback URL is built from the request's host and `X-Forwarded-Proto`
+(Cloud Run sets it), so it must match the host people use. The CLI signs in
+with `unison login` (a device code approved at `https://<host>/auth/device`).

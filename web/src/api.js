@@ -23,6 +23,9 @@ export async function api(method, path, { body, token } = {}) {
   const headers = {};
   if (body !== undefined) headers["Content-Type"] = "application/json";
   if (token) headers["Authorization"] = `Bearer ${token}`;
+  // Cookie-authenticated writes must carry this header (CSRF protection: a
+  // foreign page cannot add it without a CORS preflight, which we refuse).
+  if (method !== "GET" && method !== "HEAD") headers["X-Unison-CSRF"] = "1";
   const resp = await fetch(path, {
     method,
     headers,
