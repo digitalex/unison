@@ -52,8 +52,12 @@ Server:
 Workspaces & identity:
   workspace [show]                   show the current workspace
   workspace list                     list workspaces on the server
-  workspace create <name> [--repo URL] [--canvas URL]
-  workspace set [--name N] [--repo URL] [--canvas URL]
+  workspace create <name> [--repo URL[=label]]... [--canvas URL]
+  workspace set [--name N] [--repo URL] [--canvas URL]   (--repo: the first repo)
+  workspace repos                    the workspace's code repositories
+  workspace repo add <url> [--label L]
+  workspace repo edit <id> [--label L] [--url U]
+  workspace repo remove <id>
   join <workspace-url> [--name N] [--emoji E]   register; saves .unison.json here
   whoami                             your identity in this workspace
   status <text>                      set your status line ("" clears it)
@@ -395,13 +399,31 @@ func (a *app) workspace(args []string) error {
 			a.printf("No workspaces yet. Create one: unison workspace create <name> --repo <url>\n")
 		}
 		for _, ws := range list {
-			a.printf("%s  %s  %s\n", ws.ID, ws.Name, ws.RepoURL)
+			repos := ws.RepoURL
+			if len(ws.Repos) > 1 {
+				repos += fmt.Sprintf(" (+%d more)", len(ws.Repos)-1)
+			}
+			a.printf("%s  %s  %s\n", ws.ID, ws.Name, repos)
 		}
 		return nil
 	case "create":
 		return a.workspaceCreate(args)
 	case "set":
 		return a.workspaceSet(args)
+	case "repos":
+		var repos []store.Repo
+		if ok, err := a.call("GET", "/repos", nil, &repos, false); !ok {
+			return err
+		}
+		if len(repos) == 0 {
+			a.printf("No repositories yet. Add one: unison workspace repo add <url> --label <name>\n")
+		}
+		for _, r := range repos {
+			a.printf("%s\n", repoLine(r))
+		}
+		return nil
+	case "repo":
+		return a.workspaceRepo(args)
 	}
 	return fmt.Errorf("%w: unknown workspace subcommand %q", errUsage, sub)
 }
@@ -409,13 +431,90 @@ func (a *app) workspace(args []string) error {
 func (a *app) printWorkspace(ws *store.Workspace) {
 	a.printf("Workspace  %s (%s)\n", ws.Name, ws.ID)
 	a.printf("Web UI     %s/w/%s\n", strings.TrimRight(a.server, "/"), ws.ID)
-	a.printf("Repo       %s\n", firstNonEmpty(ws.RepoURL, "(not set)"))
+	if len(ws.Repos) == 0 {
+		a.printf("Repo       (not set)\n")
+	}
+	for i, r := range ws.Repos {
+		heading := "Repos     "
+		if i > 0 {
+			heading = "          "
+		}
+		a.printf("%s %s\n", heading, repoLine(r))
+	}
 	a.printf("Canvas     %s\n", firstNonEmpty(ws.CanvasURL, "(not set)"))
+}
+
+func repoLine(r store.Repo) string {
+	if r.Label == "" {
+		return fmt.Sprintf("%-3d %s", r.ID, r.URL)
+	}
+	return fmt.Sprintf("%-3d %s  (%s)", r.ID, r.URL, r.Label)
+}
+
+// parseRepoFlag splits "URL=label" (the label is optional).
+func parseRepoFlag(v string) store.RepoInput {
+	if i := strings.LastIndex(v, "="); i > 0 && !strings.ContainsAny(v[i+1:], "/:") {
+		return store.RepoInput{URL: v[:i], Label: v[i+1:]}
+	}
+	return store.RepoInput{URL: v}
+}
+
+func (a *app) workspaceRepo(args []string) error {
+	if len(args) == 0 {
+		return fmt.Errorf("%w: workspace repo add|edit|remove", errUsage)
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("workspace repo "+sub, flag.ContinueOnError)
+	patch := map[string]string{}
+	fs.Func("label", "short name, e.g. backend", func(v string) error { patch["label"] = v; return nil })
+	if sub == "edit" {
+		fs.Func("url", "new repository URL", func(v string) error { patch["url"] = v; return nil })
+	}
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	var r store.Repo
+	switch {
+	case sub == "add" && len(pos) == 1:
+		patch["url"] = pos[0]
+		if ok, err := a.call("POST", "/repos", patch, &r, true); !ok {
+			return err
+		}
+		a.printf("Added repository %s\n", repoLine(r))
+		return nil
+	case sub == "edit" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		if ok, err := a.call("PATCH", fmt.Sprintf("/repos/%d", id), patch, &r, true); !ok {
+			return err
+		}
+		a.printf("Updated repository %s\n", repoLine(r))
+		return nil
+	case (sub == "remove" || sub == "rm") && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/repos/%d", id), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Removed repository %d.\n", id)
+		return nil
+	}
+	return fmt.Errorf("%w: workspace repo add <url> [--label L] | edit <id> [--label L] [--url U] | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
 	fs := flag.NewFlagSet("workspace create", flag.ContinueOnError)
-	repo := fs.String("repo", "", "repository URL")
+	var repos []store.RepoInput
+	fs.Func("repo", "repository URL, optionally URL=label (repeatable)", func(v string) error {
+		repos = append(repos, parseRepoFlag(v))
+		return nil
+	})
 	canvas := fs.String("canvas", "", "isocan canvas URL")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
@@ -425,7 +524,7 @@ func (a *app) workspaceCreate(args []string) error {
 		return fmt.Errorf("%w: workspace create <name>", errUsage)
 	}
 	var raw json.RawMessage
-	body := map[string]string{"name": strings.Join(pos, " "), "repo_url": *repo, "canvas_url": *canvas}
+	body := map[string]any{"name": strings.Join(pos, " "), "repos": repos, "canvas_url": *canvas}
 	if err := a.client().do("POST", "/api/workspaces", body, &raw); err != nil {
 		return err
 	}
@@ -1288,7 +1387,7 @@ func (f *eventFilter) relevant(e store.Event) bool {
 		}
 		var it store.Item
 		return json.Unmarshal(e.Data, &it) == nil && e.Type == "backlog.assigned" && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
-	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "metric."):
+	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "metric."), strings.HasPrefix(e.Type, "repo."):
 		return !f.mentionsOnly
 	}
 	return false
@@ -1372,6 +1471,10 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		json.Unmarshal(e.Data, &it)
 		verb := map[string]string{"pr.linked": "linked a PR to", "pr.unlinked": "unlinked a PR from"}[e.Type]
 		return fmt.Sprintf("🔗 %s %s #%d %q", who, verb, it.ID, it.Title)
+	case strings.HasPrefix(e.Type, "repo."):
+		var r store.Repo
+		json.Unmarshal(e.Data, &r)
+		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
 	case strings.HasPrefix(e.Type, "metric."):
 		var m store.Metric
 		json.Unmarshal(e.Data, &m)

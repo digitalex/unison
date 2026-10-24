@@ -164,9 +164,10 @@ function meta(item) {
 const GITHUB_PR = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 const GITHUB_REPO = /github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i;
 
-// prLabel shortens a PR URL: "#4" for the workspace's own repository,
-// "owner/repo#4" for another GitHub repository, else the host name.
-function prLabel(url, repoUrl) {
+// prLabel shortens a PR URL. In a workspace repository it is "label#4" (or
+// "#4" when that is the only repository, else "repo#4"); in another GitHub
+// repository "owner/repo#4"; otherwise the host name.
+function prLabel(url, repos) {
   const pr = url.match(GITHUB_PR);
   if (!pr) {
     try {
@@ -175,10 +176,15 @@ function prLabel(url, repoUrl) {
       return url;
     }
   }
-  const [, owner, repo, number] = pr;
-  const ws = (repoUrl || "").match(GITHUB_REPO);
-  const same = ws && ws[1].toLowerCase() === owner.toLowerCase() && ws[2].toLowerCase() === repo.toLowerCase();
-  return same ? `#${number}` : `${owner}/${repo}#${number}`;
+  const [, owner, name, number] = pr;
+  const same = (r) => {
+    const m = r.url.match(GITHUB_REPO);
+    return m && m[1].toLowerCase() === owner.toLowerCase() && m[2].toLowerCase() === name.toLowerCase();
+  };
+  const repo = repos.find(same);
+  if (!repo) return `${owner}/${name}#${number}`;
+  if (repo.label) return `${repo.label}#${number}`;
+  return repos.length === 1 ? `#${number}` : `${name}#${number}`;
 }
 
 function BacklogItem({ item, prev, next, participants, me, workspace, call, run, moveTo, dnd }) {
@@ -186,7 +192,7 @@ function BacklogItem({ item, prev, next, participants, me, workspace, call, run,
   const path = `/backlog/${item.id}`;
   const queued = item.status !== "done";
   const draggable = CAN_DRAG && queued;
-  const repoUrl = workspace?.repo_url;
+  const repos = workspace?.repos || [];
 
   const edit = () => {
     const title = window.prompt("Title", item.title);
@@ -255,7 +261,7 @@ function BacklogItem({ item, prev, next, participants, me, workspace, call, run,
             {item.prs.map((pr) => (
               <a key={pr.id} className="chip pr-chip" href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.url}>
                 <GitPullRequest aria-hidden="true" />
-                {prLabel(pr.url, repoUrl)}
+                {prLabel(pr.url, repos)}
               </a>
             ))}
             <span className="chip pr-count" title={`${item.prs.length} linked PR${item.prs.length === 1 ? "" : "s"}`}>

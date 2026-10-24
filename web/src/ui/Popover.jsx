@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 
 // A trigger button with a small panel below it. Escape or a click outside
-// closes the panel; `children` receives a `close` callback.
-export default function Popover({ trigger, title, className = "button button-ghost", children }) {
+// closes the panel; `children` receives a `close` callback. align "start"
+// opens it from the trigger's left edge instead of its right.
+export default function Popover({ trigger, title, className = "button button-ghost", align = "end", children }) {
   const [open, setOpen] = useState(false);
   const anchor = useRef(null);
   const button = useRef(null);
@@ -39,7 +40,7 @@ export default function Popover({ trigger, title, className = "button button-gho
         {trigger}
       </button>
       {open && (
-        <div className="popover" role="dialog" aria-label={title}>
+        <div className={align === "start" ? "popover popover-start" : "popover"} role="dialog" aria-label={title}>
           {children(() => setOpen(false))}
         </div>
       )}

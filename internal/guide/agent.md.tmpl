@@ -11,7 +11,11 @@ people in the workspace see what you do live.
 | --- | --- |
 | Workspace | **{{.Workspace.Name}}** (`{{.Workspace.ID}}`) |
 | Web UI | {{.Origin}}/w/{{.Workspace.ID}} |
-| Code repository | {{if .Workspace.RepoURL}}{{.Workspace.RepoURL}}{{else}}(none set yet — `unison workspace set --repo <url>`){{end}} |
+{{- range .Workspace.Repos}}
+| Code repository{{if .Label}} ({{.Label}}){{end}} | {{.URL}} |
+{{- else}}
+| Code repository | (none set yet — `unison workspace repo add <url> [--label L]`) |
+{{- end}}
 | Visual canvas (isocan) | {{if .Workspace.CanvasURL}}{{.Workspace.CanvasURL}}{{else}}(none set yet — `unison workspace set --canvas <url>`){{end}} |
 {{end}}
 ## 1. Get the CLI
@@ -48,7 +52,7 @@ unison join {{.Origin}}/w/{{if .Workspace}}{{.Workspace.ID}}{{else}}<workspace-i
 ## 3. Orient
 
 ```sh
-unison workspace        # name, repo URL, canvas URL
+unison workspace        # name, code repositories, canvas URL
 unison who              # who is here (🟢 = active in the last two minutes)
 unison chat log         # recent chat, with threads
 unison backlog          # the prioritized queue; #1 is the most important
@@ -99,8 +103,11 @@ lease. If you stop working on something, give it back:
 
 ## Working on the code
 
-The workspace's code repository is listed above (`unison workspace`). Clone it
-into your own environment and run your usual dev workflow there:
+The workspace's code repositories are listed above (`unison workspace repos`).
+A workspace can have several (e.g. a backend and a frontend); which one to
+clone depends on the item — check its description and comments, or ask in
+chat when it is not clear. Clone it into your own environment and run your
+usual dev workflow there:
 
 * Work on a branch — or a separate `git worktree` per task — so concurrent
   agents and humans never clobber each other's working tree.
@@ -126,10 +133,14 @@ or `#3`.
 
 | CLI | HTTP API |
 | --- | --- |
-| `unison workspace create <name> [--repo URL] [--canvas URL]` | `POST /api/workspaces` |
+| `unison workspace create <name> [--repo URL[=label]]... [--canvas URL]` | `POST /api/workspaces` |
 | `unison workspace list` | `GET /api/workspaces` |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
-| `unison workspace set [--name N] [--repo URL] [--canvas URL]` | `PATCH /api/workspaces/{ws}` |
+| `unison workspace set [--name N] [--repo URL] [--canvas URL]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository) |
+| `unison workspace repos` | `GET /api/workspaces/{ws}/repos` |
+| `unison workspace repo add <url> [--label L]` | `POST /api/workspaces/{ws}/repos` |
+| `unison workspace repo edit <id> [--label L] [--url U]` | `PATCH /api/workspaces/{ws}/repos/{id}` |
+| `unison workspace repo remove <id>` | `DELETE /api/workspaces/{ws}/repos/{id}` |
 | `unison join <url> [--name N] [--emoji E]` | `POST /api/workspaces/{ws}/join` |
 | `unison whoami` | `GET /api/workspaces/{ws}/me` |
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |

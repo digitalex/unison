@@ -74,6 +74,10 @@ func (s *Server) routes() {
 	m.HandleFunc("GET "+ws, s.getWorkspace)
 	m.HandleFunc("PATCH "+ws, s.auth(s.updateWorkspace))
 	m.HandleFunc("POST "+ws+"/join", s.join)
+	m.HandleFunc("GET "+ws+"/repos", s.listRepos)
+	m.HandleFunc("POST "+ws+"/repos", s.auth(s.addRepo))
+	m.HandleFunc("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
+	m.HandleFunc("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
 	m.HandleFunc("GET "+ws+"/me", s.auth(s.me))
 	m.HandleFunc("PATCH "+ws+"/me", s.auth(s.updateMe))
 	m.HandleFunc("GET "+ws+"/participants", s.listParticipants)
@@ -234,14 +238,15 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string `json:"name"`
-		RepoURL   string `json:"repo_url"`
-		CanvasURL string `json:"canvas_url"`
+		Name      string            `json:"name"`
+		RepoURL   string            `json:"repo_url"`
+		Repos     []store.RepoInput `json:"repos"`
+		CanvasURL string            `json:"canvas_url"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	ws, evs, err := s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL)
+	ws, evs, err := s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
 	s.respond(w, http.StatusCreated, ws, evs, err)
 }
 
@@ -257,6 +262,41 @@ func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, evs, err := s.store.UpdateWorkspace(r.Context(), r.PathValue("ws"), actor(r).ID, p)
 	s.respond(w, http.StatusOK, ws, evs, err)
+}
+
+// ---- Repositories ----
+
+func (s *Server) listRepos(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListRepos(r.Context(), r.PathValue("ws"))
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
+	var req store.RepoInput
+	if !decode(w, r, &req) {
+		return
+	}
+	repo, evs, err := s.store.AddRepo(r.Context(), actor(r), req)
+	s.respond(w, http.StatusCreated, repo, evs, err)
+}
+
+func (s *Server) editRepo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var p store.RepoPatch
+	if !ok || !decode(w, r, &p) {
+		return
+	}
+	repo, evs, err := s.store.EditRepo(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, repo, evs, err)
+}
+
+func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	evs, err := s.store.RemoveRepo(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
 }
 
 // ---- Participants ----
