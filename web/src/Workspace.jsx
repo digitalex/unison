@@ -4,6 +4,7 @@ import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import Metrics from "./Metrics.jsx";
+import Webhooks from "./Webhooks.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Textarea } from "./ui/Input.jsx";
@@ -17,6 +18,7 @@ function collectionFor(type) {
   if (type.startsWith("message.")) return "messages";
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return "backlog";
   if (type.startsWith("metric.")) return "metrics";
+  if (type.startsWith("webhook.")) return "webhooks";
   if (type.startsWith("participant.")) return "participants";
   if (type.startsWith("workspace.") || type.startsWith("repo.")) return "workspace";
   return null;
@@ -31,6 +33,7 @@ export default function Workspace({ id, navigate }) {
   const [messages, setMessages] = useState([]);
   const [backlog, setBacklog] = useState([]);
   const [metrics, setMetrics] = useState([]);
+  const [webhooks, setWebhooks] = useState([]);
   const [live, setLive] = useState(false);
   const [error, setError] = useState("");
 
@@ -40,6 +43,7 @@ export default function Workspace({ id, navigate }) {
     messages: () => call("GET", "/messages?limit=500").then(setMessages),
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
     metrics: () => call("GET", "/metrics").then(setMetrics),
+    webhooks: () => call("GET", "/webhooks").then(setWebhooks),
   };
   const reload = (name) => loaders[name]().catch((e) => setError(e.message));
 
@@ -78,6 +82,7 @@ export default function Workspace({ id, navigate }) {
     <div className="app">
       <TopBar
         workspace={workspace}
+        webhooks={webhooks}
         me={me}
         joined={joined}
         participants={participants}
@@ -111,7 +116,7 @@ export default function Workspace({ id, navigate }) {
   );
 }
 
-function TopBar({ workspace, me, joined, participants, live, call, onError, navigate }) {
+function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate }) {
   return (
     <header className="topbar">
       <div className="ws">
@@ -162,7 +167,7 @@ function TopBar({ workspace, me, joined, participants, live, call, onError, navi
       <Roster participants={participants} me={me} call={call} onError={onError} />
       {me && (
         <Popover title="Workspace settings" className="button button-ghost button-icon" trigger={<Settings aria-hidden="true" />}>
-          {(close) => <WorkspaceSettings workspace={workspace} call={call} onError={onError} onDone={close} />}
+          {(close) => <WorkspaceSettings workspace={workspace} webhooks={webhooks} call={call} onError={onError} onDone={close} />}
         </Popover>
       )}
     </header>
@@ -252,7 +257,7 @@ function JoinForm({ id, call, onJoined }) {
   );
 }
 
-function WorkspaceSettings({ workspace, call, onError, onDone }) {
+function WorkspaceSettings({ workspace, webhooks, call, onError, onDone }) {
   const [form, setForm] = useState(workspace);
   const save = async (e) => {
     e.preventDefault();
@@ -284,6 +289,7 @@ function WorkspaceSettings({ workspace, call, onError, onDone }) {
         </div>
       </form>
       <Repositories repos={workspace.repos || []} call={call} onError={onError} />
+      <Webhooks webhooks={webhooks} call={call} onError={onError} />
     </>
   );
 }

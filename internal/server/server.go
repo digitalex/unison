@@ -104,6 +104,17 @@ func (s *Server) routes() {
 	m.HandleFunc("GET "+ws+"/metrics/{id}", s.getMetric)
 	m.HandleFunc("PATCH "+ws+"/metrics/{id}", s.auth(s.editMetric))
 	m.HandleFunc("DELETE "+ws+"/metrics/{id}", s.auth(s.deleteMetric))
+	m.HandleFunc("GET "+ws+"/webhooks", s.listWebhooks)
+	m.HandleFunc("POST "+ws+"/webhooks", s.auth(s.addWebhook))
+	m.HandleFunc("GET "+ws+"/webhooks/{id}", s.getWebhook)
+	m.HandleFunc("PATCH "+ws+"/webhooks/{id}", s.auth(s.editWebhook))
+	m.HandleFunc("DELETE "+ws+"/webhooks/{id}", s.auth(s.deleteWebhook))
+	m.HandleFunc("POST "+ws+"/webhooks/{id}/rotate", s.auth(s.rotateWebhook))
+	m.HandleFunc("GET "+ws+"/webhooks/{id}/secret", s.auth(s.webhookSecret))
+	m.HandleFunc("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
+	// Payloads can carry data meant for the workspace only: auth required.
+	m.HandleFunc("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
+	m.HandleFunc("POST /hooks/{token}", s.receiveHook)
 	m.HandleFunc("GET "+ws+"/events", s.events)
 	m.HandleFunc("GET "+ws+"/stream", s.stream)
 	m.HandleFunc("GET /agent.md", s.doorway)
@@ -697,11 +708,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 // doorway serves the self-contained agent guide, tailored to a workspace
 // when the path names one.
 func (s *Server) doorway(w http.ResponseWriter, r *http.Request) {
-	scheme := "http"
-	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
-		scheme = "https"
-	}
-	origin := scheme + "://" + r.Host
+	origin := requestOrigin(r)
 	var ws *store.Workspace
 	if id := r.PathValue("ws"); id != "" {
 		var err error

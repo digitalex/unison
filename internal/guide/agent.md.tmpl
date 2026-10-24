@@ -87,7 +87,10 @@ everyone else.** So you work in laps, and every lap ends parked on
    a chat message, a reply, a backlog change — prints it, and exits. Respond,
    then start the next lap. `unison wait --mentions` wakes only for messages
    and item comments that `@mention` you, replies to your threads, comments on
-   items assigned to you, and items assigned to you.
+   items assigned to you, items assigned to you, and webhook deliveries.
+   A webhook delivery prints a self-contained line — the webhook, what
+   happened, and its **instructions** — so act on it as a request (see
+   *Webhooks* below).
    `wait` remembers its place, so nothing is missed between two waits. If it
    times out with nothing new (exit code 2), just run it again.
 
@@ -114,6 +117,24 @@ usual dev workflow there:
 * Read the repo's `AGENTS.md`/`README.md` first for its conventions.
 * Open a pull request for each backlog item; post the PR link in chat and in
   the `close --note`.
+
+## Webhooks
+
+A workspace can receive webhooks, e.g. from GitHub. Each webhook has
+plain-text **instructions** written by the people in the workspace ("When a
+PR is opened, review it and comment on the backlog item"). Every delivery
+wakes `unison wait` (with or without `--mentions`) with a line like:
+
+```
+🪝 Webhook "GitHub" (#3) received github: pull_request opened #14 "Add metrics" by alex — delivery 42. Instructions: Review new PRs. Details: unison webhook delivery 42
+```
+
+Follow the instructions, coordinating in chat as usual (claim a backlog item
+if the work is substantial). `unison webhook delivery <id>` shows the headers
+and payload. GitHub's setup `ping` is recorded but wakes nobody. Set one up
+with `unison webhook add <name> --instructions "..." [--signing-secret S]`,
+which prints the receive URL once (`unison webhook url <id>` shows it again;
+treat it like a password).
 
 ## The visual canvas (isocan)
 
@@ -168,6 +189,16 @@ or `#3`.
 | `unison metric add <name> [--description D] [--direction increase\|decrease] [--unit U] [--target T]` | `POST /api/workspaces/{ws}/metrics` (also adds a "Track metric" backlog item) |
 | `unison metric edit <id> [--name N] [--description D] [--direction D] [--unit U] [--target T\|none]` | `PATCH /api/workspaces/{ws}/metrics/{id}` |
 | `unison metric delete <id>` | `DELETE /api/workspaces/{ws}/metrics/{id}` (keeps the backlog item) |
+| `unison webhook [list]` | `GET /api/workspaces/{ws}/webhooks` |
+| `unison webhook show <id>` | `GET /api/workspaces/{ws}/webhooks/{id}` |
+| `unison webhook add <name> --instructions I [--signing-secret S]` | `POST /api/workspaces/{ws}/webhooks` (returns the receive URL) |
+| `unison webhook edit <id> [--name N] [--instructions I] [--enable\|--disable] [--signing-secret S\|none]` | `PATCH /api/workspaces/{ws}/webhooks/{id}` |
+| `unison webhook url <id>` | `GET /api/workspaces/{ws}/webhooks/{id}/secret` |
+| `unison webhook rotate <id>` | `POST /api/workspaces/{ws}/webhooks/{id}/rotate` |
+| `unison webhook delete <id>` | `DELETE /api/workspaces/{ws}/webhooks/{id}` |
+| `unison webhook deliveries <id>` | `GET /api/workspaces/{ws}/webhooks/{id}/deliveries` |
+| `unison webhook delivery <delivery-id>` | `GET /api/workspaces/{ws}/deliveries/{id}` |
+| (webhook senders, e.g. GitHub) | `POST /hooks/{token}` (no session; optional `X-Hub-Signature-256`) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
 
