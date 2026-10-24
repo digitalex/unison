@@ -14,6 +14,8 @@ import {
 } from "lucide-react";
 import Linkify from "./Linkify.jsx";
 import Button from "./ui/Button.jsx";
+import SectionToggle from "./ui/SectionToggle.jsx";
+import useSectionOpen from "./useSectionOpen.js";
 import { Input, Select } from "./ui/Input.jsx";
 
 // Drag-and-drop reordering is for mouse-like pointers; on touch screens
@@ -30,6 +32,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
   const [showDone, setShowDone] = useState(false);
   const [drag, setDrag] = useState(null); // The item being dragged.
   const [drop, setDrop] = useState(null); // { id, where: "before" | "after" }
+  const [expanded, setExpanded] = useSectionOpen("backlog", true);
   const queued = items.filter((it) => it.status !== "done");
   const assigned = queued.filter((it) => it.status === "assigned");
   const open = queued.filter((it) => it.status === "open");
@@ -85,7 +88,12 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
   return (
     <section aria-label="Backlog">
       <div className="toolbar">
-        <h2>Backlog</h2>
+        <h2>
+          <SectionToggle open={expanded} onToggle={setExpanded}>
+            Backlog
+          </SectionToggle>
+        </h2>
+        <span className="muted">{queued.length}</span>
         <span className="muted toolbar-sub">· prioritized queue, top is most important</span>
         <span className="spacer" />
         <Button variant="primary" onClick={() => run("POST", "/backlog/claim")}>
@@ -93,6 +101,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         </Button>
       </div>
 
+      {expanded && (
+        <>
       <GroupHead status="assigned" label="In progress" count={assigned.length} />
       {group(assigned)}
 
@@ -125,6 +135,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         <span className="count">{done.length}</span>
       </button>
       {showDone && group(done)}
+        </>
+      )}
     </section>
   );
 }

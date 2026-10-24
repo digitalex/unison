@@ -1,19 +1,33 @@
 import { useEffect, useRef, useState } from "react";
-import { Reply, X } from "lucide-react";
+import { MessageSquare, Reply, X } from "lucide-react";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Linkify from "./Linkify.jsx";
+import SectionToggle from "./ui/SectionToggle.jsx";
 
 // The workspace chat room. Threads are one level deep: replies are listed
-// under the message that started the thread.
-export default function Chat({ messages, participants, me, call, onError }) {
+// under the message that started the thread. It can be minimized (open and
+// onToggle come from Workspace, which also gives the space back to the backlog).
+export default function Chat({ workspaceId, messages, participants, me, call, onError, open, onToggle }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
+  const seenKey = `unison.chat.seen.${workspaceId}`;
+  const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
+  const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
   const bottom = useRef(null);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages.length]);
+  }, [messages.length, open]);
+
+  // While chat is open everything is seen; remember the newest message so a
+  // minimized chat can count what arrived since (across reloads too).
+  useEffect(() => {
+    if (open && latestId > seenId) {
+      localStorage.setItem(seenKey, String(latestId));
+      setSeenId(latestId);
+    }
+  }, [open, latestId, seenId, seenKey]);
 
   const byId = new Map(messages.map((m) => [m.id, m]));
   const replies = new Map();
@@ -36,9 +50,17 @@ export default function Chat({ messages, participants, me, call, onError }) {
     }
   };
 
+  if (!open) {
+    return <MinimizedChat unread={messages.filter((m) => m.id > seenId).length} onOpen={() => onToggle(true)} />;
+  }
+
   return (
     <aside className="chat panel" aria-label="Chat">
-      <h2 className="chat-head">Chat</h2>
+      <h2 className="chat-head">
+        <SectionToggle open={open} onToggle={onToggle}>
+          Chat
+        </SectionToggle>
+      </h2>
       <div className="chat-log">
         {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
         {roots.map((m) => (
@@ -111,5 +133,20 @@ function Message({ message, participants, me, onReply, children }) {
         Reply
       </Button>
     </div>
+  );
+}
+
+// The minimized chat: a slim rail (a header row on narrow screens) that shows
+// how many messages arrived since it was minimized.
+function MinimizedChat({ unread, onOpen }) {
+  const label = unread > 0 ? `Open chat, ${unread} new message${unread === 1 ? "" : "s"}` : "Open chat";
+  return (
+    <aside className="chat chat-minimized panel" aria-label="Chat">
+      <button type="button" className="chat-rail" aria-expanded={false} aria-label={label} title={label} onClick={onOpen}>
+        <MessageSquare aria-hidden="true" />
+        <span className="chat-rail-label">Chat</span>
+        {unread > 0 && <span className="chat-unread">{unread}</span>}
+      </button>
+    </aside>
   );
 }
