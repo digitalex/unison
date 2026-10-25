@@ -12,6 +12,7 @@ import { Input, Textarea } from "./ui/Input.jsx";
 import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import useSectionOpen from "./useSectionOpen.js";
+import Splitter, { useChatWidth } from "./ui/Splitter.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -38,6 +39,7 @@ export default function Workspace({ id, navigate, account }) {
   const [webhooks, setWebhooks] = useState([]);
   const [live, setLive] = useState(false);
   const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
+  const chatWidth = useChatWidth();
   const [error, setError] = useState("");
 
   const loaders = {
@@ -95,7 +97,10 @@ export default function Workspace({ id, navigate, account }) {
         navigate={navigate}
         account={account}
       />
-      <div className={!joined ? "app-body app-body-single" : chatOpen ? "app-body" : "app-body app-body-chat-minimized"}>
+      <div
+        className={!joined ? "app-body app-body-single" : chatOpen ? "app-body app-body-resizable" : "app-body app-body-chat-minimized"}
+        style={joined && chatOpen ? { "--chat-width": `${chatWidth.width}px` } : undefined}
+      >
         <main className={joined ? "app-main panel" : "app-main"}>
           {error && (
             <p role="alert" className="error-bar">
@@ -114,6 +119,9 @@ export default function Workspace({ id, navigate, account }) {
             <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
           )}
         </main>
+        {joined && chatOpen && (
+          <Splitter width={chatWidth.width} min={chatWidth.min} max={chatWidth.max} onChange={chatWidth.setWidth} />
+        )}
         {joined && (
           <Chat
             workspaceId={id}

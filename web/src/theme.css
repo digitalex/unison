@@ -667,6 +667,47 @@ textarea.control {
   overflow: hidden;
 }
 
+/* Wide screens: a draggable divider between backlog and chat sets the chat
+   width (--chat-width, set inline). The divider's column replaces the gap. */
+.app-body-resizable {
+  grid-template-columns: minmax(0, 1fr) var(--space-s) var(--chat-width, 360px);
+  column-gap: 0;
+}
+
+.splitter {
+  position: relative;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+
+.splitter::after {
+  content: "";
+  position: absolute;
+  top: var(--space-m);
+  bottom: var(--space-m);
+  left: 50%;
+  width: 2px;
+  margin-left: -1px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background var(--motion-duration) var(--motion-easing);
+}
+
+.splitter:hover::after,
+.splitter.dragging::after {
+  background: var(--border-strong);
+}
+
+.splitter:focus-visible::after {
+  background: var(--focus);
+}
+
+body:has(.splitter.dragging) {
+  cursor: col-resize;
+  user-select: none;
+}
+
 .app-body-single {
   grid-template-columns: minmax(0, 1fr);
 }
@@ -1846,6 +1887,15 @@ button.group-head {
   .app-body {
     grid-template-columns: minmax(0, 1fr);
     align-content: start;
+  }
+
+  .app-body-resizable {
+    grid-template-columns: minmax(0, 1fr);
+    column-gap: var(--space-s);
+  }
+
+  .splitter {
+    display: none;
   }
 
   .chat {
