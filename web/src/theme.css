@@ -2166,3 +2166,83 @@ button.group-head {
   align-items: center;
   gap: var(--space-xs);
 }
+
+/* ---- Membership (Account.jsx) ---- */
+.claim-prompt {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 40px;
+  padding: var(--space-xxs) var(--space-xs) var(--space-xxs) var(--space-m);
+  background: var(--panel-head);
+  border-bottom: var(--border-s) solid var(--panel-edge);
+}
+
+.claim-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.member-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.member-names {
+  flex: 1;
+  min-width: 0;
+}
+
+.member-name {
+  font-weight: var(--weight-ui-medium);
+}
+
+.member-participants,
+.member-unlinked,
+.member-empty {
+  margin: 0;
+  font-size: var(--size-xs);
+  overflow-wrap: anywhere;
+}
+
+.avatar-count {
+  position: absolute;
+  top: -4px;
+  right: -5px;
+  min-width: 13px;
+  height: 13px;
+  padding: 0 3px;
+  border-radius: var(--radius-full);
+  background: var(--text-secondary);
+  box-shadow: 0 0 0 var(--border-l) var(--base);
+  color: var(--base);
+  font-size: 9px;
+  font-weight: var(--weight-ui-semibold);
+  line-height: 13px;
+  text-align: center;
+}
+
+/* Phones: top-bar panels span the viewport (the account control sits right
+   of Settings, so end-aligned panels could otherwise overflow on the left). */
+@media (max-width: 640px) {
+  .topbar .popover {
+    position: fixed;
+    top: 52px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+}

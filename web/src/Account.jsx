@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, LogIn, LogOut, SquareTerminal, X } from "lucide-react";
+import { Check, Link2, LogIn, LogOut, SquareTerminal, X } from "lucide-react";
 import { api } from "./api.js";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
@@ -35,6 +35,7 @@ function currentPath() {
 }
 
 function primaryEmail(user) {
+  if (!user.identities) return "";
   const id = user.identities.find((i) => i.email_verified && i.email) || user.identities.find((i) => i.email);
   return id ? id.email : "";
 }
@@ -53,7 +54,8 @@ export function SignInOptions({ providers, returnTo = currentPath() }) {
   );
 }
 
-function Avatar({ user, size = 24 }) {
+// Avatar shows an account's picture, or its initial.
+export function Avatar({ user, size = 24 }) {
   const initial = (user.display_name || primaryEmail(user) || "?").trim().charAt(0).toUpperCase();
   return user.avatar_url ? (
     <img className="account-avatar" src={user.avatar_url} alt="" width={size} height={size} referrerPolicy="no-referrer" />
@@ -239,5 +241,92 @@ function DeviceResult({ result }) {
     <p className="device-result">
       <X aria-hidden="true" /> Denied. The terminal was not signed in.
     </p>
+  );
+}
+
+// ClaimPrompt offers to link this browser's participant to the signed-in
+// account ("This is you?"). Links are per browser: each device's
+// participant is linked by signing in on it. Dismissal is remembered here.
+export function ClaimPrompt({ me, account, workspaceId, call, onClaimed, onError }) {
+  const key = `unison.claimDismissed.${workspaceId}.${me.id}`;
+  const [dismissed, setDismissed] = useState(() => localStorage.getItem(key) === "1");
+  if (!account.user || me.user_id || dismissed) return null;
+  const link = async () => {
+    try {
+      const p = await call("POST", "/claim");
+      onClaimed({ ...me, user_id: p.user_id, user: { id: account.user.id, display_name: account.user.display_name } });
+    } catch (e) {
+      onError(e.message);
+    }
+  };
+  const dismiss = () => {
+    localStorage.setItem(key, "1");
+    setDismissed(true);
+  };
+  return (
+    <div className="claim-prompt" role="status">
+      <Link2 aria-hidden="true" />
+      <span className="claim-text">
+        This is you? Link{" "}
+        <strong>
+          {me.emoji} {me.name}
+        </strong>{" "}
+        to your account.
+      </span>
+      <Button variant="primary" onClick={link}>
+        Link
+      </Button>
+      <Button variant="ghost" iconOnly aria-label="Dismiss" title="Dismiss" onClick={dismiss}>
+        <X aria-hidden="true" />
+      </Button>
+    </div>
+  );
+}
+
+function participantNames(ps) {
+  return ps.map((p) => `${p.emoji} ${p.name}`).join(" · ");
+}
+
+// Members (Settings): the workspace's accounts with their linked
+// participants. Every member is equal: any signed-in member may remove one.
+export function Members({ members, account, call, onError }) {
+  const remove = async (m) => {
+    const name = m.display_name || `user ${m.user_id}`;
+    if (!window.confirm(`Remove ${name} from this workspace's members? Their participants and history stay.`)) return;
+    try {
+      await call("DELETE", `/members/${m.user_id}`);
+    } catch (e) {
+      onError(e.message);
+    }
+  };
+  return (
+    <section className="settings-section" aria-label="Members">
+      <h3 className="field-label">Members</h3>
+      {members.members.length === 0 && <p className="muted member-empty">No members yet: sign in, then join or link your participant.</p>}
+      <ul className="member-list">
+        {members.members.map((m) => (
+          <li key={m.user_id} className="member-row">
+            <Avatar user={m} size={28} />
+            <div className="member-names">
+              <div className="member-name">{m.display_name || `User ${m.user_id}`}</div>
+              <div className="muted member-participants">{participantNames(m.participants) || "No participants"}</div>
+            </div>
+            {account.user && (
+              <Button
+                variant="ghost"
+                iconOnly
+                className="button-danger"
+                aria-label={`Remove ${m.display_name || `user ${m.user_id}`}`}
+                title="Remove member"
+                onClick={() => remove(m)}
+              >
+                <X aria-hidden="true" />
+              </Button>
+            )}
+          </li>
+        ))}
+      </ul>
+      {members.unlinked.length > 0 && <p className="muted member-unlinked">Not linked to an account: {participantNames(members.unlinked)}</p>}
+    </section>
   );
 }

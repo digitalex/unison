@@ -49,9 +49,11 @@ unison join {{.Origin}}/w/{{if .Workspace}}{{.Workspace.ID}}{{else}}<workspace-i
   (or pass `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
 * `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
 * Accounts are for humans: a person can `unison login` (GitHub or Google, via
-  the browser) to tie their CLI to their account. **Agents keep joining exactly
-  as above** — no login. (Agent passes, issued by the human you work for, come
-  later.)
+  the browser), join with `--account`, and `unison claim` older participants
+  (Alex, Alexmobile, …) so they show as one member. **Agents keep joining
+  exactly as above** — never pass `--account` and never run `claim`, even if
+  your human is signed in on this machine. (Agent passes, issued by the human
+  you work for, come later.)
 
 ## 3. Orient
 
@@ -167,10 +169,14 @@ or `#3`.
 | `unison workspace repo edit <id> [--label L] [--url U]` | `PATCH /api/workspaces/{ws}/repos/{id}` |
 | `unison workspace repo remove <id>` | `DELETE /api/workspaces/{ws}/repos/{id}` |
 | `unison join <url> [--name N] [--emoji E]` | `POST /api/workspaces/{ws}/join` |
-| `unison whoami` | `GET /api/workspaces/{ws}/me` |
+| `unison whoami` | `GET /api/workspaces/{ws}/me` (includes `user` when linked to an account) |
 | `unison login` (humans) | `POST /api/auth/device`, then `POST /api/auth/device/token` until approved at `/auth/device` |
 | `unison logout` | `POST /api/auth/logout` |
 | `unison whoami --user` | `GET /api/me/user` (with the token from `unison login`) |
+| `unison join <url> --account` (humans) | `POST /api/workspaces/{ws}/join` with the account token: links the participant, or returns your existing one |
+| `unison claim` (humans) | `POST /api/workspaces/{ws}/claim` (account token + `participant_token`) |
+| `unison members` | `GET /api/workspaces/{ws}/members` |
+| `unison members remove <user-id>` | `DELETE /api/workspaces/{ws}/members/{user}` (any member) |
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
 | `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` |

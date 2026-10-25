@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus, X } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
-import { AccountMenu } from "./Account.jsx";
+import { AccountMenu, ClaimPrompt, Members } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import Metrics from "./Metrics.jsx";
@@ -16,15 +16,18 @@ import Splitter, { useChatWidth } from "./ui/Splitter.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
-// Which collection each event type invalidates.
+// Which collections each event type invalidates.
 function collectionFor(type) {
-  if (type.startsWith("message.")) return "messages";
-  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return "backlog";
-  if (type.startsWith("metric.")) return "metrics";
-  if (type.startsWith("webhook.")) return "webhooks";
-  if (type.startsWith("participant.")) return "participants";
-  if (type.startsWith("workspace.") || type.startsWith("repo.")) return "workspace";
-  return null;
+  if (type.startsWith("message.")) return ["messages"];
+  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
+  if (type.startsWith("metric.")) return ["metrics"];
+  if (type.startsWith("webhook.")) return ["webhooks"];
+  // Members list each member's participants (names, emoji, links).
+  if (type === "participant.claimed") return ["participants", "members", "me"];
+  if (type.startsWith("participant.")) return ["participants", "members"];
+  if (type.startsWith("member.")) return ["members"];
+  if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
+  return [];
 }
 
 export default function Workspace({ id, navigate, account }) {
@@ -37,6 +40,7 @@ export default function Workspace({ id, navigate, account }) {
   const [backlog, setBacklog] = useState([]);
   const [metrics, setMetrics] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
+  const [members, setMembers] = useState({ members: [], unlinked: [] });
   const [live, setLive] = useState(false);
   const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
   const chatWidth = useChatWidth();
@@ -49,8 +53,10 @@ export default function Workspace({ id, navigate, account }) {
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
     metrics: () => call("GET", "/metrics").then(setMetrics),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
+    members: () => call("GET", "/members").then(setMembers),
   };
-  const reload = (name) => loaders[name]().catch((e) => setError(e.message));
+  const reload = (name) =>
+    (name === "me" ? (joined ? call("GET", "/me").then(setMe) : Promise.resolve()) : loaders[name]()).catch((e) => setError(e.message));
 
   // Initial load and identity check.
   useEffect(() => {
@@ -71,8 +77,7 @@ export default function Workspace({ id, navigate, account }) {
     src.onopen = () => setLive(true);
     src.onerror = () => setLive(false);
     src.onmessage = (msg) => {
-      const name = collectionFor(JSON.parse(msg.data).type);
-      if (name) reload(name);
+      collectionFor(JSON.parse(msg.data).type).forEach(reload);
     };
     const roster = setInterval(() => reload("participants"), 30000);
     return () => {
@@ -96,6 +101,7 @@ export default function Workspace({ id, navigate, account }) {
         onError={setError}
         navigate={navigate}
         account={account}
+        members={members}
       />
       <div
         className={!joined ? "app-body app-body-single" : chatOpen ? "app-body app-body-resizable" : "app-body app-body-chat-minimized"}
@@ -110,6 +116,7 @@ export default function Workspace({ id, navigate, account }) {
               </Button>
             </p>
           )}
+          {joined && me && <ClaimPrompt me={me} account={account} workspaceId={id} call={call} onClaimed={setMe} onError={setError} />}
           {joined ? (
             <>
               <Metrics metrics={metrics} items={backlog} call={call} onError={setError} />
@@ -139,7 +146,7 @@ export default function Workspace({ id, navigate, account }) {
   );
 }
 
-function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate, account }) {
+function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate, account, members }) {
   return (
     <header className="topbar">
       <div className="ws">
@@ -190,7 +197,9 @@ function TopBar({ workspace, webhooks, me, joined, participants, live, call, onE
       <Roster participants={participants} me={me} call={call} onError={onError} />
       {me && (
         <Popover title="Workspace settings" className="button button-ghost button-icon" trigger={<Settings aria-hidden="true" />}>
-          {(close) => <WorkspaceSettings workspace={workspace} webhooks={webhooks} call={call} onError={onError} onDone={close} />}
+          {(close) => (
+            <WorkspaceSettings workspace={workspace} webhooks={webhooks} members={members} account={account} call={call} onError={onError} onDone={close} />
+          )}
         </Popover>
       )}
       <AccountMenu account={account} />
@@ -281,7 +290,7 @@ function JoinForm({ id, call, onJoined }) {
   );
 }
 
-function WorkspaceSettings({ workspace, webhooks, call, onError, onDone }) {
+function WorkspaceSettings({ workspace, webhooks, members, account, call, onError, onDone }) {
   const [form, setForm] = useState(workspace);
   const save = async (e) => {
     e.preventDefault();
@@ -312,6 +321,7 @@ function WorkspaceSettings({ workspace, webhooks, call, onError, onDone }) {
           </Button>
         </div>
       </form>
+      <Members members={members} account={account} call={call} onError={onError} />
       <Repositories repos={workspace.repos || []} call={call} onError={onError} />
       <Webhooks webhooks={webhooks} call={call} onError={onError} />
     </>
@@ -400,7 +410,26 @@ function Invite({ workspace }) {
   );
 }
 
-// Who's here: overlapping emoji avatars with presence dots. Your own avatar
+// rosterGroups folds the participants linked to one account into a single
+// entry shown with its most recently active participant (the list arrives
+// most recently active first). Unlinked participants are their own entries.
+function rosterGroups(participants) {
+  const groups = [];
+  const byUser = new Map();
+  for (const p of participants) {
+    if (p.user_id && byUser.has(p.user_id)) {
+      byUser.get(p.user_id).all.push(p);
+      continue;
+    }
+    const g = { key: p.user_id ? `u${p.user_id}` : `p${p.id}`, primary: p, all: [p] };
+    if (p.user_id) byUser.set(p.user_id, g);
+    groups.push(g);
+  }
+  return groups;
+}
+
+// Who's here: overlapping emoji avatars with presence dots, one per person
+// (participants linked to the same account are grouped). Your own avatar
 // sets your status.
 function Roster({ participants, me, call, onError }) {
   const setStatus = async () => {
@@ -413,22 +442,30 @@ function Roster({ participants, me, call, onError }) {
     }
   };
   const now = Date.now();
+  const groups = rosterGroups(participants);
   return (
     <div className="avatars" role="list" aria-label="Who's here">
-      {participants.map((p, i) => {
-        const active = now - p.last_seen_at < ACTIVE_WINDOW_MS;
-        const mine = me && p.id === me.id;
-        const label = `${p.name}${mine ? " (you)" : ""} — ${p.status || (active ? "active" : "away")}`;
+      {groups.map((g, i) => {
+        const p = g.primary;
+        const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS);
+        const mine = me && g.all.some((q) => q.id === me.id);
+        const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
+        const label = `${p.name}${also}${mine ? " (you)" : ""} — ${p.status || (active ? "active" : "away")}`;
         const content = (
           <>
             {p.emoji}
             <span className="dot" />
+            {g.all.length > 1 && (
+              <span className="avatar-count" aria-hidden="true">
+                {g.all.length}
+              </span>
+            )}
           </>
         );
         const cls = active ? "avatar active" : "avatar";
         return (
           // Earlier avatars stack on top so every presence dot stays visible.
-          <span key={p.id} role="listitem" style={{ zIndex: participants.length - i }}>
+          <span key={g.key} role="listitem" style={{ zIndex: groups.length - i }}>
             {mine ? (
               <button type="button" className={cls} title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
                 {content}
