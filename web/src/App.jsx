@@ -28,15 +28,20 @@ export default function App() {
   return <Home navigate={navigate} account={account} />;
 }
 
-// Home: a landing page for signed-out visitors (with their workspaces below
-// the fold), the workspace list and create form once signed in.
+// Home: a landing page for signed-out visitors, the workspace list and create
+// form once signed in. Workspace names can be sensitive, so signed-out
+// visitors see no lists (and they are not even fetched) unless the server has
+// no sign-in configured at all, as in local development.
 function Home({ navigate, account }) {
   const [workspaces, setWorkspaces] = useState(null);
   const [error, setError] = useState("");
+  const noSignIn = account.ready && account.providers.length === 0;
+  const showLists = Boolean(account.user) || noSignIn;
 
   useEffect(() => {
+    if (!showLists) return;
     api("GET", "/api/workspaces").then(setWorkspaces, (e) => setError(e.message));
-  }, []);
+  }, [showLists]);
 
   const lists = <WorkspaceLists workspaces={workspaces} error={error} navigate={navigate} />;
   if (!account.ready) {
@@ -49,11 +54,13 @@ function Home({ navigate, account }) {
   if (!account.user) {
     return (
       <Landing account={account}>
-        <section className="landing-workspaces" aria-label="Workspaces">
-          {lists}
-          {/* Without sign-in there is no other way to start a workspace. */}
-          {account.providers.length === 0 && <CreateWorkspace navigate={navigate} />}
-        </section>
+        {noSignIn && (
+          <section className="landing-workspaces" aria-label="Workspaces">
+            {lists}
+            {/* Without sign-in there is no other way to start a workspace. */}
+            <CreateWorkspace navigate={navigate} />
+          </section>
+        )}
       </Landing>
     );
   }
