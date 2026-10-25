@@ -130,6 +130,9 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
 	m.HandleFunc("GET /api/me/sessions", s.requireUser(s.listSessions))
 	m.HandleFunc("DELETE /api/me/sessions/{id}", s.requireUser(s.revokeSession))
+	m.HandleFunc("POST /api/me/sessions/revoke-others", s.requireUser(s.revokeOtherSessions))
+	m.HandleFunc("GET /api/me/agents", s.requireUser(s.listMyAgents))
+	m.HandleFunc("POST /api/me/agents/{id}/revoke", s.requireUser(s.revokeAgent))
 }
 
 func (s *Server) provider(name string) *OAuthProvider {
@@ -285,9 +288,17 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	state, verifier := randomString(32), randomString(48)
-	err := s.store.SaveOAuthState(r.Context(), state, store.OAuthState{
-		Provider: p.Name, Verifier: verifier, ReturnTo: safeReturnTo(r.URL.Query().Get("return_to")),
-	})
+	st := store.OAuthState{Provider: p.Name, Verifier: verifier, ReturnTo: safeReturnTo(r.URL.Query().Get("return_to"))}
+	// link=1 while signed in: attach the identity to this user (profile
+	// page). The intent is stored server-side with the state, so the
+	// callback can't be talked into linking for anyone else. Signed out,
+	// link=1 is an ordinary sign-in.
+	if r.URL.Query().Get("link") == "1" {
+		if a, err := s.currentUser(r); err == nil {
+			st.LinkUserID = a.user.ID
+		}
+	}
+	err := s.store.SaveOAuthState(r.Context(), state, st)
 	if err != nil {
 		storeError(w, err)
 		return
@@ -336,6 +347,10 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	prof, err := s.fetchProfile(r.Context(), p, q.Get("code"), st.Verifier, redirectURI(r, p.Name))
 	if err != nil {
 		authFailed(w, http.StatusBadGateway, "Could not sign in with "+p.Label+": "+err.Error())
+		return
+	}
+	if st.LinkUserID != 0 {
+		s.finishLink(w, r, p, st, prof)
 		return
 	}
 	u, err := s.store.LoginWithProvider(r.Context(), p.Name, *prof)
@@ -596,4 +611,48 @@ func (s *Server) deviceApprove(w http.ResponseWriter, r *http.Request) {
 		status = store.DeviceApproved
 	}
 	s.respond(w, http.StatusOK, map[string]any{"status": status, "user_code": formatUserCode(req.UserCode)}, nil, err)
+}
+
+// finishLink completes a link-mode OAuth flow: the browser must still be
+// signed in as the user who started it, and the identity must not belong
+// to someone else. No new session is created.
+func (s *Server) finishLink(w http.ResponseWriter, r *http.Request, p *OAuthProvider, st *store.OAuthState, prof *store.Profile) {
+	a, err := s.currentUser(r)
+	if err != nil || a.user.ID != st.LinkUserID {
+		authFailed(w, http.StatusBadRequest, "You signed out or switched accounts while linking "+p.Label+". Sign in again and retry from your profile.")
+		return
+	}
+	if _, err := s.store.LinkIdentity(r.Context(), a.user.ID, p.Name, *prof); err != nil {
+		if errors.Is(err, store.ErrConflict) {
+			authFailed(w, http.StatusConflict, "That "+p.Label+" account is already linked to another Unison account, so it can't be linked to this one. Sign in with it to use that account instead.")
+			return
+		}
+		storeError(w, err)
+		return
+	}
+	http.Redirect(w, r, st.ReturnTo, http.StatusFound)
+}
+
+// revokeOtherSessions signs out every session but the caller's own.
+func (s *Server) revokeOtherSessions(w http.ResponseWriter, r *http.Request) {
+	a := signedIn(r)
+	n, err := s.store.RevokeOtherSessions(r.Context(), a.user.ID, a.session.ID)
+	s.respond(w, http.StatusOK, map[string]any{"revoked": n}, nil, err)
+}
+
+// listMyAgents lists the agents the caller sponsors, across workspaces.
+func (s *Server) listMyAgents(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListMyAgents(r.Context(), signedIn(r).user.ID)
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+// revokeAgent stops one of the caller's agents (participant id; ids are
+// unique across workspaces).
+func (s *Server) revokeAgent(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	p, evs, err := s.store.RevokeAgent(r.Context(), signedIn(r).user.ID, id)
+	s.respond(w, http.StatusOK, p, evs, err)
 }

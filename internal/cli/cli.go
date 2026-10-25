@@ -84,6 +84,10 @@ Accounts (optional for now; workspaces still work by joining):
                                      stop working)
   pass [--agent]                     mint a single-use agent pass (15 minutes) and
                                      print the invite prompt to paste into an agent
+  sessions                           where you're signed in (browsers, CLIs)
+  sessions revoke <id>|--others      sign out one session, or all but this one
+  agents                             the agents you invited, across workspaces
+  agents revoke <participant-id>     stop one of your agents for good
 
 Chat:
   chat log [--limit N]               recent messages, with threads
@@ -205,6 +209,10 @@ func run(args []string, stdout io.Writer) error {
 		return a.claim(rest)
 	case "pass":
 		return a.pass(rest)
+	case "sessions":
+		return a.sessions(rest)
+	case "agents":
+		return a.agents(rest)
 	case "members", "member":
 		return a.members(rest)
 	case "status":

@@ -175,24 +175,30 @@ func (d db) applySchema(lock, schema string) error {
 	return t.Commit()
 }
 
-// participantColumns are columns added to participants after it was first
-// deployed, each nullable so existing rows (NULL) keep working unchanged:
+// addedColumns are columns added to tables after they were first deployed,
+// each nullable so existing rows (NULL) keep working unchanged:
 //   - user_id: the account a participant is linked to (membership, #15);
 //   - sponsor_user_id: the member who invited an agent with a pass (#16);
 //   - token_expires_at: when a pass-joined agent's token lapses (sliding,
-//     90 days after last use); NULL for everyone else (no expiry).
-var participantColumns = []struct{ name, sqlite, pg string }{
-	{"user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
-	{"sponsor_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
-	{"token_expires_at", "INTEGER", "BIGINT"},
+//     90 days after last use); NULL for everyone else (no expiry);
+//   - revoked_at: when the sponsor revoked an agent's credential (#18).
+//
+// oauth_states.link_user_id (#18) marks a pending OAuth login that links a
+// new identity to an already signed-in user; NULL for ordinary sign-ins.
+var addedColumns = []struct{ table, name, sqlite, pg string }{
+	{"participants", "user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
+	{"participants", "sponsor_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
+	{"participants", "token_expires_at", "INTEGER", "BIGINT"},
+	{"participants", "revoked_at", "INTEGER", "BIGINT"},
+	{"oauth_states", "link_user_id", "INTEGER", "BIGINT"},
 }
 
-// addParticipantColumns adds participantColumns to databases created
-// before them, plus their indexes. Idempotent: it runs on every boot.
+// addParticipantColumns adds addedColumns to databases created before them,
+// plus their indexes. Idempotent: it runs on every boot.
 func (d db) addParticipantColumns(t *sql.Tx) error {
-	for _, c := range participantColumns {
-		if err := d.addColumn(t, "participants", c.name, map[bool]string{false: c.sqlite, true: c.pg}[d.pg]); err != nil {
-			return fmt.Errorf("adding participants.%s: %w", c.name, err)
+	for _, c := range addedColumns {
+		if err := d.addColumn(t, c.table, c.name, map[bool]string{false: c.sqlite, true: c.pg}[d.pg]); err != nil {
+			return fmt.Errorf("adding %s.%s: %w", c.table, c.name, err)
 		}
 	}
 	for _, q := range []string{

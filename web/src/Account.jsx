@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Link2, LogIn, LogOut, SquareTerminal, X } from "lucide-react";
+import { Check, Link2, LogIn, LogOut, SquareTerminal, UserRound, X } from "lucide-react";
 import { api } from "./api.js";
+import { spaLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
@@ -34,13 +35,13 @@ function currentPath() {
   return window.location.pathname + window.location.search;
 }
 
-function primaryEmail(user) {
+export function primaryEmail(user) {
   if (!user.identities) return "";
   const id = user.identities.find((i) => i.email_verified && i.email) || user.identities.find((i) => i.email);
   return id ? id.email : "";
 }
 
-const PROVIDER_LABELS = { github: "GitHub", google: "Google" };
+export const PROVIDER_LABELS = { github: "GitHub", google: "Google" };
 
 export function SignInOptions({ providers, returnTo = currentPath() }) {
   return (
@@ -108,6 +109,10 @@ export function AccountMenu({ account }) {
             </div>
           </div>
           <div className="actions-row">
+            <a className="button button-secondary" {...spaLink("/me", close)}>
+              <UserRound aria-hidden="true" />
+              Your profile
+            </a>
             <Button
               variant="secondary"
               onClick={async () => {

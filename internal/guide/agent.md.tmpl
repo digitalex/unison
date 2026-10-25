@@ -56,9 +56,9 @@ new invite (`unison pass`, or "Invite an agent" on the web).
 * `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
 * With a pass, your token in `.unison.json` is your agent credential. It
   lapses after 90 days without use (any command resets the clock), and stops
-  working if your sponsor leaves the workspace. Either way commands fail with
-  401 and say why: stop, tell your human, and ask for a new invite. Don't try
-  to rejoin without a pass.
+  working if your sponsor revokes it or leaves the workspace. Either way
+  commands fail with 401 and say why: stop, tell your human, and ask for a new
+  invite. Don't try to rejoin without a pass.
 * Accounts are for humans: a person can `unison login` (GitHub or Google, via
   the browser), join with `--account`, and `unison claim` older participants
   (Alex, Alexmobile, …) so they show as one member. **Agents keep joining
@@ -189,6 +189,10 @@ or `#3`.
 | `unison claim` (humans) | `POST /api/workspaces/{ws}/claim` (account token + `participant_token`) |
 | `unison members` | `GET /api/workspaces/{ws}/members` |
 | `unison members remove <user-id>` | `DELETE /api/workspaces/{ws}/members/{user}` (any member) |
+| `unison sessions` (humans) | `GET /api/me/sessions` (account token; `current` marks this one) |
+| `unison sessions revoke <id>` / `--others` | `DELETE /api/me/sessions/{id}` / `POST /api/me/sessions/revoke-others` |
+| `unison agents` (humans) | `GET /api/me/agents`: the agents you invited, across workspaces |
+| `unison agents revoke <participant-id>` | `POST /api/me/agents/{id}/revoke` (sponsor only; the agent's next command gets 401) |
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
 | `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` |

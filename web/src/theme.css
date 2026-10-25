@@ -2596,3 +2596,144 @@ button.group-head {
     padding: var(--space-xs) 8px;
   }
 }
+
+/* ---- Profile page (Profile.jsx) ---- */
+.profile-title {
+  margin: 0;
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  letter-spacing: var(--letter-spacing-l);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.profile-error {
+  border-radius: var(--radius-s);
+}
+
+.profile-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-m) var(--space-m) 0;
+}
+
+.profile-card-head h2 {
+  margin: 0;
+  font-size: var(--size-m);
+  line-height: var(--line-m);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.profile-card-head .field-description {
+  margin: 0;
+}
+
+.profile-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+  padding: var(--space-m);
+}
+
+.profile-who {
+  display: flex;
+  align-items: center;
+  gap: var(--space-m);
+  min-width: 0;
+}
+
+.profile-names {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.profile-name {
+  font-size: var(--size-m);
+  line-height: var(--line-m);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.profile-since {
+  font-size: var(--size-xs);
+}
+
+.prow-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.prow {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  min-width: 0;
+  padding: var(--space-xs) 0;
+  border-bottom: var(--border-s) solid var(--panel-edge);
+}
+
+.prow:last-child {
+  border-bottom: 0;
+}
+
+.prow.revoked .prow-title,
+.prow.revoked .avatar {
+  opacity: 0.6;
+}
+
+.prow-icon {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: var(--radius-s);
+  background: var(--panel-head);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  color: var(--text-secondary);
+}
+
+.prow-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.prow-title {
+  font-weight: var(--weight-ui-medium);
+  overflow-wrap: anywhere;
+}
+
+.prow-meta {
+  font-size: var(--size-xs);
+  overflow-wrap: anywhere;
+}
+
+.chip-accent {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.prow-chip {
+  display: inline-block;
+  margin-left: var(--space-xs);
+  max-width: none;
+  overflow: visible;
+  vertical-align: 1px;
+}
+
+.prow .button,
+.prow .chip {
+  flex: none;
+}
+
+@media (max-width: 640px) {
+  .prow {
+    flex-wrap: wrap;
+  }
+
+  .prow > .button {
+    margin-left: 40px;
+  }
+}
