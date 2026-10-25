@@ -2,13 +2,14 @@ import { useEffect, useState } from "react";
 import { DevicePage, useAccount } from "./Account.jsx";
 import { ApiError, api, getToken } from "./api.js";
 import Landing, { SiteHeader } from "./Landing.jsx";
+import Profile from "./Profile.jsx";
 import Workspace from "./Workspace.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
 // Pages: "/" is Home (the landing page, or the workspace list when signed
-// in); "/w/:id" is a workspace, "/w/:id/settings" its settings;
+// in); "/w/:id" is a workspace, "/w/:id/settings" its settings; "/me" is your profile;
 // "/auth/device" approves a `unison login`.
 export default function App() {
   const account = useAccount();
@@ -25,6 +26,7 @@ export default function App() {
   const match = path.match(/^\/w\/([^/]+)(\/settings)?/);
   if (match) return <Workspace id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
+  if (path === "/me") return <Profile account={account} navigate={navigate} />;
   return <Home navigate={navigate} account={account} />;
 }
 

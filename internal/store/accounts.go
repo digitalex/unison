@@ -291,10 +291,13 @@ func (s *Store) RevokeSession(ctx context.Context, userID, sessionID int64) erro
 // ---- OAuth login state ----
 
 // OAuthState is a pending OAuth login (state, PKCE verifier, return path).
+// LinkUserID, when set, makes it a link: the identity is attached to that
+// (signed-in) user instead of signing in.
 type OAuthState struct {
-	Provider string
-	Verifier string
-	ReturnTo string
+	Provider   string
+	Verifier   string
+	ReturnTo   string
+	LinkUserID int64
 }
 
 // OAuthStateTTL bounds how long a login may take at the provider.
@@ -307,8 +310,8 @@ func (s *Store) SaveOAuthState(ctx context.Context, state string, st OAuthState)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, provider, verifier, return_to, expires_at) VALUES (?, ?, ?, ?, ?)`,
-		HashToken(state), st.Provider, st.Verifier, st.ReturnTo, now+OAuthStateTTL.Milliseconds())
+	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, provider, verifier, return_to, expires_at, link_user_id) VALUES (?, ?, ?, ?, ?, ?)`,
+		HashToken(state), st.Provider, st.Verifier, st.ReturnTo, now+OAuthStateTTL.Milliseconds(), nullable(st.LinkUserID))
 	return err
 }
 
@@ -316,10 +319,11 @@ func (s *Store) SaveOAuthState(ctx context.Context, state string, st OAuthState)
 func (s *Store) TakeOAuthState(ctx context.Context, state string) (*OAuthState, error) {
 	var st OAuthState
 	var expires int64
+	var link sql.NullInt64
 	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		h := HashToken(state)
-		err := t.QueryRow(`SELECT provider, verifier, return_to, expires_at FROM oauth_states WHERE state_hash = ?`, h).
-			Scan(&st.Provider, &st.Verifier, &st.ReturnTo, &expires)
+		err := t.QueryRow(`SELECT provider, verifier, return_to, expires_at, link_user_id FROM oauth_states WHERE state_hash = ?`, h).
+			Scan(&st.Provider, &st.Verifier, &st.ReturnTo, &expires, &link)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -337,6 +341,7 @@ func (s *Store) TakeOAuthState(ctx context.Context, state string) (*OAuthState, 
 	if err != nil {
 		return nil, err
 	}
+	st.LinkUserID = link.Int64
 	return &st, nil
 }
 
@@ -484,4 +489,51 @@ func (s *Store) PollDevice(ctx context.Context, deviceCode, label string) (statu
 		return err
 	})
 	return status, token, err
+}
+
+// LinkIdentity attaches a provider identity to an existing user (the
+// "Link GitHub" flow on the profile page). Linking an identity the user
+// already has refreshes it; one that belongs to another user is
+// ErrConflict: an identity identifies exactly one user.
+func (s *Store) LinkIdentity(ctx context.Context, userID int64, provider string, p Profile) (*User, error) {
+	if provider == "" || p.Subject == "" {
+		return nil, fmt.Errorf("%w: provider and subject are required", ErrInvalid)
+	}
+	email := strings.TrimSpace(p.Email)
+	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		var owner int64
+		err := t.QueryRow(`SELECT user_id FROM user_identities WHERE provider = ? AND subject = ?`, provider, p.Subject).Scan(&owner)
+		switch {
+		case err == nil && owner != userID:
+			return fmt.Errorf("%w: that %s account is already linked to another Unison account; sign in with it instead", ErrConflict, provider)
+		case err == nil:
+			_, err = t.Exec(`UPDATE user_identities SET email = ?, email_verified = ? WHERE provider = ? AND subject = ?`,
+				email, p.EmailVerified, provider, p.Subject)
+			return err
+		case errors.Is(err, sql.ErrNoRows):
+			if _, err := displayName(t, userID); err != nil {
+				return err
+			}
+			_, err = t.Exec(`INSERT INTO user_identities (user_id, provider, subject, email, email_verified, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
+				userID, provider, p.Subject, email, p.EmailVerified, log.now)
+			return err
+		default:
+			return err
+		}
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetUser(ctx, userID)
+}
+
+// RevokeOtherSessions signs out all of the user's sessions except keep (the
+// current one) and returns how many it revoked.
+func (s *Store) RevokeOtherSessions(ctx context.Context, userID, keep int64) (int64, error) {
+	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL AND expires_at > ?`,
+		s.nowMillis(), userID, keep, s.nowMillis())
+	if err != nil {
+		return 0, err
+	}
+	return res.RowsAffected()
 }

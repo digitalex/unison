@@ -73,6 +73,8 @@ type Participant struct {
 	// TokenExpiresAt is when a pass-joined agent's token lapses unless used
 	// (each use pushes it AgentCredentialTTL ahead); 0 means no expiry.
 	TokenExpiresAt int64 `json:"token_expires_at,omitempty"`
+	// RevokedAt is when the sponsor revoked an agent's credential; 0 if not.
+	RevokedAt int64 `json:"revoked_at,omitempty"`
 }
 
 // Sponsor is the member an agent acts for.
@@ -334,21 +336,21 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 
 // participantCols are selected FROM participants (unaliased).
 const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at, user_id, sponsor_user_id,
-	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at`
+	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at, revoked_at`
 
 // scanParticipant scans participantCols, then any extra columns into extra.
 func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Participant, error) {
 	var p Participant
-	var userID, sponsorID, expires sql.NullInt64
+	var userID, sponsorID, expires, revoked sql.NullInt64
 	var sponsorName sql.NullString
-	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires}, extra...)
+	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires, &revoked}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
-	p.UserID, p.TokenExpiresAt = userID.Int64, expires.Int64
+	p.UserID, p.TokenExpiresAt, p.RevokedAt = userID.Int64, expires.Int64, revoked.Int64
 	if sponsorID.Valid {
 		p.Sponsor = &Sponsor{UserID: sponsorID.Int64, DisplayName: sponsorName.String}
 	}
@@ -467,6 +469,10 @@ func (s *Store) Authenticate(ctx context.Context, token string) (*Participant, e
 		FROM participants WHERE token = ?`, token), &sponsorMember)
 	if err != nil {
 		return nil, err
+	}
+	if p.RevokedAt != 0 {
+		return nil, fmt.Errorf("%w: %s revoked this agent credential; ask them for a new invite if you should keep working here",
+			ErrRevoked, p.Sponsor.DisplayName)
 	}
 	if p.TokenExpiresAt != 0 && p.TokenExpiresAt <= s.nowMillis() {
 		return nil, fmt.Errorf("%w: this agent credential expired after %d days without use; ask your human for a new invite (`unison pass`)",

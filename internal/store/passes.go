@@ -110,3 +110,69 @@ func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string
 	}
 	return p, token, evs, nil
 }
+
+// Agent is one of a member's agents, with the workspace it works in.
+type Agent struct {
+	Participant
+	WorkspaceName string `json:"workspace_name"`
+}
+
+// ListMyAgents returns the agents userID sponsors across all workspaces
+// (revoked ones included, marked), most recently seen first.
+func (s *Store) ListMyAgents(ctx context.Context, userID int64) ([]Agent, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT `+participantCols+`,
+		(SELECT name FROM workspaces w WHERE w.id = participants.workspace_id)
+		FROM participants WHERE sponsor_user_id = ? ORDER BY last_seen_at DESC, id DESC`, userID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []Agent{}
+	for rows.Next() {
+		var name string
+		p, err := scanParticipant(rows, &name)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, Agent{Participant: *p, WorkspaceName: name})
+	}
+	return out, rows.Err()
+}
+
+// RevokeAgent stops an agent's credential for good: Authenticate then
+// returns ErrRevoked. Only the agent's sponsor may revoke it (agents act
+// for their sponsor; other members can remove the sponsor, which stops all
+// of the sponsor's agents). Revoking twice is a no-op. Records
+// participant.revoked in the agent's workspace.
+func (s *Store) RevokeAgent(ctx context.Context, userID, participantID int64) (*Participant, []Event, error) {
+	var p *Participant
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		var err error
+		p, err = scanParticipant(t.QueryRow(`SELECT `+participantCols+` FROM participants WHERE id = ?`, participantID))
+		if err != nil {
+			return fmt.Errorf("participant %d: %w", participantID, err)
+		}
+		if p.Sponsor == nil {
+			return fmt.Errorf("%w: participant %d is not an agent (it did not join with a pass)", ErrInvalid, participantID)
+		}
+		if p.Sponsor.UserID != userID {
+			return fmt.Errorf("%w: only %s, who invited %s, can revoke it", ErrForbidden, p.Sponsor.DisplayName, p.Name)
+		}
+		if p.RevokedAt != 0 {
+			return nil
+		}
+		if _, err := t.Exec(`UPDATE participants SET revoked_at = ? WHERE id = ?`, log.now, p.ID); err != nil {
+			return err
+		}
+		p.RevokedAt = log.now
+		var actor int64
+		if me, _, err := usersParticipant(t, p.WorkspaceID, userID); err == nil {
+			actor = me.ID
+		}
+		return log.add(p.WorkspaceID, "participant.revoked", actor, p)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return p, evs, nil
+}
