@@ -96,7 +96,7 @@ func (s *Store) JoinAsUser(ctx context.Context, wsID string, userID int64, name,
 			return err
 		}
 		if !existing {
-			if p, token, err = insertParticipant(t, log, wsID, name, emoji, userID); err != nil {
+			if p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{UserID: userID}); err != nil {
 				return err
 			}
 		}

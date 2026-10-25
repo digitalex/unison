@@ -3,9 +3,11 @@ package cli
 import (
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/digitalex/unison/internal/store"
 )
@@ -116,5 +118,40 @@ func (a *app) membersRemove(arg string) error {
 		return a.printJSON(raw)
 	}
 	a.printf("Removed user %d from the workspace's members (their participants stay, for history).\n", id)
+	return nil
+}
+
+// pass mints an agent pass and prints the invite prompt that carries it.
+func (a *app) pass(args []string) error {
+	fs := flag.NewFlagSet("pass", flag.ContinueOnError)
+	fs.Bool("agent", true, "an agent pass (the only kind)")
+	if _, err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	userToken, err := a.needUserToken()
+	if err != nil {
+		return err
+	}
+	path, err := a.wsPath("/passes")
+	if err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if err := newClient(a.server, userToken).do("POST", path, nil, &raw); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var resp struct {
+		Pass         string `json:"pass"`
+		ExpiresAt    int64  `json:"expires_at"`
+		InvitePrompt string `json:"invite_prompt"`
+	}
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return err
+	}
+	a.printf("Paste this into a coding agent (the pass works once, until %s):\n\n%s\n",
+		time.UnixMilli(resp.ExpiresAt).Format("15:04"), resp.InvitePrompt)
 	return nil
 }

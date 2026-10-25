@@ -60,8 +60,10 @@ Workspaces & identity:
   workspace repo add <url> [--label L]
   workspace repo edit <id> [--label L] [--url U]
   workspace repo remove <id>
-  join <workspace-url> [--name N] [--emoji E] [--account]
-                                     register; saves .unison.json here. --account
+  join <workspace-url> [--name N] [--emoji E] [--pass P | --account]
+                                     register; saves .unison.json here. --pass
+                                     (agents): the pass from your invite, making you
+                                     an agent of the member who sent it. --account
                                      (humans, after login) links you to your account
                                      and reuses your participant if you have one
   whoami                             your identity in this workspace
@@ -78,7 +80,10 @@ Accounts (optional for now; workspaces still work by joining):
   members                            the workspace's members (accounts) and their
                                      participants
   members remove <user-id>           remove a member (any member may; their
-                                     participants stay, for history)
+                                     participants stay, for history; their agents
+                                     stop working)
+  pass [--agent]                     mint a single-use agent pass (15 minutes) and
+                                     print the invite prompt to paste into an agent
 
 Chat:
   chat log [--limit N]               recent messages, with threads
@@ -206,6 +211,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.logout(rest)
 	case "claim":
 		return a.claim(rest)
+	case "pass":
+		return a.pass(rest)
 	case "members", "member":
 		return a.members(rest)
 	case "status":
@@ -606,6 +613,7 @@ func (a *app) join(args []string) error {
 	name := fs.String("name", "", "your name (one word; auto-assigned if omitted)")
 	emoji := fs.String("emoji", "", "your emoji (auto-assigned if omitted)")
 	account := fs.Bool("account", false, "link the participant to your account (from `unison login`); humans only")
+	pass := fs.String("pass", "", "agents: the single-use pass from your invite")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -631,13 +639,20 @@ func (a *app) join(args []string) error {
 	}
 	// Joins are anonymous unless --account: agents often run in a shell where
 	// their human has run `unison login`, and must not become that human.
+	if *account && *pass != "" {
+		return fmt.Errorf("%w: --pass is for agents and --account for humans; use one", errUsage)
+	}
 	userToken := ""
 	if *account {
 		if userToken, err = a.needUserToken(); err != nil {
 			return err
 		}
 	}
-	if err := newClient(a.server, userToken).do("POST", path, map[string]string{"name": *name, "emoji": *emoji}, &resp); err != nil {
+	body := map[string]string{"name": *name, "emoji": *emoji}
+	if *pass != "" {
+		body["pass"] = *pass
+	}
+	if err := newClient(a.server, userToken).do("POST", path, body, &resp); err != nil {
 		return err
 	}
 	c := newClient(a.server, "")
@@ -659,6 +674,11 @@ func (a *app) join(args []string) error {
 		return a.printJSON(raw)
 	}
 	switch {
+	case resp.Participant.Sponsor != nil:
+		a.printf("Joined as %s %s (participant %d), agent of %s. Session saved to %s — keep it out of git.\n",
+			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
+		a.printf("Your credential lapses after %d days without use; if it stops working, ask %s for a new invite.\n",
+			int(store.AgentCredentialTTL.Hours()/24), resp.Participant.Sponsor.DisplayName)
 	case resp.Existing:
 		a.printf("Welcome back: you are %s %s (participant %d), linked to your account. Session saved to %s — keep it out of git.\n",
 			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
@@ -699,6 +719,10 @@ func (a *app) whoami(args []string) error {
 	if p.User != nil {
 		a.printf("Account: %s (user %d)\n", firstNonEmpty(p.User.DisplayName, "(no name)"), p.User.ID)
 	}
+	if p.Sponsor != nil {
+		a.printf("Agent of %s; credential expires %s unless used (each use extends it %d days).\n",
+			p.Sponsor.DisplayName, time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02 15:04"), int(store.AgentCredentialTTL.Hours()/24))
+	}
 	return nil
 }
 
@@ -726,6 +750,9 @@ func (a *app) who() error {
 			dot = "🟢"
 		}
 		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, p.Name)
+		if p.Sponsor != nil {
+			line += " · agent of " + p.Sponsor.DisplayName
+		}
 		if p.Status != "" {
 			line += " — " + p.Status
 		}

@@ -120,6 +120,7 @@ function Message({ message, participants, me, onReply, children }) {
       )}
       <div>
         <span className="who">{author ? (isReply ? `${author.emoji} ${author.name}` : author.name) : `participant ${message.author_id}`}</span>
+        {author?.sponsor && <span className="agent-of">· agent of {author.sponsor.display_name}</span>}
         <span className="time" title={created.toLocaleString()}>
           {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · #{message.id}
         </span>

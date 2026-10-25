@@ -84,6 +84,7 @@ func (s *Server) routes() {
 	m.HandleFunc("GET "+ws+"/me", s.auth(s.me))
 	m.HandleFunc("PATCH "+ws+"/me", s.auth(s.updateMe))
 	m.HandleFunc("POST "+ws+"/claim", s.requireUser(s.claim))
+	m.HandleFunc("POST "+ws+"/passes", s.requireUser(s.mintPass))
 	m.HandleFunc("GET "+ws+"/members", s.listMembers)
 	m.HandleFunc("DELETE "+ws+"/members/{user}", s.requireUser(s.removeMember))
 	m.HandleFunc("GET "+ws+"/participants", s.listParticipants)
@@ -162,6 +163,10 @@ func token(r *http.Request) string {
 func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		p, err := s.store.Authenticate(r.Context(), token(r))
+		if errors.Is(err, store.ErrRevoked) {
+			writeError(w, http.StatusUnauthorized, err.Error())
+			return
+		}
 		if err != nil {
 			writeError(w, http.StatusUnauthorized, "missing or invalid session token; join the workspace first (POST /api/workspaces/{ws}/join)")
 			return
@@ -323,8 +328,14 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name  string `json:"name"`
 		Emoji string `json:"emoji"`
+		Pass  string `json:"pass"`
 	}
 	if !decode(w, r, &req) {
+		return
+	}
+	if req.Pass != "" {
+		p, tok, evs, err := s.store.JoinWithPass(r.Context(), r.PathValue("ws"), req.Pass, req.Name, req.Emoji)
+		s.respond(w, http.StatusCreated, map[string]any{"participant": p, "token": tok}, evs, err)
 		return
 	}
 	if u := s.joiningUser(r); u != nil {

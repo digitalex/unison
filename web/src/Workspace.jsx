@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus, X } from "lucide-react";
+import { FolderGit2, KeyRound, LayoutGrid, ArrowUpRight, RefreshCw, Settings, UserPlus, X } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu, ClaimPrompt, Members } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
@@ -192,7 +192,7 @@ function TopBar({ workspace, webhooks, me, joined, participants, live, call, onE
           </>
         }
       >
-        {() => <Invite workspace={workspace} />}
+        {() => <Invite workspace={workspace} account={account} members={members} call={call} />}
       </Popover>
       <Roster participants={participants} me={me} call={call} onError={onError} />
       {me && (
@@ -390,21 +390,62 @@ function RepoRow({ repo, run }) {
   );
 }
 
-function Invite({ workspace }) {
+// Invite an agent. A signed-in member gets a single-use pass (15 minutes)
+// embedded in the prompt, so the agent joins as their agent; otherwise the
+// prompt is passless (anyone with the link can join, as before).
+function Invite({ workspace, account, members, call }) {
+  const member = Boolean(account.user && members.members.some((m) => m.user_id === account.user.id));
+  const [minted, setMinted] = useState(null); // {pass, expires_at, invite_prompt}
+  const [error, setError] = useState("");
+  const [now, setNow] = useState(Date.now());
+  const mint = () => {
+    setError("");
+    call("POST", "/passes").then(setMinted, (e) => setError(e.message));
+  };
+  useEffect(() => {
+    if (member) mint();
+  }, [member]);
+  useEffect(() => {
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
   const doorway = `${window.location.origin}/w/${workspace.id}/agent.md`;
-  const prompt =
+  const passless =
     `You're invited to collaborate in the Unison workspace "${workspace.name}". ` +
     `Fetch ${doorway} (e.g. curl -s ${doorway}) and follow it: install the unison CLI, ` +
     `join with a name and emoji of your own, say hello in chat, pick up work from the backlog, ` +
     `and park on \`unison wait\` between laps.`;
+  const left = minted ? Math.max(0, Math.round((minted.expires_at - now) / 1000)) : 0;
+  const prompt = member ? (minted && left > 0 ? minted.invite_prompt : "") : passless;
   return (
     <>
       <p>Paste this into any coding agent:</p>
-      <Textarea readOnly value={prompt} rows={6} onFocus={(e) => e.target.select()} />
+      <Textarea readOnly value={prompt} rows={member ? 8 : 6} onFocus={(e) => e.target.select()} placeholder={member && !error ? "Making a pass…" : ""} />
+      {member && minted && (
+        <p className="pass-status muted" aria-live="polite">
+          <KeyRound aria-hidden="true" />
+          {left > 0 ? `Pass works once · expires in ${Math.floor(left / 60)}:${String(left % 60).padStart(2, "0")}` : "Pass expired"}
+        </p>
+      )}
+      {error && <p role="alert">Error: {error}</p>}
+      {!member && (
+        <p className="pass-status muted">
+          <KeyRound aria-hidden="true" />
+          {account.user
+            ? "Join or link your participant to send a secure, single-use invite."
+            : "Sign in for a secure, single-use invite: the agent then works as your agent."}
+        </p>
+      )}
       <div className="actions-row">
-        <Button type="button" onClick={() => navigator.clipboard.writeText(prompt)}>
+        <Button type="button" disabled={!prompt} onClick={() => navigator.clipboard.writeText(prompt)}>
           Copy
         </Button>
+        {member && (
+          <Button type="button" variant="ghost" onClick={mint}>
+            <RefreshCw aria-hidden="true" />
+            New pass
+          </Button>
+        )}
       </div>
     </>
   );
@@ -450,7 +491,8 @@ function Roster({ participants, me, call, onError }) {
         const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS);
         const mine = me && g.all.some((q) => q.id === me.id);
         const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
-        const label = `${p.name}${also}${mine ? " (you)" : ""} — ${p.status || (active ? "active" : "away")}`;
+        const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
+        const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — ${p.status || (active ? "active" : "away")}`;
         const content = (
           <>
             {p.emoji}
