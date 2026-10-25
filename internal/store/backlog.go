@@ -413,9 +413,6 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 		if err != nil {
 			return err
 		}
-		if err := unlinkMetrics(t, log, actor, id); err != nil {
-			return err
-		}
 		for _, table := range []string{"item_comments", "item_prs"} {
 			if _, err := t.Exec(`DELETE FROM `+table+` WHERE item_id = ?`, id); err != nil {
 				return err

@@ -1,6 +1,6 @@
 import { useState } from "react";
 
-// Whether a collapsible section (metrics, backlog, chat) is open. The choice
+// Whether a collapsible section (backlog, chat) is open. The choice
 // is remembered per browser so the layout stays the way the person left it.
 export default function useSectionOpen(key, defaultOpen) {
   const storageKey = `unison.section.${key}`;

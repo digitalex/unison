@@ -108,14 +108,6 @@ Backlog (#1 is the highest priority):
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
-Metrics (what the workspace is optimizing; adding one also adds a backlog
-item to make sure it gets tracked):
-  metric [list]
-  metric show <id>
-  metric add <name> [--description D] [--direction increase|decrease] [--unit U] [--target T]
-  metric edit <id> [--name N] [--description D] [--direction increase|decrease] [--unit U] [--target T|none]
-  metric delete <id>                 (keeps its tracking backlog item)
-
 Webhooks (e.g. from GitHub; each delivery wakes agents with the webhook's
 plain-text instructions):
   webhook [list]
@@ -223,8 +215,6 @@ func run(args []string, stdout io.Writer) error {
 		return a.chat(rest)
 	case "backlog":
 		return a.backlog(rest)
-	case "metric", "metrics":
-		return a.metric(rest)
 	case "webhook", "webhooks":
 		return a.webhook(rest)
 	case "wait":
@@ -1238,163 +1228,6 @@ func (a *app) backlogAssign(args []string) error {
 	return a.itemCommand(pos, "POST", "/assign", body, true)
 }
 
-// ---- metrics ----
-
-func (a *app) metric(args []string) error {
-	sub := "list"
-	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
-		sub, args = args[0], args[1:]
-	}
-	switch sub {
-	case "list", "ls":
-		var list []store.Metric
-		if ok, err := a.call("GET", "/metrics", nil, &list, false); !ok {
-			return err
-		}
-		if len(list) == 0 {
-			a.printf("No metrics yet. Add one: unison metric add <name> --direction increase|decrease\n")
-		}
-		for _, m := range list {
-			a.printf("%s\n", metricLine(&m))
-		}
-		return nil
-	case "show":
-		return a.metricCommand(args, "GET", nil, false)
-	case "add":
-		return a.metricAdd(args)
-	case "edit":
-		return a.metricEdit(args)
-	case "delete", "rm":
-		if len(args) != 1 {
-			return fmt.Errorf("%w: metric delete <id>", errUsage)
-		}
-		id, err := parseID(args[0])
-		if err != nil {
-			return err
-		}
-		var out map[string]any
-		if ok, err := a.call("DELETE", fmt.Sprintf("/metrics/%d", id), nil, &out, true); !ok {
-			return err
-		}
-		a.printf("Deleted metric %d (its tracking backlog item is kept).\n", id)
-		return nil
-	}
-	return fmt.Errorf("%w: unknown metric subcommand %q", errUsage, sub)
-}
-
-// metricCommand runs method on /metrics/{id} and prints the metric.
-func (a *app) metricCommand(args []string, method string, body any, auth bool) error {
-	if len(args) != 1 {
-		return fmt.Errorf("%w: expected exactly one metric id", errUsage)
-	}
-	id, err := parseID(args[0])
-	if err != nil {
-		return err
-	}
-	var m store.Metric
-	if ok, err := a.call(method, fmt.Sprintf("/metrics/%d", id), body, &m, auth); !ok {
-		return err
-	}
-	a.printMetricDetail(&m)
-	return nil
-}
-
-func directionArrow(direction string) string {
-	if direction == store.DirectionDecrease {
-		return "↓"
-	}
-	return "↑"
-}
-
-func metricLine(m *store.Metric) string {
-	line := fmt.Sprintf("%-4d %s %-30s", m.ID, directionArrow(m.Direction), m.Name)
-	if t := m.FormatTarget(); t != "" {
-		line += "  target " + t
-	} else if m.Unit != "" {
-		line += "  (" + m.Unit + ")"
-	}
-	if m.ItemID != nil {
-		line += fmt.Sprintf("  tracked by #%d", *m.ItemID)
-	}
-	return line
-}
-
-func (a *app) printMetricDetail(m *store.Metric) {
-	a.printf("Metric %d  %s\n", m.ID, m.Name)
-	a.printf("Goal      %s %s\n", directionArrow(m.Direction), m.Direction)
-	if t := m.FormatTarget(); t != "" {
-		a.printf("Target    %s\n", t)
-	} else if m.Unit != "" {
-		a.printf("Unit      %s\n", m.Unit)
-	}
-	if m.ItemID != nil {
-		a.printf("Tracking  backlog item #%d (unison backlog show %d)\n", *m.ItemID, *m.ItemID)
-	}
-	if m.Description != "" {
-		a.printf("\n%s\n", m.Description)
-	}
-}
-
-// targetFlag parses --target: a number, or "none" to clear it.
-func targetFlag(v string) (any, error) {
-	if v == "" || strings.EqualFold(v, "none") {
-		return nil, nil
-	}
-	f, err := strconv.ParseFloat(v, 64)
-	if err != nil {
-		return nil, fmt.Errorf("%w: --target must be a number (or none)", errUsage)
-	}
-	return f, nil
-}
-
-func (a *app) metricAdd(args []string) error {
-	fs := flag.NewFlagSet("metric add", flag.ContinueOnError)
-	req := map[string]any{}
-	fs.Func("description", "what the metric measures", func(v string) error { req["description"] = v; return nil })
-	fs.Func("direction", "increase (default) or decrease", func(v string) error { req["direction"] = v; return nil })
-	fs.Func("unit", "unit, e.g. ms or %", func(v string) error { req["unit"] = v; return nil })
-	fs.Func("target", "target value", func(v string) error {
-		t, err := targetFlag(v)
-		req["target"] = t
-		return err
-	})
-	pos, err := parseFlags(fs, args)
-	if err != nil {
-		return err
-	}
-	if len(pos) == 0 {
-		return fmt.Errorf("%w: metric add <name>", errUsage)
-	}
-	req["name"] = strings.Join(pos, " ")
-	var m store.Metric
-	if ok, err := a.call("POST", "/metrics", req, &m, true); !ok {
-		return err
-	}
-	a.printMetricDetail(&m)
-	if m.ItemID != nil {
-		a.printf("\nAdded backlog item #%d to make sure this metric is tracked.\n", *m.ItemID)
-	}
-	return nil
-}
-
-func (a *app) metricEdit(args []string) error {
-	fs := flag.NewFlagSet("metric edit", flag.ContinueOnError)
-	patch := map[string]any{}
-	for _, f := range []string{"name", "description", "direction", "unit"} {
-		fs.Func(f, "new "+f, func(v string) error { patch[f] = v; return nil })
-	}
-	fs.Func("target", "new target value, or none to clear it", func(v string) error {
-		t, err := targetFlag(v)
-		patch["target"] = t
-		return err
-	})
-	pos, err := parseFlags(fs, args)
-	if err != nil {
-		return err
-	}
-	return a.metricCommand(pos, "PATCH", patch, true)
-}
-
 // ---- webhooks ----
 
 // webhookSecret is the create/rotate/url response.
@@ -1713,7 +1546,7 @@ func (f *eventFilter) relevant(e store.Event) bool {
 		// except GitHub's setup ping.
 		var d store.DeliveryEvent
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
-	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "metric."), strings.HasPrefix(e.Type, "repo."),
+	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
 		strings.HasPrefix(e.Type, "webhook."):
 		return !f.mentionsOnly
 	}
@@ -1817,10 +1650,6 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var r store.Repo
 		json.Unmarshal(e.Data, &r)
 		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
-	case strings.HasPrefix(e.Type, "metric."):
-		var m store.Metric
-		json.Unmarshal(e.Data, &m)
-		return fmt.Sprintf("📈 %s %s metric %d %q", who, strings.TrimPrefix(e.Type, "metric."), m.ID, m.Name)
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
 }
