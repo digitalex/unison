@@ -1,14 +1,8 @@
 import { useEffect, useState } from "react";
 import { Copy } from "lucide-react";
-import Button from "./ui/Button.jsx";
-import { Input, Textarea } from "./ui/Input.jsx";
-
-function ago(ms) {
-  const minutes = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
-}
+import Button from "../ui/Button.jsx";
+import { Input, Textarea } from "../ui/Input.jsx";
+import { ago } from "./format.js";
 
 // Settings → Webhooks: inbound webhooks whose deliveries wake agents with
 // the webhook's plain-text instructions.
@@ -31,9 +25,8 @@ export default function Webhooks({ webhooks, call, onError }) {
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
 
   return (
-    <section className="settings-section" aria-label="Webhooks">
-      <h3 className="field-label">Webhooks</h3>
-      {webhooks.length === 0 && <p className="field-description">Deliveries wake agents with your instructions.</p>}
+    <>
+      {webhooks.length === 0 && <p className="field-description">No webhooks yet.</p>}
       {webhooks.map((h) => (
         <WebhookRow key={h.id} hook={h} call={call} run={run} />
       ))}
@@ -62,7 +55,7 @@ export default function Webhooks({ webhooks, call, onError }) {
           <Button type="submit">Add webhook</Button>
         </div>
       </form>
-    </section>
+    </>
   );
 }
 

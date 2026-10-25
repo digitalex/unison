@@ -8,7 +8,7 @@ import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
 // Pages: "/" is Home (the landing page, or the workspace list when signed
-// in); "/w/:id" is a workspace;
+// in); "/w/:id" is a workspace, "/w/:id/settings" its settings;
 // "/auth/device" approves a `unison login`.
 export default function App() {
   const account = useAccount();
@@ -22,8 +22,8 @@ export default function App() {
     window.history.pushState(null, "", to);
     setPath(to);
   };
-  const match = path.match(/^\/w\/([^/]+)/);
-  if (match) return <Workspace id={match[1]} navigate={navigate} account={account} />;
+  const match = path.match(/^\/w\/([^/]+)(\/settings)?/);
+  if (match) return <Workspace id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
   return <Home navigate={navigate} account={account} />;
 }

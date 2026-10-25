@@ -746,7 +746,11 @@ func (a *app) who() error {
 		if p.Status != "" {
 			line += " — " + p.Status
 		}
-		a.printf("%s  (seen %s)\n", line, ago(p.LastSeenAt))
+		seen := "seen " + ago(p.LastSeenAt)
+		if p.TokenExpiresAt != 0 {
+			seen += ", credential expires " + time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02")
+		}
+		a.printf("%s  (%s)\n", line, seen)
 	}
 	return nil
 }
