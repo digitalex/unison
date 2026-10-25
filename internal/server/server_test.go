@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -105,4 +106,22 @@ func TestStreamDeliversEvents(t *testing.T) {
 		}
 	}
 	t.Error("stream ended without a backlog.added event")
+}
+
+// call makes an API request and returns the status and decoded JSON body.
+func call(t *testing.T, method, url, token, body string) (int, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(method, url, strings.NewReader(body))
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	var out map[string]any
+	json.Unmarshal(raw, &out)
+	return resp.StatusCode, out
 }

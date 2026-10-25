@@ -64,7 +64,7 @@ func TestWebhooksAPI(t *testing.T) {
 	}
 
 	// Receiving: signature required because a signing secret is set.
-	pr := []byte(`{"action":"opened","number":14,"pull_request":{"number":14,"title":"Add metrics"},"sender":{"login":"alex"}}`)
+	pr := []byte(`{"action":"opened","number":14,"pull_request":{"number":14,"title":"Add search"},"sender":{"login":"alex"}}`)
 	gh := map[string]string{"Content-Type": "application/json", "X-GitHub-Event": "pull_request", "X-GitHub-Delivery": "abc"}
 	if status := postHook(t, hookURL, pr, gh); status != http.StatusUnauthorized {
 		t.Errorf("missing signature = %d, want 401", status)
@@ -85,7 +85,7 @@ func TestWebhooksAPI(t *testing.T) {
 	}
 
 	_, list := callList(t, base+"/webhooks/"+id+"/deliveries")
-	if len(list) != 1 || list[0]["summary"] != `github: pull_request opened #14 "Add metrics" by alex` || list[0]["payload"] != nil {
+	if len(list) != 1 || list[0]["summary"] != `github: pull_request opened #14 "Add search" by alex` || list[0]["payload"] != nil {
 		t.Fatalf("deliveries = %v", list)
 	}
 	did := strconv.Itoa(int(list[0]["id"].(float64)))

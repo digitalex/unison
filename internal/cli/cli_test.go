@@ -186,41 +186,6 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("show --json = %+v, %v", shown, err)
 	}
 
-	// Metrics: adding one also queues a backlog item to track it.
-	out = e.ok(human, "metric", "add", "Build time", "--direction", "decrease", "--unit", "s", "--target", "30", "--description", "CI wall-clock time")
-	if !strings.Contains(out, "↓ decrease") || !strings.Contains(out, "Target    30 s") || !strings.Contains(out, "Added backlog item #3") {
-		t.Errorf("metric add = %q", out)
-	}
-	if out := e.ok(agent, "backlog", "show", "3"); !strings.Contains(out, "Track metric: Build time") || !strings.Contains(out, "CI wall-clock time") {
-		t.Errorf("tracking item = %q", out)
-	}
-	var m store.Metric
-	if err := json.Unmarshal([]byte(e.ok(agent, "metric", "add", "Coverage", "--unit", "%", "--json")), &m); err != nil {
-		t.Fatal(err)
-	}
-	if m.Direction != store.DirectionIncrease || m.ItemID == nil || *m.ItemID != 4 {
-		t.Errorf("metric add --json = %+v", m)
-	}
-	if _, errOut, code := e.run(agent, "metric", "add", "build TIME"); code == 0 || !strings.Contains(errOut, "already exists") {
-		t.Errorf("duplicate metric: exit %d, stderr %q", code, errOut)
-	}
-	if _, errOut, code := e.run(agent, "metric", "add", "Speed", "--direction", "up"); code == 0 || !strings.Contains(errOut, "direction") {
-		t.Errorf("bad direction: exit %d, stderr %q", code, errOut)
-	}
-	if out := e.ok(agent, "metric", "edit", "1", "--target", "none", "--name", "CI build time"); !strings.Contains(out, "CI build time") || strings.Contains(out, "Target") {
-		t.Errorf("metric edit = %q", out)
-	}
-	if out := e.ok(human, "metric"); !strings.Contains(out, "CI build time") || !strings.Contains(out, "tracked by #3") || !strings.Contains(out, "Coverage") {
-		t.Errorf("metric list = %q", out)
-	}
-	e.ok(human, "metric", "delete", "2")
-	if out := e.ok(human, "metric", "show", "1"); !strings.Contains(out, "backlog item #3") {
-		t.Errorf("metric show = %q", out)
-	}
-	if out := e.ok(human, "backlog"); !strings.Contains(out, "Track metric: Coverage") {
-		t.Errorf("deleting a metric removed its backlog item:\n%s", out)
-	}
-
 	// Repositories: a workspace can have several.
 	if out := e.ok(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web", "--label", "frontend"); !strings.Contains(out, "(frontend)") {
 		t.Errorf("repo add = %q", out)
@@ -280,14 +245,14 @@ func TestEndToEnd(t *testing.T) {
 	go func() {
 		time.Sleep(300 * time.Millisecond)
 		post("ping", []byte(`{"zen":"Design for failure."}`))
-		post("pull_request", []byte(`{"action":"opened","pull_request":{"number":14,"title":"Add metrics"}}`))
+		post("pull_request", []byte(`{"action":"opened","pull_request":{"number":14,"title":"Add search"}}`))
 		done <- ""
 	}()
 	out = e.ok(agent, "wait", "--mentions", "--timeout", "10")
 	if errOut := <-done; errOut != "" {
 		t.Fatal(errOut)
 	}
-	want := `🪝 Webhook "GitHub" (#1) received github: pull_request opened #14 "Add metrics" — delivery 2. Instructions: Review new PRs. Details: unison webhook delivery 2`
+	want := `🪝 Webhook "GitHub" (#1) received github: pull_request opened #14 "Add search" — delivery 2. Instructions: Review new PRs. Details: unison webhook delivery 2`
 	if strings.TrimSpace(out) != want {
 		t.Errorf("wait = %q\nwant  %q", out, want)
 	}

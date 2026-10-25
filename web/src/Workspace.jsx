@@ -4,7 +4,6 @@ import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu, ClaimPrompt, Members } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
-import Metrics from "./Metrics.jsx";
 import Webhooks from "./Webhooks.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
@@ -20,7 +19,6 @@ const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 function collectionFor(type) {
   if (type.startsWith("message.")) return ["messages"];
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
-  if (type.startsWith("metric.")) return ["metrics"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.claimed") return ["participants", "members", "me"];
@@ -38,7 +36,6 @@ export default function Workspace({ id, navigate, account }) {
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
   const [backlog, setBacklog] = useState([]);
-  const [metrics, setMetrics] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
   const [members, setMembers] = useState({ members: [], unlinked: [] });
   const [live, setLive] = useState(false);
@@ -51,7 +48,6 @@ export default function Workspace({ id, navigate, account }) {
     participants: () => call("GET", "/participants").then(setParticipants),
     messages: () => call("GET", "/messages?limit=500").then(setMessages),
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
-    metrics: () => call("GET", "/metrics").then(setMetrics),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     members: () => call("GET", "/members").then(setMembers),
   };
@@ -118,10 +114,7 @@ export default function Workspace({ id, navigate, account }) {
           )}
           {joined && me && <ClaimPrompt me={me} account={account} workspaceId={id} call={call} onClaimed={setMe} onError={setError} />}
           {joined ? (
-            <>
-              <Metrics metrics={metrics} items={backlog} call={call} onError={setError} />
-              <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
-            </>
+            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
           ) : (
             <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
           )}
