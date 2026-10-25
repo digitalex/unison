@@ -65,6 +65,12 @@ Workspaces & identity:
   status <text>                      set your status line ("" clears it)
   who                                participants and who is active
 
+Accounts (optional for now; workspaces still work by joining):
+  login                              sign in with GitHub or Google via your browser
+                                     (device code); saves a token per server
+  logout                             sign out (revokes the token)
+  whoami --user                      your account on this server
+
 Chat:
   chat log [--limit N]               recent messages, with threads
   chat send <text> [--reply-to ID]   post a message (or reply in a thread)
@@ -112,7 +118,9 @@ Real time:
   wait [--mentions] [--timeout SECONDS]   block until something concerns you
 
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T
-Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG
+Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
+  UNISON_CREDENTIALS (login tokens; default in your user config dir),
+  UNISON_NO_BROWSER (login: don't open a browser)
 `
 
 type app struct {
@@ -182,7 +190,11 @@ func run(args []string, stdout io.Writer) error {
 	case "join":
 		return a.join(rest)
 	case "whoami":
-		return a.whoami()
+		return a.whoami(rest)
+	case "login":
+		return a.login(rest)
+	case "logout":
+		return a.logout(rest)
 	case "status":
 		return a.status(rest)
 	case "who":
@@ -338,6 +350,7 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 	srv := server.New(st, webui.FS())
+	srv.SetAuth(server.AuthConfigFromEnv())
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	go srv.RunLeaseSweeper(ctx, 30*time.Second)
@@ -541,7 +554,9 @@ func (a *app) workspaceCreate(args []string) error {
 	}
 	var raw json.RawMessage
 	body := map[string]any{"name": strings.Join(pos, " "), "repos": repos, "canvas_url": *canvas}
-	if err := a.client().do("POST", "/api/workspaces", body, &raw); err != nil {
+	// Servers may limit creation to signed-in accounts (UNISON_CREATORS).
+	c := newClient(a.server, firstNonEmpty(a.userToken(), a.token))
+	if err := c.do("POST", "/api/workspaces", body, &raw); err != nil {
 		return err
 	}
 	if a.jsonOut {
@@ -626,7 +641,15 @@ func (a *app) join(args []string) error {
 	return nil
 }
 
-func (a *app) whoami() error {
+func (a *app) whoami(args []string) error {
+	fs := flag.NewFlagSet("whoami", flag.ContinueOnError)
+	user := fs.Bool("user", false, "show your account (from `unison login`) instead")
+	if _, err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if *user {
+		return a.whoamiUser()
+	}
 	var p store.Participant
 	if ok, err := a.call("GET", "/me", nil, &p, true); !ok {
 		return err

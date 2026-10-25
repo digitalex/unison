@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { FolderGit2, LayoutGrid, ArrowUpRight, Settings, UserPlus, X } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
+import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import Metrics from "./Metrics.jsx";
@@ -25,7 +26,7 @@ function collectionFor(type) {
   return null;
 }
 
-export default function Workspace({ id, navigate }) {
+export default function Workspace({ id, navigate, account }) {
   const call = useMemo(() => workspaceApi(id), [id]);
   const [workspace, setWorkspace] = useState(null);
   const [me, setMe] = useState(null);
@@ -92,6 +93,7 @@ export default function Workspace({ id, navigate }) {
         call={call}
         onError={setError}
         navigate={navigate}
+        account={account}
       />
       <div className={!joined ? "app-body app-body-single" : chatOpen ? "app-body" : "app-body app-body-chat-minimized"}>
         <main className={joined ? "app-main panel" : "app-main"}>
@@ -129,7 +131,7 @@ export default function Workspace({ id, navigate }) {
   );
 }
 
-function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate }) {
+function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate, account }) {
   return (
     <header className="topbar">
       <div className="ws">
@@ -183,6 +185,7 @@ function TopBar({ workspace, webhooks, me, joined, participants, live, call, onE
           {(close) => <WorkspaceSettings workspace={workspace} webhooks={webhooks} call={call} onError={onError} onDone={close} />}
         </Popover>
       )}
+      <AccountMenu account={account} />
     </header>
   );
 }
