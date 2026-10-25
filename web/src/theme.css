@@ -1967,6 +1967,10 @@ button.group-head {
     display: block;
   }
 
+  .seg .label {
+    display: none;
+  }
+
   .seg button {
     padding: 4px 8px;
   }
@@ -2266,4 +2270,279 @@ button.group-head {
 .pass-status .lucide {
   width: 14px;
   height: 14px;
+}
+
+/* ---- Home: site header, landing page (Landing.jsx, App.jsx) ---- */
+.landing {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.landing > main {
+  flex: 1;
+  width: 100%;
+  max-width: 1120px;
+  margin: 0 auto;
+  padding: 0 var(--space-l) var(--space-xxl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxl);
+}
+
+.site-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  max-width: 1120px;
+  height: 56px;
+  margin: 0 auto;
+  padding: 0 var(--space-l);
+}
+
+.site-brand {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text);
+  font-family: var(--font-brand);
+  font-size: var(--size-m);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.site-brand:hover {
+  text-decoration: none;
+}
+
+.site-head .popover-anchor {
+  font-size: var(--size-s);
+  font-weight: var(--weight-ui-regular);
+}
+
+.hero {
+  max-width: 720px;
+  padding-top: var(--space-xl);
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+}
+
+.hero-title {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: var(--size-xxl);
+  line-height: var(--line-xxl);
+  letter-spacing: var(--letter-spacing-xxl);
+  font-weight: var(--weight-brand-heavy);
+  text-wrap: balance;
+}
+
+.hero-copy {
+  margin: 0;
+  max-width: 600px;
+  color: var(--text-secondary);
+  font-size: var(--size-m);
+  line-height: var(--line-m);
+}
+
+.hero-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-xs);
+  padding-top: var(--space-xs);
+}
+
+.button-large {
+  height: 40px;
+  padding: 0 var(--space-m);
+  gap: var(--space-xs);
+  font-size: var(--size-m);
+  text-decoration: none;
+}
+
+.button-large:hover {
+  text-decoration: none;
+}
+
+.hero-shot {
+  margin: 0;
+  border-radius: var(--radius-panel);
+  overflow: hidden;
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
+}
+
+.shot {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+/* The screenshot follows the color mode: data-theme light/dark, or the OS
+   preference in auto. The hidden one is lazy, so it never downloads. */
+.shot-dark,
+[data-theme="dark"] .shot-light {
+  display: none;
+}
+
+[data-theme="dark"] .shot-dark {
+  display: block;
+}
+
+@media (prefers-color-scheme: dark) {
+  [data-theme="auto"] .shot-light {
+    display: none;
+  }
+
+  [data-theme="auto"] .shot-dark {
+    display: block;
+  }
+}
+
+.how {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-l);
+}
+
+.section-title {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  letter-spacing: var(--letter-spacing-l);
+  font-weight: var(--weight-brand-heavy);
+}
+
+.features {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--space-m);
+}
+
+.feature {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-m);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
+}
+
+.feature h3 {
+  margin: 0;
+  font-size: var(--size-m);
+  line-height: var(--line-m);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.feature p {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.feature-icon {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.landing-terminal.md-pre {
+  margin: 0;
+  padding: var(--space-s) var(--space-m);
+  font-size: var(--size-s);
+  line-height: var(--line-s);
+}
+
+.landing-workspaces {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+  max-width: 640px;
+}
+
+.site-foot {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: var(--space-l);
+  padding: var(--space-l);
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.site-foot a {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  color: var(--text-muted);
+}
+
+.site-foot .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.home-shell .site-head,
+.landing > main.home {
+  max-width: 720px;
+  padding-top: var(--space-s);
+  gap: var(--space-m);
+}
+
+.home-foot {
+  margin: 0;
+  font-size: var(--size-xs);
+}
+
+@media (max-width: 860px) {
+  .features {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 640px) {
+  .site-head,
+  .landing > main {
+    padding-left: var(--space-m);
+    padding-right: var(--space-m);
+  }
+
+  .landing > main {
+    gap: var(--space-xl);
+  }
+
+  .hero {
+    padding-top: var(--space-s);
+  }
+
+  .hero-title {
+    font-size: var(--size-xl);
+    line-height: var(--line-xl);
+    letter-spacing: var(--letter-spacing-xl);
+  }
+
+  .hero-actions .button-large {
+    flex: 1 1 100%;
+  }
+
+  .features {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .landing-terminal.md-pre {
+    font-size: var(--size-xs);
+    line-height: var(--line-xs);
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+  }
 }
