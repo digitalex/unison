@@ -759,6 +759,14 @@ body:has(.splitter.dragging) {
   white-space: nowrap;
 }
 
+.ws-name a {
+  color: inherit;
+}
+
+.ws-name a:hover {
+  text-decoration: none;
+}
+
 .ws-mark {
   display: grid;
   place-items: center;
@@ -1494,19 +1502,6 @@ button.group-head {
   white-space: nowrap;
   color: var(--text-muted);
   font-size: var(--size-xs);
-}
-
-.settings-section h3 {
-  margin: 0;
-  font-size: inherit;
-}
-
-.settings-section {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding-top: var(--space-s);
-  border-top: var(--border-s) solid var(--panel-edge);
 }
 
 .repo-form {
@@ -2405,5 +2400,199 @@ button.group-head {
     line-height: var(--line-xs);
     white-space: pre-wrap;
     overflow-wrap: anywhere;
+  }
+}
+
+/* ---- Workspace settings page (settings/SettingsPage.jsx) ---- */
+.settings-page {
+  min-height: 0;
+  overflow: auto;
+  padding: 0 var(--space-s) var(--space-xl);
+}
+
+.settings-layout {
+  display: grid;
+  grid-template-columns: 200px minmax(0, 720px);
+  justify-content: center;
+  gap: var(--space-l);
+  padding-top: var(--space-s);
+}
+
+.settings-nav {
+  position: sticky;
+  top: var(--space-s);
+  align-self: start;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-s);
+}
+
+.settings-back {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  color: var(--text-secondary);
+}
+
+.settings-back:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.settings-nav ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.settings-nav ul a {
+  display: block;
+  padding: var(--space-xxs) var(--space-xs);
+  border-radius: var(--radius-s);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.settings-nav ul a:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.settings-nav ul a[aria-current] {
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
+  color: var(--text);
+  font-weight: var(--weight-ui-medium);
+}
+
+.settings-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+  min-width: 0;
+}
+
+.settings-title {
+  margin: 0;
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  letter-spacing: var(--letter-spacing-l);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.settings-error {
+  border-radius: var(--radius-s);
+}
+
+.settings-card {
+  scroll-margin-top: var(--space-s);
+}
+
+.settings-card-head {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: var(--space-m) var(--space-m) 0;
+}
+
+.settings-card-head h3 {
+  margin: 0;
+  font-size: var(--size-m);
+  line-height: var(--line-m);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.settings-card-head .field-description {
+  margin: 0;
+}
+
+.settings-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-m);
+}
+
+.agent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.agent-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.agent-names {
+  min-width: 0;
+}
+
+.agent-name {
+  font-weight: var(--weight-ui-medium);
+}
+
+.agent-meta {
+  font-size: var(--size-xs);
+}
+
+/* Narrow screens: the page scrolls with the document and the section nav
+   becomes a sticky horizontal scroller above the cards. */
+@media (max-width: 860px) {
+  .settings-page {
+    overflow: visible;
+  }
+
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-s);
+  }
+
+  .settings-nav {
+    top: 0;
+    z-index: 5;
+    gap: var(--space-xs);
+    margin: 0 calc(-1 * var(--space-s));
+    padding: var(--space-xs) var(--space-s);
+    background: var(--base);
+  }
+
+  .settings-nav ul {
+    flex-direction: row;
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings-card {
+    scroll-margin-top: 96px;
+  }
+}
+
+@media (max-width: 640px) {
+  /* A crowded top bar (canvas, repos, a big roster, account) scrolls
+     sideways instead of widening the page. Its panels are position: fixed
+     on phones, so they are not clipped. */
+  .topbar {
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .settings-page {
+    padding: 0 8px var(--space-l);
+  }
+
+  .settings-nav {
+    margin: 0 -8px;
+    padding: var(--space-xs) 8px;
   }
 }

@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderGit2, KeyRound, LayoutGrid, ArrowUpRight, RefreshCw, Settings, UserPlus, X } from "lucide-react";
+import { FolderGit2, KeyRound, LayoutGrid, ArrowUpRight, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
-import { AccountMenu, ClaimPrompt, Members } from "./Account.jsx";
+import { AccountMenu, ClaimPrompt } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
-import Webhooks from "./Webhooks.jsx";
+import SettingsPage from "./settings/SettingsPage.jsx";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Textarea } from "./ui/Input.jsx";
@@ -28,7 +28,9 @@ function collectionFor(type) {
   return [];
 }
 
-export default function Workspace({ id, navigate, account }) {
+// Workspace is a workspace's page: the board (backlog and chat) or, with
+// view "settings", its settings. Both share the data and live updates.
+export default function Workspace({ id, view, navigate, account }) {
   const call = useMemo(() => workspaceApi(id), [id]);
   const [workspace, setWorkspace] = useState(null);
   const [me, setMe] = useState(null);
@@ -88,7 +90,7 @@ export default function Workspace({ id, navigate, account }) {
     <div className="app">
       <TopBar
         workspace={workspace}
-        webhooks={webhooks}
+        view={view}
         me={me}
         joined={joined}
         participants={participants}
@@ -99,47 +101,62 @@ export default function Workspace({ id, navigate, account }) {
         account={account}
         members={members}
       />
-      <div
-        className={!joined ? "app-body app-body-single" : chatOpen ? "app-body app-body-resizable" : "app-body app-body-chat-minimized"}
-        style={joined && chatOpen ? { "--chat-width": `${chatWidth.width}px` } : undefined}
-      >
-        <main className={joined ? "app-main panel" : "app-main"}>
-          {error && (
-            <p role="alert" className="error-bar">
-              Error: {error}{" "}
-              <Button variant="ghost" onClick={() => setError("")}>
-                dismiss
-              </Button>
-            </p>
+      {view === "settings" && joined ? (
+        <SettingsPage
+          workspace={workspace}
+          members={members}
+          participants={participants}
+          webhooks={webhooks}
+          account={account}
+          call={call}
+          error={error}
+          onError={setError}
+          navigate={navigate}
+        />
+      ) : (
+        <div
+          className={!joined ? "app-body app-body-single" : chatOpen ? "app-body app-body-resizable" : "app-body app-body-chat-minimized"}
+          style={joined && chatOpen ? { "--chat-width": `${chatWidth.width}px` } : undefined}
+        >
+          <main className={joined ? "app-main panel" : "app-main"}>
+            {error && (
+              <p role="alert" className="error-bar">
+                Error: {error}{" "}
+                <Button variant="ghost" onClick={() => setError("")}>
+                  dismiss
+                </Button>
+              </p>
+            )}
+            {joined && me && <ClaimPrompt me={me} account={account} workspaceId={id} call={call} onClaimed={setMe} onError={setError} />}
+            {joined ? (
+              <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
+            ) : (
+              <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
+            )}
+          </main>
+          {joined && chatOpen && (
+            <Splitter width={chatWidth.width} min={chatWidth.min} max={chatWidth.max} onChange={chatWidth.setWidth} />
           )}
-          {joined && me && <ClaimPrompt me={me} account={account} workspaceId={id} call={call} onClaimed={setMe} onError={setError} />}
-          {joined ? (
-            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
-          ) : (
-            <JoinForm id={id} call={call} onJoined={() => setJoined(true)} />
+          {joined && (
+            <Chat
+              workspaceId={id}
+              messages={messages}
+              participants={participants}
+              me={me}
+              call={call}
+              onError={setError}
+              open={chatOpen}
+              onToggle={setChatOpen}
+            />
           )}
-        </main>
-        {joined && chatOpen && (
-          <Splitter width={chatWidth.width} min={chatWidth.min} max={chatWidth.max} onChange={chatWidth.setWidth} />
-        )}
-        {joined && (
-          <Chat
-            workspaceId={id}
-            messages={messages}
-            participants={participants}
-            me={me}
-            call={call}
-            onError={setError}
-            open={chatOpen}
-            onToggle={setChatOpen}
-          />
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function TopBar({ workspace, webhooks, me, joined, participants, live, call, onError, navigate, account, members }) {
+function TopBar({ workspace, view, me, joined, participants, live, call, onError, navigate, account, members }) {
+  const settings = `/w/${workspace.id}/settings`;
   return (
     <header className="topbar">
       <div className="ws">
@@ -155,9 +172,19 @@ function TopBar({ workspace, webhooks, me, joined, participants, live, call, onE
         >
           U
         </a>
-        <h1 className="ws-name">{workspace.name}</h1>
+        <h1 className="ws-name">
+          <a
+            href={`/w/${workspace.id}`}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate(`/w/${workspace.id}`);
+            }}
+          >
+            {workspace.name}
+          </a>
+        </h1>
       </div>
-      {joined && <span className="crumb">/ Backlog</span>}
+      {joined && <span className="crumb">/ {view === "settings" ? "Settings" : "Backlog"}</span>}
       {workspace.canvas_url && (
         <a
           className="canvas-link"
@@ -189,11 +216,19 @@ function TopBar({ workspace, webhooks, me, joined, participants, live, call, onE
       </Popover>
       <Roster participants={participants} me={me} call={call} onError={onError} />
       {me && (
-        <Popover title="Workspace settings" className="button button-ghost button-icon" trigger={<Settings aria-hidden="true" />}>
-          {(close) => (
-            <WorkspaceSettings workspace={workspace} webhooks={webhooks} members={members} account={account} call={call} onError={onError} onDone={close} />
-          )}
-        </Popover>
+        <a
+          className="button button-ghost button-icon"
+          href={settings}
+          title="Workspace settings"
+          aria-label="Workspace settings"
+          aria-current={view === "settings" ? "page" : undefined}
+          onClick={(e) => {
+            e.preventDefault();
+            navigate(settings);
+          }}
+        >
+          <Settings aria-hidden="true" />
+        </a>
       )}
       <AccountMenu account={account} />
     </header>
@@ -279,106 +314,6 @@ function JoinForm({ id, call, onJoined }) {
           Join
         </Button>
       </div>
-    </form>
-  );
-}
-
-function WorkspaceSettings({ workspace, webhooks, members, account, call, onError, onDone }) {
-  const [form, setForm] = useState(workspace);
-  const save = async (e) => {
-    e.preventDefault();
-    try {
-      await call("PATCH", "", { name: form.name, canvas_url: form.canvas_url });
-      onDone();
-    } catch (err) {
-      onError(err.message);
-    }
-  };
-  const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
-  return (
-    <>
-      <form className="form" onSubmit={save}>
-        <h2 className="popover-title">Workspace settings</h2>
-        <Field label="Name">
-          <Input {...field("name")} />
-        </Field>
-        <Field label="Canvas">
-          <Input {...field("canvas_url")} />
-        </Field>
-        <div className="actions-row">
-          <Button variant="primary" type="submit">
-            Save
-          </Button>
-          <Button type="button" onClick={onDone}>
-            Cancel
-          </Button>
-        </div>
-      </form>
-      <Members members={members} account={account} call={call} onError={onError} />
-      <Repositories repos={workspace.repos || []} call={call} onError={onError} />
-      <Webhooks webhooks={webhooks} call={call} onError={onError} />
-    </>
-  );
-}
-
-// Repository changes apply immediately (each is its own API call).
-function Repositories({ repos, call, onError }) {
-  const [url, setUrl] = useState("");
-  const [label, setLabel] = useState("");
-  const run = (method, suffix, body) =>
-    call(method, suffix, body).then(
-      () => true,
-      (e) => {
-        onError(e.message);
-        return false;
-      },
-    );
-  const add = async (e) => {
-    e.preventDefault();
-    if (await run("POST", "/repos", { url, label })) {
-      setUrl("");
-      setLabel("");
-    }
-  };
-  return (
-    <section className="settings-section" aria-label="Repositories">
-      <h3 className="field-label">Repositories</h3>
-      {repos.map((r) => (
-        <RepoRow key={r.id} repo={r} run={run} />
-      ))}
-      <form className="repo-form" onSubmit={add}>
-        <Input className="repo-label-input" aria-label="Label (optional)" value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" />
-        <Input type="url" required aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} placeholder="https://github.com/owner/repo" />
-        <Button type="submit">Add</Button>
-      </form>
-    </section>
-  );
-}
-
-function RepoRow({ repo, run }) {
-  const [label, setLabel] = useState(repo.label);
-  const [url, setUrl] = useState(repo.url);
-  const dirty = label !== repo.label || url !== repo.url;
-  const save = (e) => {
-    e.preventDefault();
-    run("PATCH", `/repos/${repo.id}`, { label, url });
-  };
-  return (
-    <form className="repo-form" onSubmit={save}>
-      <Input className="repo-label-input" aria-label={`Label for ${repo.url}`} value={label} onChange={(e) => setLabel(e.target.value)} placeholder="Label" />
-      <Input type="url" required aria-label="Repository URL" value={url} onChange={(e) => setUrl(e.target.value)} />
-      {dirty && <Button type="submit">Save</Button>}
-      <Button
-        type="button"
-        iconOnly
-        variant="ghost"
-        className="button-danger"
-        aria-label={`Remove ${repo.url}`}
-        title="Remove"
-        onClick={() => window.confirm(`Remove ${repo.url} from this workspace?`) && run("DELETE", `/repos/${repo.id}`)}
-      >
-        <X aria-hidden="true" />
-      </Button>
     </form>
   );
 }

@@ -64,7 +64,7 @@ func TestAgentPass(t *testing.T) {
 		t.Errorf("reused pass: exit %d %q", code, errOut)
 	}
 	e.ok(agent, "chat", "send", "Hello from Quill")
-	if out := e.ok(human, "who"); !strings.Contains(out, "🪶 Quill · agent of Alex") {
+	if out := e.ok(human, "who"); !strings.Contains(out, "🪶 Quill · agent of Alex") || !strings.Contains(out, "credential expires ") {
 		t.Errorf("who = %q", out)
 	}
 
