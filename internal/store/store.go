@@ -95,6 +95,8 @@ type Message struct {
 	// status update about it, say); Item summarizes that item.
 	ItemID *int64       `json:"item_id,omitempty"`
 	Item   *MessageItem `json:"item,omitempty"`
+	// Reactions are the emoji on the message, in ReactionEmoji order.
+	Reactions []Reaction `json:"reactions,omitempty"`
 }
 
 // MessageItem is the backlog item a message is about, in brief.
@@ -666,7 +668,19 @@ func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Mes
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	return scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit))
+	return s.withReactions(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
+}
+
+// withReactions returns a function that fills in the reactions of the
+// messages it is given (passing errors through).
+func (s *Store) withReactions(ctx context.Context, wsID string) func([]Message, error) ([]Message, error) {
+	return func(msgs []Message, err error) ([]Message, error) {
+		if err != nil {
+			return nil, err
+		}
+		query := func(q string, args ...any) (*sql.Rows, error) { return s.db.QueryContext(ctx, q, args...) }
+		return msgs, attachReactions(query, wsID, msgs)
+	}
 }
 
 // ItemMessages returns the chat messages about a backlog item, oldest
@@ -679,7 +693,7 @@ func (s *Store) ItemMessages(ctx context.Context, wsID string, itemID int64) ([]
 	if n == 0 {
 		return nil, ErrNotFound
 	}
-	return scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID))
+	return s.withReactions(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID)))
 }
 
 // ---- Events ----

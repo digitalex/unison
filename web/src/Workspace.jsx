@@ -22,7 +22,7 @@ const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
   // A message about an item changes the item's message count.
-  if (type.startsWith("message.")) return data?.item_id || type !== "message.created" ? ["messages", "backlog"] : ["messages"];
+  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog"] : ["messages"];
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];

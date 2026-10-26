@@ -111,6 +111,9 @@ func (s *Server) routes() {
 	h("POST "+ws+"/inbox", s.auth(s.sendInbox))
 	h("POST "+ws+"/inbox/{id}/dismiss", s.dismissInbox(true))
 	h("POST "+ws+"/inbox/{id}/restore", s.dismissInbox(false))
+	h("GET "+ws+"/messages/{id}", s.getMessage)
+	h("PUT "+ws+"/messages/{id}/reactions/{emoji}", s.auth(s.react(true)))
+	h("DELETE "+ws+"/messages/{id}/reactions/{emoji}", s.auth(s.react(false)))
 	h("GET "+ws+"/backlog", s.listBacklog)
 	h("POST "+ws+"/backlog", s.auth(s.addItem))
 	h("POST "+ws+"/backlog/claim", s.auth(s.claimNext))
@@ -394,6 +397,28 @@ func (s *Server) listMessages(w http.ResponseWriter, r *http.Request) {
 	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
 	list, err := s.store.ListMessages(r.Context(), r.PathValue("ws"), limit)
 	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) getMessage(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	m, err := s.store.GetMessage(r.Context(), r.PathValue("ws"), id)
+	s.respond(w, http.StatusOK, m, nil, err)
+}
+
+// react puts (on) or takes back your reaction {emoji} (an emoji or a name
+// such as "+1") on message {id}, responding with the message.
+func (s *Server) react(on bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		m, evs, err := s.store.React(r.Context(), actor(r), id, r.PathValue("emoji"), on)
+		s.respond(w, http.StatusOK, m, evs, err)
+	}
 }
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {

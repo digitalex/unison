@@ -2,9 +2,12 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/digitalex/unison/internal/store"
 )
 
 // TestMessagesAboutItems: POST /messages with item_id ties the message to
@@ -53,4 +56,62 @@ func TestMessagesAboutItems(t *testing.T) {
 			t.Errorf("%s = %d, want 401/403", name, status)
 		}
 	}
+}
+
+// TestReactionsAPI: PUT and DELETE …/messages/{id}/reactions/{emoji} (an
+// emoji, URL-encoded, or a name) toggle your reaction; messages list their
+// reactions; other emoji are refused; the stream hears message.reacted.
+func TestReactionsAPI(t *testing.T) {
+	ts, st := newServer(t)
+	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
+	other, _, _ := st.CreateWorkspace(t.Context(), "Other", "", "")
+	_, ada, _, _ := joinMember(t, st, ws.ID, "Ada", "")
+	bob, bobTok, _, _ := joinMember(t, st, ws.ID, "Bob", "")
+	_, carol, _, _ := joinMember(t, st, other.ID, "Carol", "")
+	api := ts.URL + "/api/workspaces/" + ws.ID
+	_, m := call(t, "POST", api+"/messages", ada, `{"body":"Shipped"}`)
+	react := api + "/messages/" + strconv.Itoa(int(m["id"].(float64))) + "/reactions/"
+
+	status, got := call(t, "PUT", react+url.PathEscape("👍"), bobTok, "")
+	rs, _ := got["reactions"].([]any)
+	if status != http.StatusOK || len(rs) != 1 {
+		t.Fatalf("PUT 👍 = %d %v", status, got)
+	}
+	if r := rs[0].(map[string]any); r["emoji"] != "👍" || r["count"] != 1.0 || r["by"].([]any)[0] != float64(bob.ID) {
+		t.Errorf("reaction = %v", r)
+	}
+	call(t, "PUT", react+"heart", ada, "")
+	if _, body := getAs(t, api+"/messages", ada); !strings.Contains(body, `"reactions":[{"emoji":"👍","count":1`) || !strings.Contains(body, `"emoji":"❤️"`) {
+		t.Errorf("messages = %s", body)
+	}
+	if status, _ := call(t, "PUT", react+url.PathEscape("🎉"), ada, ""); status != http.StatusBadRequest {
+		t.Errorf("PUT 🎉 = %d, want 400", status)
+	}
+	if status, _ := call(t, "PUT", react+"+1", carol, ""); status != http.StatusForbidden && status != http.StatusUnauthorized {
+		t.Errorf("another workspace's participant = %d", status)
+	}
+	if status, _ := call(t, "PUT", react+"+1", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("anonymous = %d", status)
+	}
+	if status, _ := call(t, "PUT", api+"/messages/999/reactions/+1", ada, ""); status != http.StatusNotFound {
+		t.Errorf("missing message = %d, want 404", status)
+	}
+	status, got = call(t, "DELETE", react+"thumbsup", bobTok, "")
+	if rs, _ := got["reactions"].([]any); status != http.StatusOK || len(rs) != 1 {
+		t.Errorf("DELETE = %d %v", status, got)
+	}
+	evs, _ := st.EventsAfter(t.Context(), ws.ID, 0, 0)
+	if n := countType(evs, "message.reacted"); n != 3 {
+		t.Errorf("message.reacted events = %d, want 3", n)
+	}
+}
+
+func countType(evs []store.Event, typ string) int {
+	n := 0
+	for _, e := range evs {
+		if e.Type == typ {
+			n++
+		}
+	}
+	return n
 }

@@ -12,10 +12,12 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -101,6 +103,8 @@ Chat:
                                      post a message (or reply in a thread);
                                      --item ties it to a backlog item (e.g. a
                                      status update about the item you work on)
+  chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 (or +1,
+                                     -1, heart, muscle, 100)
 
 Inbox (what a human must act on; status updates go to chat):
   inbox [--all]                      your inbox (members): open entries, or all
@@ -847,13 +851,15 @@ func ago(ms int64) string {
 
 func (a *app) chat(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("%w: chat log | chat send <text>", errUsage)
+		return fmt.Errorf("%w: chat log | chat send <text> | chat react <message-id> <emoji>", errUsage)
 	}
 	switch args[0] {
 	case "log":
 		return a.chatLog(args[1:])
 	case "send":
 		return a.chatSend(args[1:])
+	case "react":
+		return a.chatReact(args[1:])
 	}
 	return fmt.Errorf("%w: unknown chat subcommand %q", errUsage, args[0])
 }
@@ -902,7 +908,64 @@ func (a *app) printMessage(people map[int64]store.Participant, m store.Message, 
 	}
 	when := time.UnixMilli(m.CreatedAt).Format("15:04")
 	body := strings.ReplaceAll(m.Body, "\n", "\n"+indent+"      ")
-	a.printf("%s[#%d %s] %s%s%s: %s\n", indent, m.ID, when, label(people, m.AuthorID), itemMarker(m), thread, body)
+	a.printf("%s[#%d %s] %s%s%s: %s%s\n", indent, m.ID, when, label(people, m.AuthorID), itemMarker(m), thread, body, reactionSummary(m))
+}
+
+// reactionSummary is "  · 👍 2 ❤️ 1" for a message with reactions.
+func reactionSummary(m store.Message) string {
+	if len(m.Reactions) == 0 {
+		return ""
+	}
+	parts := make([]string, len(m.Reactions))
+	for i, r := range m.Reactions {
+		parts[i] = fmt.Sprintf("%s %d", r.Emoji, r.Count)
+	}
+	return "  · " + strings.Join(parts, " ")
+}
+
+// chatReact toggles your reaction on a message: puts it there, or takes it
+// back if you already reacted with that emoji.
+func (a *app) chatReact(args []string) error {
+	if len(args) != 2 {
+		return fmt.Errorf("%w: chat react <message-id> <emoji> (%s, or +1 -1 heart muscle 100)", errUsage, strings.Join(store.ReactionEmoji, " "))
+	}
+	id, err := parseID(args[0])
+	if err != nil {
+		return err
+	}
+	emoji, err := store.NormalizeReaction(args[1])
+	if err != nil {
+		return fmt.Errorf("%w: %v", errUsage, err)
+	}
+	if err := a.needToken(); err != nil {
+		return err
+	}
+	var me store.Participant
+	var m store.Message
+	for suffix, out := range map[string]any{"/me": &me, fmt.Sprintf("/messages/%d", id): &m} {
+		path, err := a.wsPath(suffix)
+		if err != nil {
+			return err
+		}
+		if err := a.client().do("GET", path, nil, out); err != nil {
+			return err
+		}
+	}
+	method := "PUT"
+	for _, r := range m.Reactions {
+		if r.Emoji == emoji && slices.Contains(r.By, me.ID) {
+			method = "DELETE"
+		}
+	}
+	if ok, err := a.call(method, fmt.Sprintf("/messages/%d/reactions/%s", id, url.PathEscape(emoji)), nil, &m, true); !ok {
+		return err
+	}
+	verb := "Reacted " + emoji + " to"
+	if method == "DELETE" {
+		verb = "Took back " + emoji + " on"
+	}
+	a.printf("%s message #%d.%s\n", verb, id, reactionSummary(m))
+	return nil
 }
 
 // itemMarker labels a message about a backlog item: " [item #12]".

@@ -1630,17 +1630,148 @@ button.group-head {
   white-space: nowrap;
 }
 
-.msg-reply {
+/* A message's actions (reply, reactions) float over its top-right corner
+   on hover or focus; on touch screens the "…" button shows them. */
+.msg-actions {
   position: absolute;
-  top: var(--space-xxs);
+  top: -6px;
   right: var(--space-s);
-  height: 24px;
+  z-index: 1;
   display: none;
+  align-items: center;
+  gap: 2px;
+  padding: 2px;
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
 }
 
-.msg:hover > .msg-reply,
-.msg:focus-within > .msg-reply {
+/* Only the innermost message: hovering a thread reply hovers its root too. */
+.msg:hover:not(:has(.msg:hover)) > .msg-actions,
+.msg:focus-within:not(:has(.msg:focus-within)) > .msg-actions,
+.msg.msg-actions-open > .msg-actions {
   display: inline-flex;
+}
+
+.msg-action.button {
+  height: 26px;
+  padding: 0 6px;
+}
+
+.msg-emoji {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.msg-emoji:hover,
+.msg-emoji:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+.msg-emoji[aria-pressed="true"] {
+  background: var(--focus-ring);
+}
+
+.msg-more {
+  position: absolute;
+  top: 2px;
+  right: 2px;
+  display: none;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text-muted);
+}
+
+.msg-more .lucide {
+  width: 16px;
+  height: 16px;
+}
+
+@media (pointer: coarse) {
+  .msg-more {
+    display: grid;
+  }
+
+  .msg-actions {
+    top: 34px;
+  }
+
+  /* A tap also "hovers": only the "…" button opens the actions. */
+  .msg:not(.msg-actions-open):hover:not(:has(.msg:hover)) > .msg-actions {
+    display: none;
+  }
+
+  .msg.msg-actions-open > .msg-actions {
+    display: inline-flex;
+  }
+
+  .msg-emoji {
+    width: 36px;
+    height: 34px;
+    font-size: 18px;
+  }
+
+  .msg-action.button {
+    height: 34px;
+  }
+}
+
+/* Reaction chips under a message; yours are highlighted. */
+.reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.reaction {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 22px;
+  padding: 0 7px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: var(--panel-head);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--size-xs);
+  cursor: pointer;
+}
+
+.reaction:hover {
+  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong);
+}
+
+.reaction.mine {
+  background: var(--focus-ring);
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus);
+  color: var(--text);
+}
+
+.reaction:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus), 0 0 0 3px var(--focus-ring);
+}
+
+.reaction-count {
+  font-variant-numeric: tabular-nums;
 }
 
 .thread {

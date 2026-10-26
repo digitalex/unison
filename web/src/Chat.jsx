@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { ListChecks, MessageSquare, Reply, X } from "lucide-react";
+import { Ellipsis, ListChecks, MessageSquare, Reply, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -10,12 +10,27 @@ import SectionToggle from "./ui/SectionToggle.jsx";
 // under the message that started the thread. It can be minimized (open and
 // onToggle come from Workspace, which also gives the space back to the backlog).
 // A message can be about a backlog item: it shows a chip that opens the item.
-// `shown` ({id, at}) is a message to scroll to and highlight.
+// `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
+// focusing) a message shows its actions: reply, and the reactions.
+
+// REACTIONS are the emoji anyone can put on a message (the server accepts
+// exactly these).
+const REACTIONS = [
+  { emoji: "👍", label: "Thumbs up" },
+  { emoji: "👎", label: "Thumbs down" },
+  { emoji: "❤️", label: "Heart" },
+  { emoji: "💪", label: "Muscle" },
+  { emoji: "💯", label: "100" },
+];
+
 export default function Chat({ workspaceId, messages, items, participants, me, call, onError, open, onToggle, shown }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
-  const mentionedItem = itemMentioned(text, items);
+  const [replyItem, setReplyItem] = useState(null); // The item of the message replied to.
+  const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
+  const composer = useRef(null);
+  const mentionedItem = itemMentioned(text, items) || replyItem;
   const flashed = useShowMessage(shown, messages, open);
   const seenKey = `unison.chat.seen.${workspaceId}`;
   const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
@@ -50,12 +65,50 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
     try {
       await call("POST", "/messages", { body: text, parent_id: replyTo?.id, item_id: linked && mentionedItem ? mentionedItem.id : undefined });
       setText("");
-      setReplyTo(null);
-      setLinked(false);
+      cancelReply();
     } catch (err) {
       onError(err.message);
     }
   };
+
+  // Reply: in the message's thread, to its author (prefilled @mention),
+  // about the same item if it has one.
+  const startReply = (root, target) => {
+    setReplyTo(root);
+    const author = participants.find((p) => p.id === target.author_id);
+    const mention = author && author.id !== me?.id ? `@${author.name} ` : "";
+    if (mention && !text.startsWith(mention)) setText(mention + text);
+    if (target.item) {
+      setReplyItem(target.item);
+      setLinked(true);
+    }
+    setActionsFor(null);
+    composer.current?.focus();
+  };
+  const cancelReply = () => {
+    setReplyTo(null);
+    setReplyItem(null);
+    setLinked(false);
+  };
+  // react toggles your reaction (the server says what everyone sees).
+  const react = async (m, emoji) => {
+    const mine = m.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
+    try {
+      await call(mine ? "DELETE" : "PUT", `/messages/${m.id}/reactions/${encodeURIComponent(emoji)}`);
+    } catch (err) {
+      onError(err.message);
+    }
+  };
+  const messageProps = (m, root) => ({
+    message: m,
+    participants,
+    me,
+    flashed,
+    onReply: () => startReply(root, m),
+    onReact: (emoji) => react(m, emoji),
+    actionsOpen: actionsFor === m.id,
+    onToggleActions: () => setActionsFor(actionsFor === m.id ? null : m.id),
+  });
 
   if (!open) {
     return <MinimizedChat unread={messages.filter((m) => m.id > seenId).length} onOpen={() => onToggle(true)} />;
@@ -71,11 +124,11 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
       <div className="chat-log">
         {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
         {roots.map((m) => (
-          <Message key={m.id} message={m} participants={participants} me={me} flashed={flashed} onReply={() => setReplyTo(m)}>
+          <Message key={m.id} {...messageProps(m, m)}>
             {replies.has(m.id) && (
               <div className="thread">
                 {replies.get(m.id).map((r) => (
-                  <Message key={r.id} message={r} participants={participants} me={me} flashed={flashed} onReply={() => setReplyTo(m)} />
+                  <Message key={r.id} {...messageProps(r, m)} />
                 ))}
               </div>
             )}
@@ -87,12 +140,13 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
         {replyTo && (
           <p className="replying">
             Replying in thread #{replyTo.id}
-            <Button type="button" variant="ghost" iconOnly aria-label="Cancel reply" title="Cancel reply" onClick={() => setReplyTo(null)}>
+            <Button type="button" variant="ghost" iconOnly aria-label="Cancel reply" title="Cancel reply" onClick={cancelReply}>
               <X aria-hidden="true" />
             </Button>
           </p>
         )}
         <Textarea
+          ref={composer}
           aria-label="Message"
           value={text}
           onChange={(e) => setText(e.target.value)}
@@ -158,13 +212,17 @@ function useShowMessage(shown, messages, open) {
   return flashed;
 }
 
-function Message({ message, participants, me, flashed, onReply, children }) {
+function Message({ message, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
   const author = participants.find((p) => p.id === message.author_id);
   const mentioned = me && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
   const created = new Date(message.created_at);
   const isReply = Boolean(message.parent_id);
   return (
-    <div id={`msg-${message.id}`} tabIndex={-1} className={["msg", mentioned && "mention", flashed === message.id && "msg-flash"].filter(Boolean).join(" ")}>
+    <div
+      id={`msg-${message.id}`}
+      tabIndex={-1}
+      className={["msg", mentioned && "mention", flashed === message.id && "msg-flash", actionsOpen && "msg-actions-open"].filter(Boolean).join(" ")}
+    >
       {!isReply && (
         <span className="avatar" aria-hidden="true">
           {author?.emoji}
@@ -184,12 +242,57 @@ function Message({ message, participants, me, flashed, onReply, children }) {
             <ListChecks aria-hidden="true" />#{message.item.id} <span className="msg-item-title">{message.item.title}</span>
           </a>
         )}
+        <Reactions reactions={message.reactions || []} participants={participants} me={me} onReact={onReact} />
         {children}
       </div>
-      <Button variant="ghost" className="msg-reply" title="Reply in thread" onClick={onReply}>
-        <Reply aria-hidden="true" />
-        Reply
-      </Button>
+      <div className="msg-actions" role="toolbar" aria-label={`Message #${message.id}`}>
+        <Button variant="ghost" className="msg-action" title="Reply in thread" onClick={onReply}>
+          <Reply aria-hidden="true" />
+          Reply
+        </Button>
+        {REACTIONS.map(({ emoji, label }) => {
+          const mine = message.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
+          return (
+            <button key={emoji} type="button" className="msg-action msg-emoji" aria-label={`React ${label}`} aria-pressed={Boolean(mine)} title={label} onClick={() => onReact(emoji)}>
+              {emoji}
+            </button>
+          );
+        })}
+      </div>
+      {/* Touch screens have no hover: this shows the actions instead. */}
+      <button type="button" className="msg-more" aria-label="Message actions" aria-expanded={actionsOpen} onClick={onToggleActions}>
+        <Ellipsis aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
+
+// Reactions are a message's reaction chips: highlighted when one is yours,
+// with who reacted in the tooltip; clicking one toggles your reaction.
+function Reactions({ reactions, participants, me, onReact }) {
+  if (reactions.length === 0) return null;
+  const nameOf = (id) => (id === me?.id ? "you" : participants.find((p) => p.id === id)?.name || `participant ${id}`);
+  return (
+    <div className="reactions">
+      {reactions.map((r) => {
+        const mine = r.by.includes(me?.id);
+        const label = REACTIONS.find((x) => x.emoji === r.emoji)?.label || r.emoji;
+        const who = r.by.map(nameOf).join(", ");
+        return (
+          <button
+            key={r.emoji}
+            type="button"
+            className={mine ? "reaction mine" : "reaction"}
+            aria-pressed={mine}
+            aria-label={`${label}, ${r.count}: ${who}`}
+            title={who}
+            onClick={() => onReact(r.emoji)}
+          >
+            <span aria-hidden="true">{r.emoji}</span>
+            <span className="reaction-count">{r.count}</span>
+          </button>
+        );
+      })}
     </div>
   );
 }
