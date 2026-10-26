@@ -53,30 +53,36 @@ Server:
 
 Workspaces & identity:
   workspace [show]                   show the current workspace
-  workspace list                     list workspaces on the server
+  workspace list                     your workspaces (needs login)
   workspace create <name> [--repo URL[=label]]... [--canvas URL]
+                                     (needs login; you become its first member)
   workspace set [--name N] [--repo URL] [--canvas URL]   (--repo: the first repo)
   workspace repos                    the workspace's code repositories
   workspace repo add <url> [--label L]
   workspace repo edit <id> [--label L] [--url U]
   workspace repo remove <id>
-  join <workspace-url> [--name N] [--emoji E] [--pass P | --account]
-                                     register; saves .unison.json here. --pass
-                                     (agents): the pass from your invite, making you
-                                     an agent of the member who sent it. --account
-                                     (humans, after login) links you to your account
-                                     and reuses your participant if you have one
+  join <workspace-url> [--name N] [--emoji E] (--pass P | --account [--invite T])
+                                     join; saves .unison.json here. Workspaces are
+                                     private: agents need --pass (the pass from
+                                     their invite: you act for the member who sent
+                                     it); humans run "unison login", then --account as a
+                                     member or with an invite (an invite link works
+                                     as the URL; email invites need nothing more)
   whoami                             your identity in this workspace
   status <text>                      set your status line ("" clears it)
   who                                participants and who is active
 
-Accounts (optional for now; workspaces still work by joining):
+Accounts and invites:
   login                              sign in with GitHub or Google via your browser
                                      (device code); saves a token per server
   logout                             sign out (revokes the token)
   whoami --user                      your account on this server
-  claim                              link the participant joined here (.unison.json)
-                                     to your account, e.g. old Alex, Alexmobile...
+  invite email <address>             invite a person: anyone signing in with that
+                                     verified email may join (once)
+  invite link [--expires 7d]         an invite link anyone signed in may use until it
+                                     expires (multi-use; revocable)
+  invites                            the workspace's open invites
+  invite revoke <id>                 stop an invite
   members                            the workspace's members (accounts) and their
                                      participants
   members remove <user-id>           remove a member (any member may; their
@@ -205,8 +211,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.login(rest)
 	case "logout":
 		return a.logout(rest)
-	case "claim":
-		return a.claim(rest)
+	case "invite", "invites":
+		return a.invites(cmd, rest)
 	case "pass":
 		return a.pass(rest)
 	case "sessions":
@@ -294,7 +300,10 @@ func firstNonEmpty(vals ...string) string {
 	return ""
 }
 
-func (a *app) client() *client { return newClient(a.server, a.token) }
+// client calls the API as the participant joined here, or else as the
+// signed-in account (`unison login`), e.g. to read a workspace you're a
+// member of without having joined from this directory.
+func (a *app) client() *client { return newClient(a.server, firstNonEmpty(a.token, a.userToken())) }
 
 // wsPath returns the API path for the current workspace.
 func (a *app) wsPath(suffix string) (string, error) {
@@ -368,7 +377,15 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 	srv := server.New(st, webui.FS())
-	srv.SetAuth(server.AuthConfigFromEnv())
+	auth := server.AuthConfigFromEnv()
+	srv.SetAuth(auth)
+	switch {
+	case auth.Open:
+		log.Printf("WARNING: UNISON_AUTH=off: workspaces are OPEN (public reads and creation, anonymous API joins, pre-account participants work). For local development only.")
+	case len(auth.Providers) == 0:
+		log.Printf("WARNING: no sign-in provider configured (UNISON_GITHUB_CLIENT_ID/SECRET, UNISON_GOOGLE_CLIENT_ID/SECRET): " +
+			"nobody can sign in, so workspaces are unreachable. For local development set UNISON_AUTH=off.")
+	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 	go srv.RunLeaseSweeper(ctx, 30*time.Second)
@@ -411,7 +428,7 @@ func (a *app) agentHelp() error {
 			ws = &w
 		}
 	}
-	fmt.Fprint(a.out, guide.Doorway(a.server, ws))
+	fmt.Fprint(a.out, guide.Doorway(a.server, ws, ""))
 	return nil
 }
 
@@ -432,7 +449,11 @@ func (a *app) workspace(args []string) error {
 		return nil
 	case "list":
 		var raw json.RawMessage
-		if err := a.client().do("GET", "/api/workspaces", nil, &raw); err != nil {
+		userToken, err := a.needUserToken()
+		if err != nil {
+			return err
+		}
+		if err := newClient(a.server, userToken).do("GET", "/api/workspaces", nil, &raw); err != nil {
 			return err
 		}
 		if a.jsonOut {
@@ -610,8 +631,9 @@ func (a *app) join(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	name := fs.String("name", "", "your name (one word; auto-assigned if omitted)")
 	emoji := fs.String("emoji", "", "your emoji (auto-assigned if omitted)")
-	account := fs.Bool("account", false, "link the participant to your account (from `unison login`); humans only")
+	account := fs.Bool("account", false, "humans: join as your account (from `unison login`)")
 	pass := fs.String("pass", "", "agents: the single-use pass from your invite")
+	invite := fs.String("invite", "", "humans: an invite link's token (implies --account)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -625,7 +647,16 @@ func (a *app) join(args []string) error {
 		if ws != "" {
 			a.ws = ws
 		}
+		if t := inviteToken(pos[0]); t != "" && *invite == "" {
+			*invite = t
+		}
 	}
+	if *invite != "" {
+		*account = true
+	}
+	// Neither --account nor --pass: the server refuses (joining needs an
+	// invite) unless it runs with privacy off (UNISON_AUTH=off, local
+	// development), where anyone may join with a name.
 	path, err := a.wsPath("/join")
 	if err != nil {
 		return err
@@ -635,8 +666,9 @@ func (a *app) join(args []string) error {
 		Token       string            `json:"token"`
 		Existing    bool              `json:"existing,omitempty"`
 	}
-	// Joins are anonymous unless --account: agents often run in a shell where
-	// their human has run `unison login`, and must not become that human.
+	// Humans join as their account only with --account (or an invite link):
+	// agents often run in a shell where their human has run `unison login`,
+	// and must not become that human.
 	if *account && *pass != "" {
 		return fmt.Errorf("%w: --pass is for agents and --account for humans; use one", errUsage)
 	}
@@ -646,14 +678,11 @@ func (a *app) join(args []string) error {
 			return err
 		}
 	}
-	body := map[string]string{"name": *name, "emoji": *emoji}
-	if *pass != "" {
-		body["pass"] = *pass
-	}
+	body := map[string]string{"name": *name, "emoji": *emoji, "pass": *pass, "invite": *invite}
 	if err := newClient(a.server, userToken).do("POST", path, body, &resp); err != nil {
 		return err
 	}
-	c := newClient(a.server, "")
+	c := newClient(a.server, resp.Token)
 	var events struct {
 		Cursor int64 `json:"cursor"`
 	}

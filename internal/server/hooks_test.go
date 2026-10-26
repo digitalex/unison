@@ -37,7 +37,7 @@ func sign(secret string, body []byte) string {
 func TestWebhooksAPI(t *testing.T) {
 	ts, st := newServer(t)
 	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
-	_, token, _, _ := st.Join(t.Context(), ws.ID, "Ada", "")
+	_, token, _, _ := joinMember(t, st, ws.ID, "Ada", "")
 	base := ts.URL + "/api/workspaces/" + ws.ID
 
 	if status, _ := call(t, "POST", base+"/webhooks", "", `{"name":"GitHub"}`); status != http.StatusUnauthorized {
@@ -52,7 +52,7 @@ func TestWebhooksAPI(t *testing.T) {
 
 	// Public reads never include the token or the signing secret.
 	for _, path := range []string{"/webhooks", "/webhooks/" + id, "/events?after=0"} {
-		if _, body := get(t, base+path); strings.Contains(body, hookToken) || strings.Contains(body, "topsecret") || strings.Contains(body, `"token"`) {
+		if _, body := getAs(t, base+path, token); strings.Contains(body, hookToken) || strings.Contains(body, "topsecret") || strings.Contains(body, `"token"`) {
 			t.Errorf("GET %s leaks a secret: %s", path, body)
 		}
 	}
@@ -84,7 +84,7 @@ func TestWebhooksAPI(t *testing.T) {
 		t.Errorf("oversized body = %d, want 413", status)
 	}
 
-	_, list := callList(t, base+"/webhooks/"+id+"/deliveries")
+	_, list := callList(t, base+"/webhooks/"+id+"/deliveries", token)
 	if len(list) != 1 || list[0]["summary"] != `github: pull_request opened #14 "Add search" by alex` || list[0]["payload"] != nil {
 		t.Fatalf("deliveries = %v", list)
 	}
@@ -117,9 +117,9 @@ func TestWebhooksAPI(t *testing.T) {
 	}
 }
 
-func callList(t *testing.T, url string) (int, []map[string]any) {
+func callList(t *testing.T, url, token string) (int, []map[string]any) {
 	t.Helper()
-	status, body := get(t, url)
+	status, body := getAs(t, url, token)
 	var out []map[string]any
 	if err := json.Unmarshal([]byte(body), &out); err != nil {
 		t.Fatalf("GET %s: %v (%s)", url, err, body)

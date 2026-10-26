@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { DevicePage, useAccount } from "./Account.jsx";
-import { ApiError, api, getToken } from "./api.js";
+import { ApiError, api } from "./api.js";
+import { JoinPage } from "./Gate.jsx";
 import Landing, { SiteHeader } from "./Landing.jsx";
 import Profile from "./Profile.jsx";
 import Workspace from "./Workspace.jsx";
@@ -9,7 +10,8 @@ import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
 // Pages: "/" is Home (the landing page, or the workspace list when signed
-// in); "/w/:id" is a workspace, "/w/:id/settings" its settings; "/me" is your profile;
+// in); "/w/:id" is a workspace, "/w/:id/settings" its settings,
+// "/w/:id/join?invite=…" where an invite link lands; "/me" is your profile;
 // "/auth/device" approves a `unison login`.
 export default function App() {
   const account = useAccount();
@@ -23,17 +25,18 @@ export default function App() {
     window.history.pushState(null, "", to);
     setPath(to);
   };
-  const match = path.match(/^\/w\/([^/]+)(\/settings)?/);
+  const match = path.match(/^\/w\/([^/]+)(\/settings|\/join)?/);
+  if (match && match[2] === "/join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   if (match) return <Workspace id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
   if (path === "/me") return <Profile account={account} navigate={navigate} />;
   return <Home navigate={navigate} account={account} />;
 }
 
-// Home: a landing page for signed-out visitors, the workspace list and create
-// form once signed in. Workspace names can be sensitive, so signed-out
-// visitors see no lists (and they are not even fetched) unless the server has
-// no sign-in configured at all, as in local development.
+// Home: a landing page for signed-out visitors, your workspaces and the
+// create form once signed in. Workspaces are private, so signed-out visitors
+// see no lists, unless the server has no sign-in configured at all: then the
+// list is fetched, and works only with privacy off (UNISON_AUTH=off).
 function Home({ navigate, account }) {
   const [workspaces, setWorkspaces] = useState(null);
   const [error, setError] = useState("");
@@ -42,7 +45,13 @@ function Home({ navigate, account }) {
 
   useEffect(() => {
     if (!showLists) return;
-    api("GET", "/api/workspaces").then(setWorkspaces, (e) => setError(e.message));
+    api("GET", "/api/workspaces").then(setWorkspaces, (e) =>
+      setError(
+        noSignIn && e instanceof ApiError && e.status === 401
+          ? "Workspaces are private, and sign-in isn't configured on this server. Whoever runs it can add GitHub or Google sign-in (or set UNISON_AUTH=off for local development)."
+          : e.message,
+      ),
+    );
   }, [showLists]);
 
   const lists = <WorkspaceLists workspaces={workspaces} error={error} navigate={navigate} />;
@@ -60,7 +69,7 @@ function Home({ navigate, account }) {
           <section className="landing-workspaces" aria-label="Workspaces">
             {lists}
             {/* Without sign-in there is no other way to start a workspace. */}
-            <CreateWorkspace navigate={navigate} />
+            {workspaces && <CreateWorkspace navigate={navigate} />}
           </section>
         )}
       </Landing>
@@ -97,38 +106,24 @@ function WorkspaceLink({ ws, navigate }) {
   );
 }
 
-// WorkspaceLists: the ones this browser has joined (participant tokens in
-// localStorage, the pre-account flow), then every workspace on the server.
+// WorkspaceLists: the workspaces you're a member of.
 function WorkspaceLists({ workspaces, error, navigate }) {
-  const joined = (workspaces || []).filter((ws) => getToken(ws.id));
+  if (error) return <p role="alert">Error: {error}</p>;
   return (
-    <>
-      {error && <p role="alert">Error: {error}</p>}
-      {joined.length > 0 && (
-        <section className="card">
-          <h2 className="card-head">Your workspaces on this browser</h2>
-          <ul className="ws-list">
-            {joined.map((ws) => (
-              <WorkspaceLink key={ws.id} ws={ws} navigate={navigate} />
-            ))}
-          </ul>
-        </section>
+    <section className="card">
+      <h2 className="card-head">Your workspaces</h2>
+      {workspaces === null ? (
+        <p className="card-body muted">Loading…</p>
+      ) : workspaces.length === 0 ? (
+        <p className="card-body muted">No workspaces yet. Create one, or open an invite link from a member.</p>
+      ) : (
+        <ul className="ws-list">
+          {workspaces.map((ws) => (
+            <WorkspaceLink key={ws.id} ws={ws} navigate={navigate} />
+          ))}
+        </ul>
       )}
-      <section className="card">
-        <h2 className="card-head">All workspaces</h2>
-        {workspaces === null ? (
-          <p className="card-body muted">Loading…</p>
-        ) : workspaces.length === 0 ? (
-          <p className="card-body muted">No workspaces yet.</p>
-        ) : (
-          <ul className="ws-list">
-            {workspaces.map((ws) => (
-              <WorkspaceLink key={ws.id} ws={ws} navigate={navigate} />
-            ))}
-          </ul>
-        )}
-      </section>
-    </>
+    </section>
   );
 }
 
@@ -144,7 +139,7 @@ function CreateWorkspace({ navigate }) {
     } catch (err) {
       // UNISON_CREATORS limits creation to listed accounts.
       if (err instanceof ApiError && err.status === 403) {
-        setError("This server only lets approved accounts create workspaces. Ask whoever runs it to add your email, or join an existing workspace.");
+        setError("This server only lets approved accounts create workspaces. Ask whoever runs it to add your email, or ask a member of a workspace for an invite.");
       } else if (err instanceof ApiError && err.status === 401) {
         setError("Sign in to create a workspace on this server.");
       } else setError(err.message);

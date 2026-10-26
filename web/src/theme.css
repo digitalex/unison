@@ -2040,23 +2040,21 @@ button.group-head {
   gap: var(--space-xs);
 }
 
-/* ---- Membership (Account.jsx) ---- */
-.claim-prompt {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
+/* ---- Private workspaces (Gate.jsx) ---- */
+.gate-head {
   gap: var(--space-xs);
-  min-height: 40px;
-  padding: var(--space-xxs) var(--space-xs) var(--space-xxs) var(--space-m);
-  background: var(--panel-head);
-  border-bottom: var(--border-s) solid var(--panel-edge);
 }
 
-.claim-text {
-  flex: 1;
-  min-width: 0;
+.gate-head .lucide {
+  width: 14px;
+  height: 14px;
 }
 
+.gate-body p {
+  margin: 0;
+}
+
+/* ---- Membership (settings/Members.jsx, settings/Invites.jsx) ---- */
 .member-list {
   list-style: none;
   margin: 0;
@@ -2557,6 +2555,26 @@ button.group-head {
 
 .agent-meta {
   font-size: var(--size-xs);
+}
+
+.invite-list {
+  margin-top: var(--space-xs);
+}
+
+.invite-list .agent-row > .lucide {
+  flex: none;
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.invite-expiry-label {
+  flex: 1;
+  font-size: var(--size-s);
+}
+
+.invite-expiry-label + .select {
+  flex: none;
 }
 
 /* Narrow screens: the page scrolls with the document and the section nav

@@ -9,14 +9,18 @@ This is **Phase 0** — the minimal slice needed to use Unison to build Unison:
 
 * **Workspaces** with a connected code repository URL and an
   [isocan](https://isocan.io) visual canvas link.
-* **Identity**: name + emoji registration that returns a session token (no
-  OAuth, no RBAC — yet). Humans and agents are the same kind of participant.
+* **Private workspaces**: only members get in. People sign in (GitHub or
+  Google) and join with an invite — by email or by link; agents join with a
+  member's single-use pass and act as that member's agent. Inside, humans and
+  agents are the same kind of participant (name + emoji), and every member is
+  equal.
 * **Real-time chat** with one-level threads and `@mentions`.
 * **Prioritized backlog** with an atomic assign/claim that acts as a 12-hour
   lease, auto-releasing unclosed items so a stalled agent never wedges work.
 * **Presence**: who is here and what they are doing.
 * **Agent doorway**: a self-contained guide at `/agent.md` (and
-  `unison --agent-help`), plus an "Invite an agent" prompt in the UI.
+  `unison --agent-help`), plus an "Invite an agent" prompt (with a pass) in
+  the UI.
 
 Stack: Go (server + CLI, one binary), React (web UI, embedded in the binary),
 SQLite locally (pure-Go driver, no cgo) or Postgres in production. Zero
@@ -26,22 +30,57 @@ external infrastructure for local use.
 
 ```sh
 git clone https://github.com/digitalex/unison && cd unison
-go run ./cmd/unison serve          # http://localhost:4600
+UNISON_AUTH=off go run ./cmd/unison serve   # http://localhost:4600, privacy off
 ```
 
 Open http://localhost:4600, create a workspace (name, repository URL, isocan
 canvas URL), join with a name and emoji, and add backlog items.
 
-To bring in an agent, click **Invite an agent** and paste the prompt into any
-coding agent. It points the agent at `/w/<workspace>/agent.md`, which tells it
-how to install the CLI, join, claim work and park on `unison wait` between
-tasks.
+`UNISON_AUTH=off` turns workspace privacy off for local development: anyone
+can list, read, create and join workspaces with just a name (from the web, or
+`unison join <url> --name Ada`). Without it, workspaces are private and you
+need sign-in configured (see [Sign-in](#sign-in-github-and-google)); a server
+with no sign-in provider logs a loud warning and stays private, so nobody can
+get in.
+
+To bring in an agent, click **Invite an agent** (signed-in members) and paste
+the prompt into any coding agent. It carries a single-use pass and points the
+agent at `/w/<workspace>/agent.md?pass=…`, which tells it how to install the
+CLI, join, claim work and park on `unison wait` between tasks.
 
 The server listens on `127.0.0.1:4600` and stores data in
 `~/.unison/unison.db`; change these with `--addr` and `--db` (or `UNISON_ADDR`
-and `UNISON_DB`). Use `--addr :4600` to accept connections from other
-machines — there is no authentication in Phase 0, so only do that on a trusted
-network.
+and `UNISON_DB`). Never expose a server with `UNISON_AUTH=off` beyond your
+machine.
+
+## Privacy and invites
+
+Every `/api/workspaces/{ws}/…` route (reads and writes, events, the live
+stream) and the workspace doorway `/w/{ws}/agent.md` admit only:
+
+* a signed-in member (the session cookie, or a `us_…` token from
+  `unison login`);
+* a participant linked to a current member (joined while signed in);
+* an agent that joined with a pass, while the member who invited it is still
+  a member.
+
+Participants from before accounts (no account, no sponsor) are refused with
+an explanation: humans sign in and join again; agents ask a member for a
+pass. The workspace list shows only your workspaces; creating one requires
+signing in, and makes you its first member.
+
+Members invite people from **Settings → Invites** or the CLI:
+
+```sh
+unison invite email bob@example.com      # whoever signs in with this verified email may join, once
+unison invite link --expires 7d          # prints a link; multi-use until it expires (default 7d)
+unison invites                           # pending invites
+unison invite revoke 3
+```
+
+The invitee signs in and opens the link (or runs `unison join <link>`); an
+email invitee just joins (`unison join <url> --account`, or **Join** on the
+workspace page). A removed member needs a fresh invite.
 
 ## The CLI
 
@@ -132,7 +171,7 @@ Build and run the image locally with `docker build -t unison . && docker run
 
 ### Sign-in (GitHub and Google)
 
-Accounts are optional: participant tokens and joining work without them. A
+Workspaces are private, so a deployment needs at least one provider. A
 provider's "Continue with …" button appears only when both its variables are
 set:
 

@@ -218,6 +218,16 @@ func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 // CreateWorkspace creates a workspace. repoURL (if set) becomes its first
 // repository, followed by repos.
 func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
+	return s.createWorkspace(ctx, 0, name, repoURL, canvasURL, repos...)
+}
+
+// CreateWorkspaceFor creates a workspace whose creator (a signed-in user)
+// becomes its first member, in the same transaction.
+func (s *Store) CreateWorkspaceFor(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
+	return s.createWorkspace(ctx, creatorID, name, repoURL, canvasURL, repos...)
+}
+
+func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
 		return nil, nil, fmt.Errorf("%w: workspace name is required", ErrInvalid)
@@ -241,7 +251,13 @@ func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL st
 		if w, err = getWorkspaceTx(t, id); err != nil {
 			return err
 		}
-		return log.add(w.ID, "workspace.created", 0, w)
+		if err := log.add(w.ID, "workspace.created", 0, w); err != nil {
+			return err
+		}
+		if creatorID == 0 {
+			return nil
+		}
+		return ensureMembership(t, log, w.ID, creatorID, 0)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -251,7 +267,18 @@ func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL st
 
 // ListWorkspaces returns all workspaces, newest first.
 func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
-	rows, err := s.db.QueryContext(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
+	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
+}
+
+// ListWorkspacesFor returns the workspaces userID is a member of, newest
+// first.
+func (s *Store) ListWorkspacesFor(ctx context.Context, userID int64) ([]Workspace, error) {
+	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces
+		WHERE id IN (SELECT workspace_id FROM memberships WHERE user_id = ?) ORDER BY created_at DESC`, userID)
+}
+
+func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Workspace, error) {
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}

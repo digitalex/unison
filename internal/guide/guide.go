@@ -18,13 +18,15 @@ var source string
 var tmpl = template.Must(template.New("agent.md").Parse(source))
 
 // Doorway renders the guide for a server at origin. ws may be nil, in which
-// case workspace-specific details are left as placeholders.
-func Doorway(origin string, ws *store.Workspace) string {
+// case workspace-specific details are left as placeholders. pass, when set,
+// is the reader's invite pass, filled into the join command.
+func Doorway(origin string, ws *store.Workspace, pass string) string {
 	var b strings.Builder
 	if err := tmpl.Execute(&b, struct {
 		Origin    string
 		Workspace *store.Workspace
-	}{strings.TrimRight(origin, "/"), ws}); err != nil {
+		Pass      string
+	}{strings.TrimRight(origin, "/"), ws, pass}); err != nil {
 		panic(err) // The template is static; failures are programming errors.
 	}
 	return b.String()

@@ -125,6 +125,7 @@ type authEnv struct {
 	ts   *httptest.Server
 	st   *store.Store
 	fake *fakeProvider
+	srv  *Server
 }
 
 func newAuthEnv(t *testing.T, creators ...string) *authEnv {
@@ -139,7 +140,7 @@ func newAuthEnv(t *testing.T, creators ...string) *authEnv {
 	srv.SetAuth(AuthConfig{Providers: fake.providers(), Creators: creators, DeviceInterval: time.Second})
 	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
-	return &authEnv{t: t, ts: ts, st: st, fake: fake}
+	return &authEnv{t: t, ts: ts, st: st, fake: fake, srv: srv}
 }
 
 // noRedirect is a client that returns redirects instead of following them.
@@ -390,7 +391,7 @@ func TestSessionsAndCSRF(t *testing.T) {
 	}
 	// Participant tokens are never user sessions.
 	ws, _, _ := e.st.CreateWorkspace(t.Context(), "W", "", "")
-	_, ptoken, _, _ := e.st.Join(t.Context(), ws.ID, "Ada", "")
+	_, ptoken, _, _ := joinMember(t, e.st, ws.ID, "Ada", "")
 	if resp, _ := e.do("GET", "/api/me/user", "", withBearer(ptoken)); resp.StatusCode != 401 {
 		t.Errorf("participant token as user = %d", resp.StatusCode)
 	}
@@ -481,9 +482,14 @@ func TestDeviceFlow(t *testing.T) {
 
 func TestCreatorsAllowlist(t *testing.T) {
 	const body = `{"name":"W"}`
+	// Without UNISON_CREATORS any signed-in user may create; nobody else.
 	open := newAuthEnv(t)
-	if resp, _ := open.do("POST", "/api/workspaces", body); resp.StatusCode != 201 {
-		t.Errorf("without UNISON_CREATORS anonymous create = %d, want 201", resp.StatusCode)
+	if resp, _ := open.do("POST", "/api/workspaces", body); resp.StatusCode != 401 {
+		t.Errorf("anonymous create = %d, want 401", resp.StatusCode)
+	}
+	anyone, _ := open.login("google", "/", bobGoogle, nil)
+	if resp, _ := open.do("POST", "/api/workspaces", body, withCookie(anyone), withCSRF()); resp.StatusCode != 201 {
+		t.Errorf("signed-in create without UNISON_CREATORS = %d, want 201", resp.StatusCode)
 	}
 
 	e := newAuthEnv(t, "Ada@example.com")

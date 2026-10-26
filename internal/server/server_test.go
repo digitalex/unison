@@ -52,8 +52,10 @@ func TestRouting(t *testing.T) {
 		{"/w/" + ws.ID, "unison</html>", 200}, // SPA fallback.
 		{"/assets/app.js", "js", 200},
 		{"/api/nope", `"error"`, 404},
-		{"/api/workspaces/missing", `"error"`, 404},
-		{"/w/" + ws.ID + "/agent.md", "https://isocan.io/p/prj_x", 200},
+		// Workspaces are private: unknown and existing look alike to outsiders.
+		{"/api/workspaces/missing", `"error"`, 401},
+		{"/w/" + ws.ID + "/agent.md", "private", 401},
+		{"/w/missing/agent.md", "private", 401},
 		{"/agent.md", "unison join", 200},
 	} {
 		status, body := get(t, ts.URL+tc.path)
@@ -67,7 +69,7 @@ func TestMutationsNeedToken(t *testing.T) {
 	ts, st := newServer(t)
 	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
 	other, _, _ := st.CreateWorkspace(t.Context(), "Other", "", "")
-	_, otherToken, _, _ := st.Join(t.Context(), other.ID, "Ada", "")
+	_, otherToken, _, _ := joinMember(t, st, other.ID, "Ada", "")
 	for token, want := range map[string]int{"": 401, "bogus": 401, otherToken: 403} {
 		req, _ := http.NewRequest("POST", ts.URL+"/api/workspaces/"+ws.ID+"/messages", strings.NewReader(`{"body":"hi"}`))
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -85,7 +87,7 @@ func TestMutationsNeedToken(t *testing.T) {
 func TestStreamDeliversEvents(t *testing.T) {
 	ts, st := newServer(t)
 	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
-	_, token, _, _ := st.Join(t.Context(), ws.ID, "Ada", "")
+	_, token, _, _ := joinMember(t, st, ws.ID, "Ada", "")
 	resp, err := http.Get(ts.URL + "/api/workspaces/" + ws.ID + "/stream?token=" + token)
 	if err != nil {
 		t.Fatal(err)
@@ -124,4 +126,33 @@ func call(t *testing.T, method, url, token, body string) (int, map[string]any) {
 	var out map[string]any
 	json.Unmarshal(raw, &out)
 	return resp.StatusCode, out
+}
+
+// joinMember makes a signed-in member join wsID (a user created for name)
+// and returns what store.Join does. Workspaces are private: tests that once
+// joined anonymously join as members.
+func joinMember(t *testing.T, st *store.Store, wsID, name, emoji string) (*store.Participant, string, []store.Event, error) {
+	t.Helper()
+	u, err := st.LoginWithProvider(t.Context(), "test", store.Profile{Subject: wsID + "/" + name, Name: name})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, tok, _, evs, err := st.JoinAsUser(t.Context(), wsID, u.ID, name, emoji)
+	return p, tok, evs, err
+}
+
+// getAs is get with a bearer token.
+func getAs(t *testing.T, url, token string) (int, string) {
+	t.Helper()
+	req, _ := http.NewRequest("GET", url, nil)
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	return resp.StatusCode, string(body)
 }

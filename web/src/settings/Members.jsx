@@ -8,7 +8,8 @@ function participantNames(ps) {
 
 // Settings → Members: the workspace's accounts with their linked
 // participants. Every member is equal: any signed-in member may remove one.
-export default function Members({ members, account, call, onError }) {
+export default function Members({ members, invites, account, call, onError }) {
+  const pending = invites.filter((i) => i.kind === "email");
   const remove = async (m) => {
     const name = m.display_name || `user ${m.user_id}`;
     if (!window.confirm(`Remove ${name} from this workspace's members? Their participants and history stay.`)) return;
@@ -20,7 +21,7 @@ export default function Members({ members, account, call, onError }) {
   };
   return (
     <>
-      {members.members.length === 0 && <p className="muted member-empty">No members yet: sign in, then join or link your participant.</p>}
+      {members.members.length === 0 && <p className="muted member-empty">No members yet.</p>}
       <ul className="member-list">
         {members.members.map((m) => (
           <li key={m.user_id} className="member-row">
@@ -44,7 +45,14 @@ export default function Members({ members, account, call, onError }) {
           </li>
         ))}
       </ul>
-      {members.unlinked.length > 0 && <p className="muted member-unlinked">Not linked to an account: {participantNames(members.unlinked)}</p>}
+      {pending.length > 0 && (
+        <p className="muted member-unlinked">
+          Invited, not joined yet: {pending.map((i) => i.email).join(" · ")} (<a href="#invites">manage</a>)
+        </p>
+      )}
+      {members.unlinked.length > 0 && (
+        <p className="muted member-unlinked">From before accounts, no longer able to get in: {participantNames(members.unlinked)}</p>
+      )}
       {!account.user && members.members.length > 0 && <p className="field-description">Sign in to remove members.</p>}
     </>
   );

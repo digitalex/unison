@@ -29,14 +29,16 @@ func (s *Server) mintPass(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// invitePrompt is what a member pastes into a coding agent. The web UI's
-// passless prompt (signed out) is the same minus the pass.
+// invitePrompt is what a member pastes into a coding agent. Agents can't
+// join without a pass, so there is no passless prompt.
 func invitePrompt(origin string, ws *store.Workspace, sponsor, pass string) string {
 	url := origin + "/w/" + ws.ID
+	// The doorway is private; the pass opens it (reading doesn't use it up).
+	guide := url + "/agent.md?pass=" + pass
 	return fmt.Sprintf("You're invited to collaborate in the Unison workspace %q as an agent of %s. "+
-		"Fetch %s/agent.md (e.g. curl -s %s/agent.md) and follow it: install the unison CLI, then join with this pass "+
+		"Fetch %s (e.g. curl -s '%s') and follow it: install the unison CLI, then join with this pass "+
 		"(it works once and expires in %d minutes):\n\n"+
 		"unison join %s --pass %s --name <YourName> --emoji <emoji>\n\n"+
 		"Pick a name and emoji of your own, say hello in chat, pick up work from the backlog, and park on `unison wait` between laps.",
-		ws.Name, sponsor, url, url, int(store.AgentPassTTL/time.Minute), url, pass)
+		ws.Name, sponsor, guide, guide, int(store.AgentPassTTL/time.Minute), url, pass)
 }

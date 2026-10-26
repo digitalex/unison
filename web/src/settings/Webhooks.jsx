@@ -59,7 +59,7 @@ export default function Webhooks({ webhooks, call, onError }) {
   );
 }
 
-function UrlBox({ url }) {
+export function UrlBox({ url, label = "Receive URL" }) {
   const [copied, setCopied] = useState(false);
   const copy = (e) => {
     const input = e.currentTarget.parentElement.querySelector("input");
@@ -68,8 +68,8 @@ function UrlBox({ url }) {
   };
   return (
     <div className="url-box">
-      <Input readOnly aria-label="Receive URL" value={url} onFocus={(e) => e.target.select()} />
-      <Button type="button" iconOnly variant="ghost" aria-label="Copy URL" title={copied ? "Copied" : "Copy URL"} onClick={copy}>
+      <Input readOnly aria-label={label} value={url} onFocus={(e) => e.target.select()} />
+      <Button type="button" iconOnly variant="ghost" aria-label={`Copy ${label}`} title={copied ? "Copied" : `Copy ${label}`} onClick={copy}>
         <Copy aria-hidden="true" />
       </Button>
     </div>

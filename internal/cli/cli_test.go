@@ -11,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -25,6 +26,7 @@ import (
 type testEnv struct {
 	t   *testing.T
 	url string
+	st  *store.Store
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -34,13 +36,42 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { st.Close() })
-	ts := httptest.NewServer(server.New(st, nil))
+	srv := server.New(st, nil)
+	srv.SetAuth(server.AuthConfig{DeviceInterval: time.Second})
+	ts := httptest.NewServer(srv)
 	t.Cleanup(ts.Close)
 	for _, k := range []string{"UNISON_SERVER", "UNISON_WORKSPACE", "UNISON_TOKEN", "UNISON_CONFIG"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
-	return &testEnv{t: t, url: ts.URL}
+	return &testEnv{t: t, url: ts.URL, st: st}
+}
+
+// login signs the CLI in (`unison login`) as a new account named name, with
+// a verified email, and makes it the current credentials (each account
+// has its own credentials file, as on separate machines).
+func (e *testEnv) login(name, email string) *store.User {
+	e.t.Helper()
+	e.t.Setenv("UNISON_CREDENTIALS", filepath.Join(e.t.TempDir(), "credentials.json"))
+	u, err := e.st.LoginWithProvider(e.t.Context(), "github", store.Profile{Subject: "gh-" + name, Name: name, Email: email, EmailVerified: email != ""})
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	browser, _, _ := e.st.CreateSession(e.t.Context(), u.ID, store.SessionBrowser, "test")
+	if out := deviceLogin(e.t, e.url, browser); !strings.Contains(out, "Signed in as "+name) {
+		e.t.Fatalf("login as %s: %s", name, out)
+	}
+	return u
+}
+
+// passFor mints a pass as the signed-in member in dir and returns it.
+func (e *testEnv) passFor(dir string) string {
+	e.t.Helper()
+	m := regexp.MustCompile(`--pass (up_\S+)`).FindStringSubmatch(e.ok(dir, "pass"))
+	if m == nil {
+		e.t.Fatal("pass printed no pass")
+	}
+	return m[1]
 }
 
 // run executes the CLI in dir and returns stdout, stderr and the exit code.
@@ -66,13 +97,14 @@ func TestEndToEnd(t *testing.T) {
 	e := newTestEnv(t)
 	human, agent := t.TempDir(), t.TempDir()
 
+	e.login("Alex", "")
 	var ws store.Workspace
 	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--repo", "https://github.com/digitalex/unison", "--json")), &ws); err != nil {
 		t.Fatal(err)
 	}
 	invite := e.url + "/w/" + ws.ID
-	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑")
-	e.ok(agent, "join", invite, "--name", "Ada", "--emoji", "🦊")
+	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑", "--account")
+	e.ok(agent, "join", invite, "--pass", e.passFor(human), "--name", "Ada", "--emoji", "🦊")
 	if _, err := os.Stat(filepath.Join(agent, ConfigFile)); err != nil {
 		t.Fatalf("join did not save a session: %v", err)
 	}
