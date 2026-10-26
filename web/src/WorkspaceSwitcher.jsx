@@ -7,7 +7,7 @@ import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
-// WorkspaceSwitcher is the top bar's workspace control: the current
+// WorkspaceSwitcher is the sidebar's workspace control: the current
 // workspace's name, opening a menu of your workspaces (fetched on open, so
 // new memberships show up) and "New workspace". Arrow keys, Home and End
 // move through the menu; Escape or a click outside closes it.

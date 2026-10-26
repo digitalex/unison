@@ -1,14 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Ellipsis, ListChecks, MessageSquare, Reply, X } from "lucide-react";
+import { Ellipsis, ListChecks, Reply, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Markdown from "./Markdown.jsx";
-import SectionToggle from "./ui/SectionToggle.jsx";
+import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The workspace chat room. Threads are one level deep: replies are listed
-// under the message that started the thread. It can be minimized (open and
-// onToggle come from Workspace, which also gives the space back to the backlog).
+// The workspace chat room, a screen of its own. Threads are one level deep:
+// replies are listed under the message that started the thread. head is the
+// header's shared controls (who's here, Invite), error the workspace's
+// error bar.
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
 // focusing) a message shows its actions: reply, and the reactions.
@@ -23,7 +24,7 @@ const REACTIONS = [
   { emoji: "💯", label: "100" },
 ];
 
-export default function Chat({ workspaceId, messages, items, participants, me, call, onError, open, onToggle, shown }) {
+export default function Chat({ messages, items, participants, me, call, onError, shown, head, error }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
@@ -31,24 +32,12 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
   const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
   const composer = useRef(null);
   const mentionedItem = itemMentioned(text, items) || replyItem;
-  const flashed = useShowMessage(shown, messages, open);
-  const seenKey = `unison.chat.seen.${workspaceId}`;
-  const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
-  const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
+  const flashed = useShowMessage(shown, messages);
   const bottom = useRef(null);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages.length, open]);
-
-  // While chat is open everything is seen; remember the newest message so a
-  // minimized chat can count what arrived since (across reloads too).
-  useEffect(() => {
-    if (open && latestId > seenId) {
-      localStorage.setItem(seenKey, String(latestId));
-      setSeenId(latestId);
-    }
-  }, [open, latestId, seenId, seenKey]);
+  }, [messages.length]);
 
   const byId = new Map(messages.map((m) => [m.id, m]));
   const replies = new Map();
@@ -110,17 +99,10 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
     onToggleActions: () => setActionsFor(actionsFor === m.id ? null : m.id),
   });
 
-  if (!open) {
-    return <MinimizedChat unread={messages.filter((m) => m.id > seenId).length} onOpen={() => onToggle(true)} />;
-  }
-
   return (
-    <aside className="chat panel" aria-label="Chat">
-      <h2 className="chat-head">
-        <SectionToggle open={open} onToggle={onToggle}>
-          Chat
-        </SectionToggle>
-      </h2>
+    <section className="screen chat" aria-label="Chat">
+      <ScreenHead title="Chat">{head}</ScreenHead>
+      {error}
       <div className="chat-log">
         {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
         {roots.map((m) => (
@@ -176,7 +158,7 @@ export default function Chat({ workspaceId, messages, items, participants, me, c
           </Button>
         </div>
       </form>
-    </aside>
+    </section>
   );
 }
 
@@ -189,11 +171,11 @@ function itemMentioned(text, items) {
   return null;
 }
 
-// useShowMessage scrolls to the shown message once it is rendered (and chat
-// is open), focuses it, and returns its id while it should be highlighted.
-function useShowMessage(shown, messages, open) {
+// useShowMessage scrolls to the shown message once it is rendered, focuses
+// it, and returns its id while it should be highlighted.
+function useShowMessage(shown, messages) {
   const [flashed, setFlashed] = useState(null);
-  const present = Boolean(shown && open && messages.some((m) => m.id === shown.id));
+  const present = Boolean(shown && messages.some((m) => m.id === shown.id));
   useEffect(() => {
     if (!present) return;
     setFlashed(shown.id);
@@ -297,17 +279,3 @@ function Reactions({ reactions, participants, me, onReact }) {
   );
 }
 
-// The minimized chat: a slim rail (a header row on narrow screens) that shows
-// how many messages arrived since it was minimized.
-function MinimizedChat({ unread, onOpen }) {
-  const label = unread > 0 ? `Open chat, ${unread} new message${unread === 1 ? "" : "s"}` : "Open chat";
-  return (
-    <aside className="chat chat-minimized panel" aria-label="Chat">
-      <button type="button" className="chat-rail" aria-expanded={false} aria-label={label} title={label} onClick={onOpen}>
-        <MessageSquare aria-hidden="true" />
-        <span className="chat-rail-label">Chat</span>
-        {unread > 0 && <span className="chat-unread">{unread}</span>}
-      </button>
-    </aside>
-  );
-}

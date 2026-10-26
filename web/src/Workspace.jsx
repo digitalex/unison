@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useState } from "react";
-import { FolderGit2, KeyRound, LayoutGrid, Link2, ArrowUpRight, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpRight, FolderGit2, Inbox as InboxIcon, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import Inbox from "./Inbox.jsx";
-import { SHOW_MESSAGE, spaLink } from "./nav.js";
+import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { agentStatus } from "./agents.js";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
@@ -15,8 +15,6 @@ import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
-import useSectionOpen from "./useSectionOpen.js";
-import Splitter, { useChatWidth } from "./ui/Splitter.jsx";
 import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
@@ -45,8 +43,10 @@ function isGateError(e) {
   return e instanceof ApiError && GATE_CODES.includes(e.code);
 }
 
-// Workspace is a workspace's page: the board (backlog and chat) or, with
-// view "settings", its settings. Both share the data and live updates.
+// Workspace is a workspace's page. A sidebar (a tab bar at the bottom on
+// phones) switches between its screens, and the current one fills the main
+// pane: view is "inbox", "backlog", "chat" or "settings". They all share the
+// data and live updates.
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
@@ -65,9 +65,9 @@ export default function Workspace({ id, view, navigate, account }) {
   const [invites, setInvites] = useState([]);
   const [inbox, setInbox] = useState([]);
   const [live, setLive] = useState(false);
-  const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
-  const shownMessage = useShownMessage(setChatOpen);
-  const chatWidth = useChatWidth();
+  const screens = useScreens(id, view, navigate);
+  const shownMessage = useShownMessage(screens.show);
+  const unread = useChatUnread(id, messages, me, view === "chat");
   const [error, setError] = useState("");
   const joined = Boolean(me);
 
@@ -125,78 +125,113 @@ export default function Workspace({ id, view, navigate, account }) {
   if (gate) return <GatePage gate={gate} account={account} workspaceId={id} onJoined={onJoined} />;
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
+  const counts = { inbox: inbox.length, backlog: backlog.filter((it) => it.status !== "done").length, chat: unread };
+  // The screen header's people and account controls (the roster and Invite
+  // on wide screens; Invite and the account menu on phones).
+  const headExtras = (
+    <HeadExtras workspace={workspace} me={me} participants={participants} call={call} onError={setError} account={account} members={members} settingsLink={screens.link("settings")} />
+  );
+  const errorBar = error && (
+    <p role="alert" className="error-bar">
+      Error: {error}{" "}
+      <Button variant="ghost" onClick={() => setError("")}>
+        dismiss
+      </Button>
+    </p>
+  );
+
   return (
-    <div className="app">
-      <TopBar
-        workspace={workspace}
-        view={view}
-        me={me}
-        joined={joined}
-        participants={participants}
-        live={live}
-        call={call}
-        onError={setError}
-        navigate={navigate}
-        account={account}
-        members={members}
-      />
+    <div className={joined ? "shell" : "shell shell-unjoined"}>
+      <Sidebar workspace={workspace} view={view} joined={joined} live={live} counts={counts} screens={screens} account={account} navigate={navigate} />
       {view === "settings" && joined ? (
-        <SettingsPage
-          workspace={workspace}
-          members={members}
-          invites={invites}
-          participants={participants}
-          webhooks={webhooks}
-          account={account}
-          call={call}
-          error={error}
-          onError={setError}
-          navigate={navigate}
-        />
+        <main className="shell-main shell-settings">
+          <SettingsPage
+            workspace={workspace}
+            members={members}
+            invites={invites}
+            participants={participants}
+            webhooks={webhooks}
+            account={account}
+            call={call}
+            error={error}
+            onError={setError}
+            navigate={navigate}
+          />
+        </main>
       ) : (
-        <div
-          className={!joined ? "app-body app-body-single" : chatOpen ? "app-body app-body-resizable" : "app-body app-body-chat-minimized"}
-          style={joined && chatOpen ? { "--chat-width": `${chatWidth.width}px` } : undefined}
-        >
-          <main className={joined ? "app-main panel" : "app-main"}>
-            {error && (
-              <p role="alert" className="error-bar">
-                Error: {error}{" "}
-                <Button variant="ghost" onClick={() => setError("")}>
-                  dismiss
-                </Button>
-              </p>
-            )}
-            {joined ? (
-              <>
-                <Inbox entries={inbox} participants={participants} call={call} onError={setError} />
-                <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
-              </>
-            ) : (
+        <main className="shell-main panel">
+          {!joined ? (
+            <>
+              {errorBar}
               <JoinCard workspaceId={id} account={account} onJoined={onJoined} />
-            )}
-          </main>
-          {joined && chatOpen && (
-            <Splitter width={chatWidth.width} min={chatWidth.min} max={chatWidth.max} onChange={chatWidth.setWidth} />
-          )}
-          {joined && (
+            </>
+          ) : view === "inbox" ? (
+            <Inbox entries={inbox} participants={participants} call={call} onError={setError} head={headExtras} error={errorBar} />
+          ) : view === "chat" ? (
             <Chat
-              workspaceId={id}
               messages={messages}
               items={backlog}
               participants={participants}
               me={me}
               call={call}
               onError={setError}
-              open={chatOpen}
-              onToggle={setChatOpen}
               shown={shownMessage}
+              head={headExtras}
+              error={errorBar}
             />
+          ) : (
+            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
           )}
-        </div>
+        </main>
       )}
+      {joined && <TabBar view={view} counts={counts} screens={screens} />}
     </div>
   );
+}
+
+// useScreens moves between the workspace's screens: link(screen) gives an
+// <a>'s props, show(screen, rest) goes there (rest: a query or hash to
+// keep). Links that open a backlog item from another screen (OPEN_ITEM: an
+// inbox entry's or a chat message's chip) go to the backlog, which opens it.
+function useScreens(id, view, navigate) {
+  const path = (screen) => (screen === "backlog" ? `/w/${id}` : `/w/${id}/${screen}`);
+  const current = useRef(view);
+  current.current = view;
+  const show = (screen, rest = "") => {
+    if (current.current !== screen || rest) navigate(path(screen) + rest);
+  };
+  useEffect(() => {
+    const onOpenItem = (e) => {
+      if (current.current !== "backlog") show("backlog", `?item=${e.detail}`);
+    };
+    window.addEventListener(OPEN_ITEM, onOpenItem);
+    return () => window.removeEventListener(OPEN_ITEM, onOpenItem);
+  }, [id]);
+  const link = (screen) => ({
+    href: path(screen),
+    "aria-current": view === screen ? "page" : undefined,
+    onClick: (e) => {
+      if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
+      e.preventDefault();
+      show(screen);
+    },
+  });
+  return { show, link };
+}
+
+// useChatUnread counts the messages from others that arrived since you last
+// had the chat screen open (remembered across reloads).
+function useChatUnread(workspaceId, messages, me, active) {
+  const seenKey = `unison.chat.seen.${workspaceId}`;
+  const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
+  const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
+  useEffect(() => {
+    if (active && latestId > seenId) {
+      localStorage.setItem(seenKey, String(latestId));
+      setSeenId(latestId);
+    }
+  }, [active, latestId, seenId, seenKey]);
+  return messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length;
 }
 
 // messageFromURL reads a deep link to a chat message: #msg-12 or ?msg=12.
@@ -207,16 +242,16 @@ function messageFromURL() {
 
 // useShownMessage is the chat message to scroll to and highlight: from a
 // deep link, or a link elsewhere on the board (messageLink). Showing one
-// opens a minimized chat. `at` makes showing the same message again count.
-function useShownMessage(setChatOpen) {
+// goes to the chat screen. `at` makes showing the same message again count.
+function useShownMessage(show) {
   const [shown, setShown] = useState(() => {
     const id = messageFromURL();
     return id ? { id, at: Date.now() } : null;
   });
   useEffect(() => {
-    if (shown) setChatOpen(true);
+    if (shown) show("chat", `#msg-${shown.id}`);
     const onShow = (e) => {
-      setChatOpen(true);
+      show("chat", `#msg-${e.detail}`);
       setShown({ id: e.detail, at: Date.now() });
     };
     window.addEventListener(SHOW_MESSAGE, onShow);
@@ -225,11 +260,29 @@ function useShownMessage(setChatOpen) {
   return shown;
 }
 
-function TopBar({ workspace, view, me, joined, participants, live, call, onError, navigate, account, members }) {
-  const settings = `/w/${workspace.id}/settings`;
+const SCREENS = [
+  { id: "inbox", label: "Inbox", Icon: InboxIcon },
+  { id: "backlog", label: "Backlog", Icon: ListTodo },
+  { id: "chat", label: "Chat", Icon: MessageCircle },
+];
+
+// The count beside a screen's name: the inbox's entries and the open backlog
+// as numbers, chat's unread messages as a dot.
+function ScreenCount({ screen, counts }) {
+  const n = counts[screen];
+  if (!n) return null;
+  if (screen === "chat") return <span className="nav-unread" aria-label={`${n} new message${n === 1 ? "" : "s"}`} />;
+  return <span className={screen === "inbox" ? "nav-count nav-count-strong" : "nav-count"}>{n}</span>;
+}
+
+// Sidebar: the workspace's navigation on wide screens. It has no panel of
+// its own (it sits on the base): the workspace switcher, the screens, links
+// out (canvas, repositories), then settings and your account at the bottom.
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate }) {
+  const repos = workspace.repos || [];
   return (
-    <header className="topbar">
-      <div className="ws">
+    <nav className="sidebar" aria-label="Workspace">
+      <div className="sidebar-ws">
         <a
           className="ws-mark"
           href="/"
@@ -245,28 +298,96 @@ function TopBar({ workspace, view, me, joined, participants, live, call, onError
         <h1 className="ws-name">
           <WorkspaceSwitcher workspace={workspace} account={account} navigate={navigate} />
         </h1>
-        {view === "settings" && joined && <span className="crumb">/ Settings</span>}
+        <span className={live ? "live live-on" : "live"} title={live ? "Live" : "Reconnecting…"} aria-label={live ? "Live" : "Reconnecting…"} />
       </div>
-      {workspace.canvas_url && (
-        <a
-          className="canvas-link"
-          href={workspace.canvas_url}
-          target="_blank"
-          rel="noreferrer"
-          title="Open the design canvas"
-          aria-label="Canvas (opens in a new tab)"
-        >
-          <LayoutGrid aria-hidden="true" />
-          <span className="label">Canvas</span>
-          <ArrowUpRight aria-hidden="true" />
-        </a>
+      {joined && (
+        <ul className="nav-list">
+          {SCREENS.map(({ id, label, Icon }) => (
+            <li key={id}>
+              <a className="nav-link" {...screens.link(id)}>
+                <Icon aria-hidden="true" />
+                {label}
+                <ScreenCount screen={id} counts={counts} />
+              </a>
+            </li>
+          ))}
+        </ul>
       )}
-      <RepoLinks repos={workspace.repos || []} />
+      {(workspace.canvas_url || repos.length > 0) && (
+        <>
+          <h2 className="nav-heading">Links</h2>
+          <ul className="nav-list nav-list-small">
+            {workspace.canvas_url && (
+              <li>
+                <a className="nav-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">
+                  <LayoutGrid aria-hidden="true" />
+                  Canvas
+                  <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                </a>
+              </li>
+            )}
+            {repos.map((r) => (
+              <li key={r.id}>
+                <a className="nav-link" href={r.url} target="_blank" rel="noreferrer" title={`Repository: ${r.url}`}>
+                  <FolderGit2 aria-hidden="true" />
+                  <span className="nav-text">{repoName(r.url)}</span>
+                  <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                </a>
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
       <span className="spacer" />
-      <span className={live ? "live live-on" : "live"}>{live ? "live" : "reconnecting…"}</span>
+      <div className="sidebar-foot">
+        {joined && (
+          <a className="nav-link" {...screens.link("settings")} title="Workspace settings">
+            <Settings aria-hidden="true" />
+            Settings
+          </a>
+        )}
+        {account.user ? <AccountMenu account={account} showName menuExtra={() => <ThemeRow />} /> : <ThemeSwitch />}
+      </div>
+    </nav>
+  );
+}
+
+// TabBar: the screens as tabs at the bottom, on phones.
+function TabBar({ view, counts, screens }) {
+  return (
+    <nav className="tabbar" aria-label="Screens">
+      {SCREENS.map(({ id, label, Icon }) => (
+        <a key={id} className="tab" {...screens.link(id)}>
+          <span className="tab-icon">
+            <Icon aria-hidden="true" />
+            <ScreenCount screen={id} counts={counts} />
+          </span>
+          {label}
+        </a>
+      ))}
+    </nav>
+  );
+}
+
+function ThemeRow() {
+  return (
+    <div className="account-theme">
+      <span className="muted">Theme</span>
       <ThemeSwitch />
+    </div>
+  );
+}
+
+// HeadExtras: who's here and Invite, at the right of each screen's header.
+// On phones the roster gives way to the account menu, which also holds
+// settings (there is no sidebar).
+function HeadExtras({ workspace, me, participants, call, onError, account, members, settingsLink }) {
+  return (
+    <>
+      <Roster participants={participants} me={me} call={call} onError={onError} />
       <Popover
         title="Invite a person or an agent"
+        className="button button-ghost head-invite"
         trigger={
           <>
             <UserPlus aria-hidden="true" />
@@ -276,65 +397,33 @@ function TopBar({ workspace, view, me, joined, participants, live, call, onError
       >
         {(close) => <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />}
       </Popover>
-      <Roster participants={participants} me={me} call={call} onError={onError} />
-      {me && (
-        <a
-          className="button button-ghost button-icon"
-          href={settings}
-          title="Workspace settings"
-          aria-label="Workspace settings"
-          aria-current={view === "settings" ? "page" : undefined}
-          onClick={(e) => {
-            e.preventDefault();
-            navigate(settings);
-          }}
-        >
-          <Settings aria-hidden="true" />
-        </a>
-      )}
-      <AccountMenu account={account} />
-    </header>
-  );
-}
-
-// One repository links directly; several open a small list.
-function RepoLinks({ repos }) {
-  if (repos.length === 0) return null;
-  if (repos.length === 1) {
-    return (
-      <a className="icon-link" href={repos[0].url} target="_blank" rel="noreferrer" title={`Repository: ${repos[0].url}`}>
-        <FolderGit2 aria-label="Repository" />
-      </a>
-    );
-  }
-  return (
-    <Popover
-      title="Repositories"
-      align="start"
-      className="button button-ghost repo-trigger"
-      trigger={
-        <>
-          <FolderGit2 aria-hidden="true" />
-          <span className="repo-count">{repos.length}</span>
-        </>
-      }
-    >
-      {() => (
-        <>
-          <h2 className="popover-title">Repositories</h2>
-          <ul className="repo-list">
-            {repos.map((r) => (
-              <li key={r.id}>
-                <a href={r.url} target="_blank" rel="noreferrer">
-                  <span className="repo-label">{repoName(r.url)}</span>
-                  <span className="repo-url">{r.url}</span>
+      <span className="head-account">
+        {account.user ? (
+          <AccountMenu
+            account={account}
+            menuExtra={(close) => (
+              <>
+                <ThemeRow />
+                <a className="button button-secondary" href={settingsLink.href} onClick={(e) => {
+                    close();
+                    settingsLink.onClick(e);
+                  }}>
+                  <Settings aria-hidden="true" />
+                  Workspace settings
                 </a>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-    </Popover>
+              </>
+            )}
+          />
+        ) : (
+          <>
+            <ThemeSwitch />
+            <a className="button button-ghost button-icon" {...settingsLink} title="Workspace settings" aria-label="Workspace settings">
+              <Settings aria-hidden="true" />
+            </a>
+          </>
+        )}
+      </span>
+    </>
   );
 }
 
