@@ -198,3 +198,25 @@ gcloud run services update unison-git --region europe-west1 \
 The callback URL is built from the request's host and `X-Forwarded-Proto`
 (Cloud Run sets it), so it must match the host people use. The CLI signs in
 with `unison login` (a device code approved at `https://<host>/auth/device`).
+
+### Push notifications (iOS)
+
+The server can push to the Unison iOS app through APNs: a member is notified
+when a message asks them to act ("<sender> needs you") or @mentions them in
+chat or a backlog comment ("<sender> mentioned you"), once per account on
+all of its devices, never for their own posts. The app registers devices with
+`POST /api/me/devices`; `unison devices` lists yours.
+
+Push is on when all four of these are set (otherwise it is off and device
+registration still works):
+
+* `APNS_KEY`: the contents of the APNs auth key (`AuthKey_XXXX.p8`, a PKCS#8
+  PEM), best from a Secret Manager secret;
+* `APNS_KEY_ID`: that key's ID;
+* `APNS_TEAM_ID`: the Apple developer team ID;
+* `APNS_TOPIC`: the app's bundle ID.
+
+Set `APNS_SANDBOX=1` to use APNs's development environment
+(`api.sandbox.push.apple.com`), for builds run from Xcode; leave it unset for
+TestFlight and App Store builds. `unison serve` logs whether push is on.
+Devices APNs reports as gone are removed automatically.

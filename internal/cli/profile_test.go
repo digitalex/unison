@@ -4,6 +4,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -82,5 +83,46 @@ func TestProfileCommands(t *testing.T) {
 	}
 	if _, _, err := st.SessionByToken(t.Context(), browser); err == nil {
 		t.Error("the browser session survived")
+	}
+}
+
+// TestDevicesCommands: `devices` lists the account's push devices (without
+// their tokens) and `devices remove` removes one of them, not another
+// account's.
+func TestDevicesCommands(t *testing.T) {
+	e := newTestEnv(t)
+	dir := t.TempDir()
+	if _, errOut, code := e.run(dir, "devices"); code == 0 || !strings.Contains(errOut, "unison login") {
+		t.Errorf("devices before login: exit %d %q", code, errOut)
+	}
+	bob := e.login("Bob", "")
+	ada := e.login("Ada", "")
+	if out := e.ok(dir, "devices"); !strings.Contains(out, "No devices") {
+		t.Errorf("devices before any = %q", out)
+	}
+	const token = "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
+	_, app, _ := e.st.CreateSession(t.Context(), ada.ID, store.SessionCLI, "iOS")
+	d, err := e.st.RegisterDevice(t.Context(), ada.ID, app.ID, token, "Ada's iPhone")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bobApp, _ := e.st.CreateSession(t.Context(), bob.ID, store.SessionCLI, "iOS")
+	bobs, _ := e.st.RegisterDevice(t.Context(), bob.ID, bobApp.ID, strings.Repeat("b", 64), "Bob's iPhone")
+
+	out := e.ok(dir, "devices")
+	if !strings.Contains(out, "Ada's iPhone") || !strings.Contains(out, "never notified") || strings.Contains(out, token) || strings.Contains(out, "Bob") {
+		t.Errorf("devices =\n%s", out)
+	}
+	if _, errOut, code := e.run(dir, "devices", "remove", strconv.FormatInt(bobs.ID, 10)); code == 0 || !strings.Contains(errOut, "not found") {
+		t.Errorf("removing bob's device: exit %d %q", code, errOut)
+	}
+	if _, _, code := e.run(dir, "devices", "remove", "x"); code == 0 {
+		t.Error("devices remove x succeeded")
+	}
+	if out := e.ok(dir, "devices", "remove", strconv.FormatInt(d.ID, 10)); !strings.Contains(out, "Removed device") {
+		t.Errorf("devices remove = %q", out)
+	}
+	if out := e.ok(dir, "devices"); !strings.Contains(out, "No devices") {
+		t.Errorf("devices after remove = %q", out)
 	}
 }
