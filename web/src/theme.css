@@ -3061,63 +3061,9 @@ html.reordering * {
 }
 
 .settings-layout {
-  display: grid;
-  grid-template-columns: 200px minmax(0, 720px);
-  justify-content: center;
-  gap: var(--space-l);
+  max-width: 720px;
+  margin: 0 auto;
   padding-top: var(--space-s);
-}
-
-.settings-nav {
-  position: sticky;
-  top: var(--space-s);
-  align-self: start;
-  min-width: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-s);
-}
-
-.settings-back {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  color: var(--text-secondary);
-}
-
-.settings-back:hover {
-  color: var(--text);
-  text-decoration: none;
-}
-
-.settings-nav ul {
-  list-style: none;
-  margin: 0;
-  padding: 0;
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-
-.settings-nav ul a {
-  display: block;
-  padding: var(--space-xxs) var(--space-xs);
-  border-radius: var(--radius-s);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.settings-nav ul a:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-  text-decoration: none;
-}
-
-.settings-nav ul a[aria-current] {
-  background: var(--panel);
-  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
-  color: var(--text);
-  font-weight: var(--weight-ui-medium);
 }
 
 .settings-content {
@@ -3221,47 +3167,9 @@ html.reordering * {
   font-size: var(--size-s);
 }
 
-/* Narrow screens: the page scrolls with the document and the section nav
-   becomes a sticky horizontal scroller above the cards. */
-@media (max-width: 860px) {
-  .settings-page {
-    overflow: visible;
-  }
-
-  .settings-layout {
-    grid-template-columns: minmax(0, 1fr);
-    gap: var(--space-s);
-  }
-
-  .settings-nav {
-    top: 0;
-    z-index: 5;
-    gap: var(--space-xs);
-    margin: 0 calc(-1 * var(--space-s));
-    padding: var(--space-xs) var(--space-s);
-    background: var(--base);
-  }
-
-  .settings-nav ul {
-    flex-direction: row;
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
-  .settings-card {
-    scroll-margin-top: 96px;
-  }
-}
-
 @media (max-width: 640px) {
   .settings-page {
     padding: 0 8px var(--space-l);
-  }
-
-  .settings-nav {
-    margin: 0 -8px;
-    padding: var(--space-xs) 8px;
-    background: var(--panel);
   }
 }
 

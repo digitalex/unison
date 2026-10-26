@@ -171,7 +171,6 @@ export default function Workspace({ id, view, navigate, account }) {
             call={call}
             error={error}
             onError={setError}
-            navigate={navigate}
           />
         </main>
       ) : (
