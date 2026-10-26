@@ -1,88 +1,51 @@
-import { useEffect, useState } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronDown,
-  ChevronRight,
-  GitPullRequest,
-  GripVertical,
-  MessageSquare,
-  Pencil,
-  Plus,
-  Trash2,
-  X,
-} from "lucide-react";
-import Markdown from "./Markdown.jsx";
+import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { ChevronDown, ChevronRight, GitPullRequest, GripVertical, MessageSquare, Plus } from "lucide-react";
+import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
+import { meta, name, prLabel } from "./backlogFormat.js";
 import Button from "./ui/Button.jsx";
 import SectionToggle from "./ui/SectionToggle.jsx";
 import useSectionOpen from "./useSectionOpen.js";
-import { Input, Select } from "./ui/Input.jsx";
-
-// Drag-and-drop reordering is for mouse-like pointers; on touch screens
-// (coarse primary pointer) rows stay plain scrollable rows and the up/down
-// buttons move items.
-const CAN_DRAG = typeof window !== "undefined" && !window.matchMedia?.("(pointer: coarse)").matches;
 
 // The prioritized backlog, grouped into In progress (assigned), Open and Done.
 // Queued items (open + assigned) share one priority order (the position
-// numbers); done items follow.
+// numbers); done items follow. Rows are compact: clicking one opens the item
+// dialog (also deep-linkable as ?item=12), and dragging reorders.
 export default function Backlog({ items, participants, me, workspace, call, onError }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
   const [showDone, setShowDone] = useState(false);
-  const [drag, setDrag] = useState(null); // The item being dragged.
-  const [drop, setDrop] = useState(null); // { id, where: "before" | "after" }
   const [expanded, setExpanded] = useSectionOpen("backlog", true);
-  const queued = items.filter((it) => it.status !== "done");
-  const assigned = queued.filter((it) => it.status === "assigned");
-  const open = queued.filter((it) => it.status === "open");
-  const done = items.filter((it) => it.status === "done");
+  const [creating, setCreating] = useState(false);
+  const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
+  const [notice, setNotice] = useState("");
+  const [openId, openItem, closeItem] = useItemParam();
   const run = (method, suffix, payload) => call(method, suffix, payload).catch((e) => onError(e.message));
   const moveTo = (item, position) => {
     if (position !== item.position) run("POST", `/backlog/${item.id}/move`, { position });
   };
+  const queued = items.filter((it) => it.status !== "done");
+  const groups = { assigned: queued.filter((it) => it.status === "assigned"), open: queued.filter((it) => it.status === "open") };
+  const done = items.filter((it) => it.status === "done");
+  const reorder = useReorder(groups, moveTo);
+  const openedItem = useOpenItem(openId, items, closeItem, setNotice);
+  useDismiss(notice, setNotice);
+  useRevealCreated(created, items, setCreated);
+  const hintId = useId();
 
-  // Dragging reorders within a group: dropping an open item among in-progress
-  // ones would need an assignment, not a move.
-  const dnd = {
-    drag,
-    drop,
-    start: (item) => setDrag(item),
-    end: () => {
-      setDrag(null);
-      setDrop(null);
-    },
-    over: (item, where) => {
-      if (!drag || drag.id === item.id || drag.status !== item.status) return false;
-      if (drop?.id !== item.id || drop.where !== where) setDrop({ id: item.id, where });
-      return true;
-    },
-    dropOn: (item, where) => {
-      const from = drag.position;
-      const to = item.position;
-      // The server removes the item and re-inserts it at the new position.
-      const position = where === "before" ? (from < to ? to - 1 : to) : from < to ? to : to + 1;
-      dnd.end();
-      moveTo(drag, position);
-    },
-  };
-
-  const group = (list) =>
-    list.map((it, i) => (
-      <BacklogItem
+  const rows = (status, list) =>
+    reorder.arrange(status, list).map((it) => (
+      <BacklogRow
         key={it.id}
         item={it}
-        prev={list[i - 1]}
-        next={list[i + 1]}
-        {...{ participants, me, workspace, call, run, moveTo, dnd }}
+        list={list}
+        highlight={created === it.id}
+        {...{ participants, me, run, reorder, hintId }}
+        repos={workspace?.repos || []}
+        onOpen={() => openItem(it.id)}
       />
     ));
-
-  const add = async (e) => {
-    e.preventDefault();
-    await run("POST", "/backlog", { title, body });
-    setTitle("");
-    setBody("");
+  const onCreated = (item) => {
+    setCreating(false);
+    setExpanded(true);
+    setCreated(item.id);
   };
 
   return (
@@ -94,49 +57,48 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
           </SectionToggle>
         </h2>
         <span className="muted">{queued.length}</span>
-        <span className="muted toolbar-sub">· prioritized queue, top is most important</span>
         <span className="spacer" />
-        <Button variant="primary" onClick={() => run("POST", "/backlog/claim")}>
-          Claim next
+        <Button variant="primary" onClick={() => setCreating(true)} aria-haspopup="dialog">
+          <Plus aria-hidden="true" />
+          New item
         </Button>
       </div>
+      {notice && (
+        <p role="status" className="error-bar notice-bar">
+          {notice}{" "}
+          <Button variant="ghost" onClick={() => setNotice("")}>
+            dismiss
+          </Button>
+        </p>
+      )}
+      <p id={hintId} className="sr-only">
+        Reorder: press Space or Enter to pick the item up, the arrow keys to move it, Space or Enter to drop it, Escape to cancel.
+      </p>
+      <p className="sr-only" role="status" aria-live="assertive">
+        {reorder.announcement}
+      </p>
 
       {expanded && (
         <>
-      <GroupHead status="assigned" label="In progress" count={assigned.length} />
-      {group(assigned)}
+          <GroupHead status="assigned" label="In progress" count={groups.assigned.length} />
+          {rows("assigned", groups.assigned)}
 
-      <GroupHead status="open" label="Open" count={open.length} />
-      {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
-      {group(open)}
-      <form className="add-row" onSubmit={add}>
-        <span className="rank" />
-        <Plus aria-hidden="true" className="muted" />
-        <input
-          required
-          aria-label="New item title"
-          value={title}
-          onChange={(e) => setTitle(e.target.value)}
-          placeholder="Add an item…  Enter to save"
-        />
-        <input
-          aria-label="Description (optional)"
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          placeholder="Description (optional)"
-        />
-        <Button type="submit">Add</Button>
-      </form>
+          <GroupHead status="open" label="Open" count={groups.open.length} />
+          {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
+          {rows("open", groups.open)}
 
-      <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
-        {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-        <span className="status done" />
-        Done
-        <span className="count">{done.length}</span>
-      </button>
-      {showDone && group(done)}
+          <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+            {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+            <span className="status done" />
+            Done
+            <span className="count">{done.length}</span>
+          </button>
+          {showDone && rows("done", done)}
         </>
       )}
+
+      {creating && <NewItemDialog run={run} onClose={() => setCreating(false)} onCreated={onCreated} />}
+      {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
     </section>
   );
 }
@@ -151,137 +113,45 @@ function GroupHead({ status, label, count }) {
   );
 }
 
-function name(participants, id) {
-  const p = participants.find((p) => p.id === id);
-  return p ? `${p.emoji} ${p.name}` : `participant ${id}`;
-}
-
-function hoursLeft(ms) {
-  return Math.max(0, (ms - Date.now()) / 3600000).toFixed(1);
-}
-
-function ago(ms) {
-  const minutes = Math.max(0, Math.round((Date.now() - ms) / 60000));
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.round(minutes / 60);
-  return hours < 48 ? `${hours}h ago` : `${Math.round(hours / 24)}d ago`;
-}
-
-function meta(item) {
-  if (item.status === "assigned") return `lease ${hoursLeft(item.lease_expires_at)}h left`;
-  if (item.status === "open") return `added ${ago(item.created_at)}`;
-  return item.close_note || "done";
-}
-
-const GITHUB_PR = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
-const GITHUB_REPO = /github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i;
-
-// prLabel shortens a PR URL. In a workspace repository it is "label#4" (or
-// "#4" when that is the only repository, else "repo#4"); in another GitHub
-// repository "owner/repo#4"; otherwise the host name.
-function prLabel(url, repos) {
-  const pr = url.match(GITHUB_PR);
-  if (!pr) {
-    try {
-      return new URL(url).hostname;
-    } catch {
-      return url;
-    }
-  }
-  const [, owner, name, number] = pr;
-  const same = (r) => {
-    const m = r.url.match(GITHUB_REPO);
-    return m && m[1].toLowerCase() === owner.toLowerCase() && m[2].toLowerCase() === name.toLowerCase();
-  };
-  const repo = repos.find(same);
-  if (!repo) return `${owner}/${name}#${number}`;
-  if (repo.label) return `${repo.label}#${number}`;
-  return repos.length === 1 ? `#${number}` : `${name}#${number}`;
-}
-
-function BacklogItem({ item, prev, next, participants, me, workspace, call, run, moveTo, dnd }) {
-  const [expanded, setExpanded] = useState(false);
-  const path = `/backlog/${item.id}`;
+function BacklogRow({ item, list, highlight, participants, me, repos, run, reorder, hintId, onOpen }) {
   const queued = item.status !== "done";
-  const draggable = CAN_DRAG && queued;
-  const repos = workspace?.repos || [];
-
-  const edit = () => {
-    const title = window.prompt("Title", item.title);
-    if (title === null) return;
-    const body = window.prompt("Description", item.body);
-    if (body === null) return;
-    run("PATCH", path, { title, body });
+  const classes = ["item", item.status, ...reorder.classesFor(item)];
+  if (highlight) classes.push("item-created");
+  const open = (e) => {
+    // Focus the title so closing the dialog returns focus to this row.
+    e.currentTarget.querySelector(".row-title").focus();
+    onOpen();
   };
-  const close = () => {
-    const note = window.prompt("Closing note (GitHub PR URLs are linked to the item)", "");
-    if (note !== null) run("POST", `${path}/close`, { note });
-  };
-  const assignTo = (e) => {
-    const id = Number(e.target.value);
-    e.target.value = "";
-    if (id) run("POST", `${path}/assign`, { assignee_id: id });
-  };
-  const where = (e) => {
-    const r = e.currentTarget.getBoundingClientRect();
-    return e.clientY < r.top + r.height / 2 ? "before" : "after";
-  };
-  const dragProps = draggable
-    ? {
-        draggable: true,
-        onDragStart: (e) => {
-          e.dataTransfer.effectAllowed = "move";
-          e.dataTransfer.setData("text/plain", `#${item.id}`);
-          dnd.start(item);
-        },
-        onDragEnd: dnd.end,
-      }
-    : {};
-  const dropProps = queued
-    ? {
-        onDragOver: (e) => {
-          if (dnd.over(item, where(e))) {
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-          }
-        },
-        onDrop: (e) => {
-          if (!dnd.drag) return;
-          e.preventDefault();
-          dnd.dropOn(item, where(e));
-        },
-      }
-    : {};
-  const classes = ["item", item.status];
-  if (dnd.drag?.id === item.id) classes.push("dragging");
-  if (dnd.drop?.id === item.id) classes.push(`drop-${dnd.drop.where}`);
-
   return (
-    <div className={classes.join(" ")} id={`item-${item.id}`} {...dropProps}>
-      <div className="row" onClick={() => setExpanded(!expanded)} {...dragProps}>
+    <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status}>
+      <div className="row" onClick={open} onPointerDown={(e) => reorder.pointerDown(e, item, false)}>
         <span className="rank">
-          {draggable && <GripVertical className="grip" aria-hidden="true" />}
+          {queued && (
+            <button
+              type="button"
+              className="grip"
+              data-grip={item.id}
+              aria-label={`Reorder #${item.id} ${item.title}`}
+              aria-describedby={hintId}
+              aria-pressed={reorder.isLifted(item)}
+              onPointerDown={(e) => {
+                e.stopPropagation();
+                reorder.pointerDown(e, item, true);
+              }}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => reorder.keyDown(e, item, list)}
+            >
+              <GripVertical aria-hidden="true" />
+            </button>
+          )}
           <span className="rank-number">{queued ? item.position : ""}</span>
         </span>
         <span className={`status ${item.status}`} title={item.status} />
         <span className="item-id">#{item.id}</span>
-        <button type="button" className="row-title" aria-expanded={expanded}>
+        <button type="button" className="row-title" aria-haspopup="dialog">
           {item.title}
         </button>
-        {item.prs.length > 0 && (
-          <span className="pr-chips" onClick={(e) => e.stopPropagation()}>
-            {item.prs.map((pr) => (
-              <a key={pr.id} className="chip pr-chip" href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.url}>
-                <GitPullRequest aria-hidden="true" />
-                {prLabel(pr.url, repos)}
-              </a>
-            ))}
-            <span className="chip pr-count" title={`${item.prs.length} linked PR${item.prs.length === 1 ? "" : "s"}`}>
-              <GitPullRequest aria-hidden="true" />
-              {item.prs.length}
-            </span>
-          </span>
-        )}
+        <PRChips prs={item.prs} repos={repos} />
         {item.comment_count > 0 && (
           <span className="comment-count" title={`${item.comment_count} comment${item.comment_count === 1 ? "" : "s"}`}>
             <MessageSquare aria-hidden="true" />
@@ -290,181 +160,326 @@ function BacklogItem({ item, prev, next, participants, me, workspace, call, run,
         )}
         {item.assignee_id && <span className="chip">{name(participants, item.assignee_id)}</span>}
         <span className="meta">{meta(item)}</span>
-        <span className="row-actions" onClick={(e) => e.stopPropagation()}>
-          {queued ? (
-            <>
-              <Button
-                iconOnly
-                variant="ghost"
-                aria-label="Move up"
-                title="Move up"
-                disabled={!prev}
-                onClick={() => moveTo(item, prev.position)}
-              >
-                <ArrowUp aria-hidden="true" />
-              </Button>
-              <Button
-                iconOnly
-                variant="ghost"
-                aria-label="Move down"
-                title="Move down"
-                disabled={!next}
-                onClick={() => moveTo(item, next.position)}
-              >
-                <ArrowDown aria-hidden="true" />
-              </Button>
-              {item.status === "open" && me && (
-                <Button title="Assign to me" onClick={() => run("POST", `${path}/assign`)}>
-                  Claim
-                </Button>
-              )}
-              {item.status === "open" && (
-                <Select defaultValue="" onChange={assignTo} aria-label="Assign to">
-                  <option value="">Assign to…</option>
-                  {participants.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.emoji} {p.name}
-                    </option>
-                  ))}
-                </Select>
-              )}
-              {item.status === "assigned" && <Button onClick={() => run("POST", `${path}/release`)}>Release</Button>}
-              <Button onClick={close}>Close…</Button>
-            </>
-          ) : (
-            <Button onClick={() => run("POST", `${path}/reopen`)}>Reopen</Button>
-          )}
-          <Button iconOnly variant="ghost" aria-label="Edit" title="Edit" onClick={edit}>
-            <Pencil aria-hidden="true" />
-          </Button>
-          <Button
-            iconOnly
-            variant="ghost"
-            aria-label="Delete"
-            title="Delete"
-            className="button-danger"
-            onClick={() => window.confirm(`Delete #${item.id}?`) && run("DELETE", path)}
-          >
-            <Trash2 aria-hidden="true" />
-          </Button>
-        </span>
+        {item.status === "open" && me && (
+          <span className="row-actions" onClick={(e) => e.stopPropagation()}>
+            <Button title="Assign to me" onClick={() => run("POST", `/backlog/${item.id}/assign`)}>
+              Claim
+            </Button>
+          </span>
+        )}
       </div>
-      {expanded && <ItemDetail {...{ item, participants, me, call, run }} />}
     </div>
   );
 }
 
-function ItemDetail({ item, participants, me, call, run }) {
-  const path = `/backlog/${item.id}`;
+function PRChips({ prs, repos }) {
+  if (prs.length === 0) return null;
   return (
-    <div className="item-detail">
-      <pre>{item.body || "(no description)"}</pre>
-      <small>Created by {name(participants, item.created_by)}</small>
-      {item.status === "done" && item.assignee_id && <small>Done by {name(participants, item.assignee_id)}</small>}
-      <PRList item={item} path={path} run={run} />
-      <Comments item={item} path={path} participants={participants} me={me} call={call} run={run} />
-    </div>
-  );
-}
-
-function PRList({ item, path, run }) {
-  const [url, setUrl] = useState("");
-  const link = async (e) => {
-    e.preventDefault();
-    if (await run("POST", `${path}/prs`, { url })) setUrl("");
-  };
-  return (
-    <div className="detail-section">
-      <h4>Pull requests</h4>
-      {item.prs.map((pr) => (
-        <div key={pr.id} className="pr-line">
-          <GitPullRequest aria-hidden="true" className="muted" />
-          <a href={pr.url} target="_blank" rel="noopener noreferrer">
-            {pr.url}
-          </a>
-          <Button
-            iconOnly
-            variant="ghost"
-            aria-label={`Unlink ${pr.url}`}
-            title="Unlink"
-            onClick={() => run("DELETE", `${path}/prs`, { url: pr.url })}
-          >
-            <X aria-hidden="true" />
-          </Button>
-        </div>
+    <span className="pr-chips" onClick={(e) => e.stopPropagation()}>
+      {prs.map((pr) => (
+        <a key={pr.id} className="chip pr-chip" href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.url}>
+          <GitPullRequest aria-hidden="true" />
+          {prLabel(pr.url, repos)}
+        </a>
       ))}
-      <form className="detail-form" onSubmit={link}>
-        <Input
-          type="url"
-          required
-          aria-label="Pull request URL"
-          value={url}
-          onChange={(e) => setUrl(e.target.value)}
-          placeholder="https://github.com/owner/repo/pull/123"
-        />
-        <Button type="submit">Link PR</Button>
-      </form>
-    </div>
+      <span className="chip pr-count" title={`${prs.length} linked PR${prs.length === 1 ? "" : "s"}`}>
+        <GitPullRequest aria-hidden="true" />
+        {prs.length}
+      </span>
+    </span>
   );
 }
 
-function Comments({ item, path, participants, me, call, run }) {
-  const [comments, setComments] = useState(null);
-  const [text, setText] = useState("");
-  // Refetch when the count changes (live updates reload the item list).
+// ---- The open item: ?item=12 in the URL ----
+
+function itemFromURL() {
+  const v = new URLSearchParams(window.location.search).get("item");
+  return v && /^\d+$/.test(v) ? Number(v) : null;
+}
+
+function urlWithItem(id) {
+  const u = new URL(window.location.href);
+  if (id) u.searchParams.set("item", id);
+  else u.searchParams.delete("item");
+  return u.pathname + u.search + u.hash;
+}
+
+// useItemParam keeps the open item in the URL: opening pushes ?item=12,
+// closing goes back (so the browser's back button closes the dialog too).
+function useItemParam() {
+  const [id, setId] = useState(itemFromURL);
+  const pushed = useRef(false);
   useEffect(() => {
-    let current = true;
-    call("GET", `${path}/comments`).then(
-      (list) => current && setComments(list),
-      () => current && setComments([]),
-    );
-    return () => {
-      current = false;
+    const onPop = () => {
+      pushed.current = false;
+      setId(itemFromURL());
     };
-  }, [path, item.comment_count]);
-
-  const send = async (e) => {
-    e.preventDefault();
-    if (await run("POST", `${path}/comments`, { body: text })) setText("");
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+  const open = (next) => {
+    window.history.pushState(null, "", urlWithItem(next));
+    pushed.current = true;
+    setId(next);
   };
-  return (
-    <div className="detail-section">
-      <h4>Comments</h4>
-      {comments?.map((c) => (
-        <div key={c.id} className="comment">
-          <div className="comment-head">
-            <span className="who">{name(participants, c.author_id)}</span>
-            <span className="time" title={new Date(c.created_at).toLocaleString()}>
-              {ago(c.created_at)}
-            </span>
-            {me?.id === c.author_id && (
-              <Button
-                iconOnly
-                variant="ghost"
-                className="comment-delete"
-                aria-label="Delete comment"
-                title="Delete comment"
-                onClick={() => window.confirm("Delete this comment?") && run("DELETE", `${path}/comments/${c.id}`)}
-              >
-                <X aria-hidden="true" />
-              </Button>
-            )}
-          </div>
-          <div className="comment-body">
-            <Markdown text={c.body} />
-          </div>
-        </div>
-      ))}
-      <form className="detail-form" onSubmit={send}>
-        <Input
-          required
-          aria-label="Comment"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Add a comment…  @Name to mention"
-        />
-        <Button type="submit">Comment</Button>
-      </form>
-    </div>
-  );
+  const close = () => {
+    if (pushed.current) {
+      pushed.current = false;
+      window.history.back();
+    } else {
+      window.history.replaceState(null, "", urlWithItem(null));
+    }
+    setId(null);
+  };
+  return [id, open, close];
+}
+
+// useOpenItem returns the open item from the live list. If it disappears
+// (someone deleted it), or a deep link names no item, the dialog closes
+// with a notice.
+function useOpenItem(openId, items, close, setNotice) {
+  const seen = useRef(null);
+  const item = openId === null ? null : items.find((it) => it.id === openId);
+  useEffect(() => {
+    if (openId === null || item) {
+      seen.current = item ? openId : null;
+      return;
+    }
+    if (seen.current === openId) {
+      setNotice(`#${openId} was deleted.`);
+      close();
+    } else if (items.length > 0) {
+      setNotice(`There's no item #${openId}.`);
+      close();
+    }
+  }, [openId, item, items.length]);
+  return item;
+}
+
+function useDismiss(notice, setNotice) {
+  useEffect(() => {
+    if (!notice) return;
+    const t = setTimeout(() => setNotice(""), 6000);
+    return () => clearTimeout(t);
+  }, [notice]);
+}
+
+// useRevealCreated scrolls a newly created item into view once the live list
+// has it, and drops the highlight after a moment.
+function useRevealCreated(created, items, setCreated) {
+  const present = created !== null && items.some((it) => it.id === created);
+  useEffect(() => {
+    if (!present) return;
+    document.getElementById(`item-${created}`)?.scrollIntoView({ block: "nearest" });
+    const t = setTimeout(() => setCreated(null), 2500);
+    return () => clearTimeout(t);
+  }, [present, created]);
+}
+
+// ---- Reordering: drag (mouse, touch) and keyboard ----
+
+const DRAG_THRESHOLD = 4; // px a mouse moves before a press becomes a drag
+const LONG_PRESS_MS = 250; // a touch on the grip held this long picks up
+const TOUCH_SLOP = 10; // px a touch may wander during the long press
+const EDGE = 48; // px from the scroller's edge where dragging scrolls
+
+// hitTest finds the row of a group under y, and which half of it.
+function hitTest(y, status) {
+  for (const el of document.querySelectorAll(`.item[data-status="${status}"]`)) {
+    const r = el.getBoundingClientRect();
+    if (y >= r.top && y < r.bottom) return { id: Number(el.dataset.id), where: y < r.top + r.height / 2 ? "before" : "after" };
+  }
+  return null;
+}
+
+// The server removes the item and re-inserts it at the new position.
+function dropPosition(from, to, where) {
+  if (where === "before") return from < to ? to - 1 : to;
+  return from < to ? to : to + 1;
+}
+
+function autoScroll(scroller, y) {
+  const own = scroller && scroller.scrollHeight > scroller.clientHeight;
+  const top = own ? scroller.getBoundingClientRect().top : 0;
+  const bottom = own ? scroller.getBoundingClientRect().bottom : window.innerHeight;
+  const dy = y < top + EDGE ? -12 : y > bottom - EDGE ? 12 : 0;
+  if (dy) (own ? scroller : window).scrollBy(0, dy);
+}
+
+// A click right after a drag ends shouldn't open the item.
+function swallowNextClick() {
+  const swallow = (e) => {
+    e.stopPropagation();
+    e.preventDefault();
+  };
+  window.addEventListener("click", swallow, { capture: true, once: true });
+  setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
+}
+
+// useReorder reorders within a group (moving an open item among in-progress
+// ones would need an assignment, not a move), through the move endpoint.
+//   - Mouse: drag a row (or its grip).
+//   - Touch: long-press the grip, then drag; the grip has touch-action: none
+//     and the rest of the row scrolls as usual.
+//   - Keyboard: on the grip, Space/Enter picks up, arrows move, Space/Enter
+//     drops, Escape cancels; moves are announced (announcement).
+function useReorder(groups, moveTo) {
+  const [drag, setDrag] = useState(null); // The item being dragged.
+  const [drop, setDrop] = useState(null); // { id, where: "before" | "after" }
+  const [lifted, setLifted] = useState(null); // Keyboard: { id, status, from, index }
+  const [announcement, setAnnouncement] = useState("");
+  const live = useRef({});
+  live.current = { drag, drop, groups };
+  const refocus = useRef(null); // Keyboard: the grip to keep focused after a drop.
+
+  const end = () => {
+    setDrag(null);
+    setDrop(null);
+    document.documentElement.classList.remove("reordering");
+  };
+  const commitDrop = (item) => {
+    const target = live.current.drop;
+    const over = target && live.current.groups[item.status]?.find((it) => it.id === target.id);
+    end();
+    if (over) moveTo(item, dropPosition(item.position, over.position, target.where));
+  };
+  const begin = (item) => {
+    setDrag(item);
+    document.documentElement.classList.add("reordering");
+    window.getSelection()?.removeAllRanges();
+    navigator.vibrate?.(10);
+  };
+
+  const pointerDown = (e, item, fromGrip) => {
+    if (item.status === "done" || live.current.drag) return;
+    const touch = e.pointerType === "touch";
+    if (touch ? !fromGrip : e.button !== 0) return;
+    if (!fromGrip && e.target.closest("a, select, input, textarea, button:not(.row-title)")) return;
+    trackPointer(e, item, touch);
+  };
+
+  const trackPointer = (down, item, touch) => {
+    const scroller = down.currentTarget.closest(".app-main");
+    const start = { x: down.clientX, y: down.clientY, id: down.pointerId };
+    let started = false;
+    const timer = touch
+      ? setTimeout(() => {
+          started = true;
+          begin(item);
+        }, LONG_PRESS_MS)
+      : null;
+    const move = (e) => {
+      if (e.pointerId !== start.id) return;
+      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+      if (!started) {
+        if (touch) {
+          if (dist > TOUCH_SLOP) stop();
+          return;
+        }
+        if (dist < DRAG_THRESHOLD) return;
+        started = true;
+        begin(item);
+      }
+      e.preventDefault();
+      const hit = hitTest(e.clientY, item.status);
+      if (hit && hit.id !== item.id) setDrop((d) => (d?.id === hit.id && d.where === hit.where ? d : hit));
+      else if (hit) setDrop(null);
+      autoScroll(scroller, e.clientY);
+    };
+    const up = (e) => {
+      if (e.pointerId !== start.id) return;
+      stop();
+      if (!started) return;
+      swallowNextClick();
+      if (e.type === "pointerup") commitDrop(item);
+      else end();
+    };
+    const key = (e) => {
+      if (e.key !== "Escape" || !started) return;
+      e.preventDefault();
+      e.stopPropagation();
+      stop();
+      end();
+      setAnnouncement("Reorder cancelled.");
+    };
+    function stop() {
+      clearTimeout(timer);
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+      window.removeEventListener("pointercancel", up);
+      window.removeEventListener("keydown", key, true);
+    }
+    window.addEventListener("pointermove", move, { passive: false });
+    window.addEventListener("pointerup", up);
+    window.addEventListener("pointercancel", up);
+    window.addEventListener("keydown", key, true);
+  };
+
+  const describe = (item, index, total) => `#${item.id} ${item.title}, position ${index + 1} of ${total}`;
+  const keyDown = (e, item, list) => {
+    const idx = list.findIndex((it) => it.id === item.id);
+    const isLifted = lifted?.id === item.id;
+    if (e.key === " " || e.key === "Enter") {
+      e.preventDefault();
+      if (!isLifted) {
+        setLifted({ id: item.id, status: item.status, from: idx, index: idx });
+        setAnnouncement(`Picked up ${describe(item, idx, list.length)}. Arrow keys move it, Space drops it, Escape cancels.`);
+        return;
+      }
+      setLifted(null);
+      refocus.current = item.id;
+      if (lifted.index !== lifted.from) moveTo(item, list[lifted.index].position);
+      setAnnouncement(`Dropped ${describe(item, lifted.index, list.length)}.`);
+      return;
+    }
+    if (!isLifted) return;
+    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+      e.preventDefault();
+      const index = Math.min(list.length - 1, Math.max(0, lifted.index + (e.key === "ArrowUp" ? -1 : 1)));
+      setLifted({ ...lifted, index });
+      setAnnouncement(`Moved to ${describe(item, index, list.length)}.`);
+    } else if (e.key === "Escape" || e.key === "Tab") {
+      if (e.key === "Escape") e.preventDefault();
+      setLifted(null);
+      setAnnouncement(`Cancelled. ${describe(item, lifted.from, list.length)}.`);
+    }
+  };
+
+  // Moving the lifted row in the DOM can drop focus: keep it on its grip,
+  // also when the list re-renders in the new order after a drop.
+  useLayoutEffect(() => {
+    const id = lifted?.id ?? refocus.current;
+    const grip = id && document.querySelector(`[data-grip="${id}"]`);
+    if (grip && document.activeElement !== grip && (lifted || document.activeElement === document.body)) grip.focus();
+  });
+  useEffect(() => {
+    if (lifted || !refocus.current) return;
+    const t = setTimeout(() => (refocus.current = null), 3000);
+    return () => clearTimeout(t);
+  }, [lifted]);
+  // A pointer press elsewhere puts a keyboard-lifted item back.
+  useEffect(() => {
+    if (!lifted) return;
+    const cancel = (e) => {
+      if (!e.target.closest?.(`[data-grip="${lifted.id}"]`)) setLifted(null);
+    };
+    window.addEventListener("pointerdown", cancel);
+    return () => window.removeEventListener("pointerdown", cancel);
+  }, [lifted]);
+
+  // arrange previews a keyboard move: the lifted item shown at its new index.
+  const arrange = (status, list) => {
+    if (!lifted || lifted.status !== status || lifted.index === lifted.from) return list;
+    const out = list.filter((it) => it.id !== lifted.id);
+    out.splice(lifted.index, 0, list[lifted.from]);
+    return out;
+  };
+  const classesFor = (item) => {
+    const c = [];
+    if (drag?.id === item.id) c.push("dragging");
+    if (drop?.id === item.id) c.push(`drop-${drop.where}`);
+    if (lifted?.id === item.id) c.push("lifted");
+    return c;
+  };
+  return { pointerDown, keyDown, arrange, classesFor, isLifted: (item) => lifted?.id === item.id, announcement };
 }
