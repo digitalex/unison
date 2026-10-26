@@ -93,6 +93,7 @@ type client struct {
 type apiError struct {
 	Status  int
 	Message string
+	Code    string // the server's reason, e.g. "idle" or "revoked"
 }
 
 func (e *apiError) Error() string { return e.Message }
@@ -128,11 +129,12 @@ func (c *client) do(method, path string, body, out any) error {
 	if resp.StatusCode >= 400 {
 		var e struct {
 			Error string `json:"error"`
+			Code  string `json:"code"`
 		}
 		if json.Unmarshal(raw, &e) != nil || e.Error == "" {
 			e.Error = strings.TrimSpace(string(raw))
 		}
-		return &apiError{Status: resp.StatusCode, Message: e.Error}
+		return &apiError{Status: resp.StatusCode, Message: e.Error, Code: e.Code}
 	}
 	if out == nil {
 		return nil

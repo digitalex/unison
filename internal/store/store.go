@@ -36,6 +36,9 @@ var (
 	// ErrRevoked is returned by Authenticate for a valid token that no longer
 	// works: an agent credential idle past its expiry, or whose sponsor left.
 	ErrRevoked = errors.New("credential no longer valid")
+	// ErrIdle is returned (along with ErrRevoked) for an agent logged out
+	// after AgentIdleTimeout without activity.
+	ErrIdle = errors.New("logged out for inactivity")
 )
 
 // Store wraps the database.
@@ -73,8 +76,14 @@ type Participant struct {
 	// TokenExpiresAt is when a pass-joined agent's token lapses unless used
 	// (each use pushes it AgentCredentialTTL ahead); 0 means no expiry.
 	TokenExpiresAt int64 `json:"token_expires_at,omitempty"`
-	// RevokedAt is when the sponsor revoked an agent's credential; 0 if not.
-	RevokedAt int64 `json:"revoked_at,omitempty"`
+	// RevokedAt is when an agent's credential was revoked (by its sponsor,
+	// or RevokeReason "idle": logged out after AgentIdleTimeout without
+	// activity); 0 if not.
+	RevokedAt    int64  `json:"revoked_at,omitempty"`
+	RevokeReason string `json:"revoke_reason,omitempty"`
+	// LastActiveAt is an agent's last activity (see MarkActive); 0 for
+	// humans, and for agents not seen since this was introduced.
+	LastActiveAt int64 `json:"last_active_at,omitempty"`
 }
 
 // Sponsor is the member an agent acts for.
@@ -378,14 +387,16 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 
 // participantCols are selected FROM participants (unaliased).
 const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at, user_id, sponsor_user_id,
-	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at, revoked_at`
+	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at, revoked_at,
+	revoke_reason, last_active_at`
 
 // scanParticipant scans participantCols, then any extra columns into extra.
 func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Participant, error) {
 	var p Participant
-	var userID, sponsorID, expires, revoked sql.NullInt64
-	var sponsorName sql.NullString
-	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires, &revoked}, extra...)
+	var userID, sponsorID, expires, revoked, active sql.NullInt64
+	var sponsorName, reason sql.NullString
+	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires, &revoked,
+		&reason, &active}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -393,6 +404,7 @@ func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Partic
 		return nil, err
 	}
 	p.UserID, p.TokenExpiresAt, p.RevokedAt = userID.Int64, expires.Int64, revoked.Int64
+	p.RevokeReason, p.LastActiveAt = reason.String, active.Int64
 	if sponsorID.Valid {
 		p.Sponsor = &Sponsor{UserID: sponsorID.Int64, DisplayName: sponsorName.String}
 	}
@@ -466,9 +478,13 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 	}
 	token := randomHex(16)
 	now := log.now
-	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
-		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt))
+	var lastActive int64 // Agents start active; humans aren't tracked.
+	if link.SponsorUserID != 0 {
+		lastActive = now
+	}
+	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at, last_active_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt), nullable(lastActive))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, "", fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
@@ -476,7 +492,7 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 		return nil, "", err
 	}
 	p := &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now,
-		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt}
+		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive}
 	return p, token, log.add(wsID, "participant.joined", id, p)
 }
 
@@ -512,9 +528,15 @@ func (s *Store) Authenticate(ctx context.Context, token string) (*Participant, e
 	if err != nil {
 		return nil, err
 	}
+	if p.RevokedAt != 0 && p.RevokeReason == revokedIdle {
+		return nil, idleError(p)
+	}
 	if p.RevokedAt != 0 {
 		return nil, fmt.Errorf("%w: %s revoked this agent credential; ask them for a new invite if you should keep working here",
 			ErrRevoked, p.Sponsor.DisplayName)
+	}
+	if err := s.checkIdle(ctx, p); err != nil {
+		return nil, err
 	}
 	if p.TokenExpiresAt != 0 && p.TokenExpiresAt <= s.nowMillis() {
 		return nil, fmt.Errorf("%w: this agent credential expired after %d days without use; ask your human for a new invite (`unison pass`)",

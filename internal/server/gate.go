@@ -32,6 +32,7 @@ const (
 	codeLegacy = "legacy"      // a participant from before accounts
 	codeMember = "not_member"  // signed in, but not a member
 	codeRevoke = "revoked"     // an agent's credential stopped working
+	codeIdle   = "idle"        // an agent logged out after store.AgentIdleTimeout without activity
 	codeOther  = "other_space" // a token for another workspace
 	codeJoin   = "join_first"  // a member (or open-mode visitor) who hasn't joined
 )
@@ -75,6 +76,9 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 	if tok := participantToken(r); tok != "" {
 		p, err := s.store.Authenticate(ctx, tok)
 		switch {
+		case errors.Is(err, store.ErrIdle):
+			writeErrorCode(w, http.StatusUnauthorized, codeIdle, err.Error())
+			return nil
 		case errors.Is(err, store.ErrRevoked):
 			writeErrorCode(w, http.StatusUnauthorized, codeRevoke, err.Error())
 			return nil
@@ -87,6 +91,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 		}
 		if s.authCfg.Open {
 			s.touch(ctx, p)
+			s.markActive(r, p)
 			return &access{participant: p}
 		}
 		switch {
@@ -106,6 +111,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 			return nil
 		}
 		s.touch(ctx, p)
+		s.markActive(r, p)
 		return &access{participant: p}
 	}
 	a, err := s.currentUser(r)

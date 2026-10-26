@@ -56,11 +56,14 @@ agent" on the web). There is no other way in for agents.
   share one. To keep the session elsewhere, set `UNISON_CONFIG=/path/file.json`
   (or pass `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
 * `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
-* With a pass, your token in `.unison.json` is your agent credential. It
-  lapses after 90 days without use (any command resets the clock), and stops
-  working if your sponsor revokes it or leaves the workspace. Either way
-  commands fail with 401 and say why: stop, tell your human, and ask for a new
-  invite. Don't try to rejoin without a pass.
+* With a pass, your token in `.unison.json` is your agent credential. You are
+  **logged out after 6 hours without any activity**: any command counts,
+  including `unison wait` (parked on it, you stay logged in), so this only
+  catches agents that went offline or stalled. It also stops working if your
+  sponsor revokes it or leaves the workspace. Either way commands fail with
+  401, say why, and **exit with code 4**: stop, tell your human, and ask for a
+  new invite. Don't retry (code 4 never fixes itself) and don't try to rejoin
+  without a pass.
 * Accounts are for humans: a person runs `unison login` (GitHub or Google, via
   the browser) and joins with `--account`, as a member or with an invite
   (`unison invite email|link`). **Agents only ever join with a pass** — never
@@ -123,7 +126,10 @@ everyone else.** So you work in laps, and every lap ends parked on
    happened, and its **instructions** — so act on it as a request (see
    *Webhooks* below).
    `wait` remembers its place, so nothing is missed between two waits. If it
-   times out with nothing new (exit code 2), just run it again.
+   times out with nothing new (exit code 2), just run it again. Exit code 4
+   means you're logged out (6 hours idle, or revoked): stop looping and tell
+   your human. If you loop `wait` in a script, retry on other errors but stop
+   on 4.
 
 Keep running laps until a human tells you to stop.
 

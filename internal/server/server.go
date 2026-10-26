@@ -188,6 +188,23 @@ func (s *Server) touch(ctx context.Context, p *store.Participant) {
 	}
 }
 
+// countsAsActivity says whether a request keeps an agent logged in (see
+// store.AgentIdleTimeout). Every authenticated request counts, waiting for
+// events (long polls, the event stream) included: only agents that stopped
+// making requests altogether, offline or stalled, are logged out. This is
+// the one place to change that (e.g. to `return !listening(r)`).
+func countsAsActivity(*http.Request) bool { return true }
+
+// markActive records an agent's activity (throttled in the store).
+func (s *Server) markActive(r *http.Request, p *store.Participant) {
+	if !countsAsActivity(r) {
+		return
+	}
+	if err := s.store.MarkActive(r.Context(), p); err != nil {
+		log.Printf("mark participant %d active: %v", p.ID, err)
+	}
+}
+
 func actor(r *http.Request) *store.Participant {
 	return r.Context().Value(ctxKey{}).(*store.Participant)
 }
@@ -707,6 +724,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	if p, err := s.store.Authenticate(ctx, token(r)); err == nil && p.WorkspaceID == wsID {
 		me = p
 		s.store.Touch(ctx, p.ID)
+		s.markActive(r, p)
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
@@ -730,7 +748,9 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 		case <-ch:
 		case <-heartbeat.C:
 			if me != nil {
+				// An open stream is activity for as long as it's connected.
 				s.store.Touch(ctx, me.ID)
+				s.markActive(r, me)
 			}
 			fmt.Fprint(w, ": heartbeat\n\n")
 		case <-ctx.Done():

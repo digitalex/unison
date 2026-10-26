@@ -186,7 +186,10 @@ func (d db) applySchema(lock, schema string) error {
 // oauth_states.link_user_id (#18) marks a pending OAuth login that links a
 // new identity to an already signed-in user; NULL for ordinary sign-ins.
 // messages.item_id (#27) ties a chat message to the backlog item it is
-// about; NULL for most messages.
+// about; NULL for most messages. participants.last_active_at (#37) is an
+// agent's last activity (NULL for humans, and for agents until next seen);
+// participants.revoke_reason is "idle" for agents logged out after
+// AgentIdleTimeout without activity (NULL otherwise).
 var addedColumns = []struct{ table, name, sqlite, pg string }{
 	{"participants", "user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
 	{"participants", "sponsor_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
@@ -194,6 +197,8 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	{"participants", "revoked_at", "INTEGER", "BIGINT"},
 	{"oauth_states", "link_user_id", "INTEGER", "BIGINT"},
 	{"messages", "item_id", "INTEGER REFERENCES items(id)", "BIGINT REFERENCES items(id)"},
+	{"participants", "last_active_at", "INTEGER", "BIGINT"},
+	{"participants", "revoke_reason", "TEXT", "TEXT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
