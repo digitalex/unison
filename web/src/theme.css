@@ -1964,6 +1964,34 @@ html.reordering * {
 }
 
 /* ---- Webhooks (settings) ---- */
+.webhook-guide {
+  color: var(--text-secondary);
+  font-size: var(--size-xs);
+  line-height: var(--line-xs);
+}
+
+.webhook-guide summary {
+  width: fit-content;
+  cursor: pointer;
+  color: var(--text);
+  font-weight: var(--weight-ui-medium);
+}
+
+.webhook-guide ol,
+.webhook-guide ul {
+  margin: var(--space-xxs) 0 0;
+  padding-left: 20px;
+}
+
+.webhook-guide li + li {
+  margin-top: var(--space-xxs);
+}
+
+.webhook-guide b {
+  color: var(--text);
+  font-weight: var(--weight-ui-medium);
+}
+
 .popover {
   max-height: calc(100vh - 64px);
   overflow-y: auto;

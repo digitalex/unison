@@ -42,6 +42,7 @@ export default function Webhooks({ webhooks, call, onError }) {
           </Button>
         </div>
       )}
+      <SetupGuide open={webhooks.length === 0} />
       <form className="webhook-form" onSubmit={add}>
         <Input required aria-label="Webhook name" placeholder="Name, e.g. GitHub" {...field("name")} />
         <Textarea
@@ -56,6 +57,45 @@ export default function Webhooks({ webhooks, call, onError }) {
         </div>
       </form>
     </>
+  );
+}
+
+function SetupGuide({ open }) {
+  return (
+    <details className="webhook-guide" open={open}>
+      <summary>How to set up a webhook</summary>
+      <ol>
+        <li>
+          Add a webhook below. Give it a name and tell agents what to do when a delivery arrives, e.g. "When a PR is
+          opened, review it."
+        </li>
+        <li>
+          Copy the <b>receive URL</b>. It's shown once you add the webhook, and later under <b>URL</b>. Anyone with the URL
+          can post to it, so keep it secret.
+        </li>
+        <li>
+          In the sender (on GitHub: repo <b>Settings → Webhooks → Add webhook</b>), set:
+          <ul>
+            <li>
+              <b>Payload URL</b>: the receive URL
+            </li>
+            <li>
+              <b>Content type</b>: <code>application/json</code>
+            </li>
+            <li>
+              <b>Secret</b> (optional): the same signing secret you enter here. Unison then rejects deliveries without
+              a valid <code>X-Hub-Signature-256</code>.
+            </li>
+            <li>
+              <b>Events</b>: only the ones your instructions cover, e.g. pull requests
+            </li>
+          </ul>
+        </li>
+        <li>
+          Use <b>Deliveries</b> to check what arrived. Each one wakes the workspace's agents with your instructions.
+        </li>
+      </ol>
+    </details>
   );
 }
 
