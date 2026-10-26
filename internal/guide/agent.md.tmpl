@@ -95,6 +95,14 @@ everyone else.** So you work in laps, and every lap ends parked on
    the item too: `unison chat send "Hero done, starting the footer" --item <id>`.
    Ask in chat when something is unclear rather than guessing:
    `unison chat send "@Alex should X do Y or Z?" --item <id>`.
+   **When a human must act** (review a PR, answer a question you are
+   blocked on, do some manual setup such as a secret, a DNS record or a
+   console click), put it in their **inbox**, not just chat: chat scrolls
+   by, the inbox stays until they dismiss it. By default it goes to the
+   member you act for:
+   `unison inbox send "PR ready for review" --item <id> --url <PR URL>`
+   (`--to <name>` for someone else). Status updates and activity stay in
+   chat; the inbox is only for "you need to do something".
 4. **Do the work** (see *Working on the code* below).
 5. **Close the loop.** Post the result where people will see it, then close
    the item with a note: `unison backlog close <id> --note "<PR URL>"`.
@@ -205,6 +213,9 @@ or `#3`.
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
 | `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` |
 | `unison chat send <text> [--reply-to ID] [--item ID]` | `POST /api/workspaces/{ws}/messages` (`{"body", "parent_id"?, "item_id"?}`; `item_id` ties the message to a backlog item of this workspace, 400 otherwise; replies don't inherit it) |
+| `unison inbox [--all]` (members) | `GET /api/workspaces/{ws}/inbox[?all=1]`: your inbox (your account's, from any device), newest first: `[{id, recipient_user_id, recipient_name, sender_id, sender_name, sender_emoji, body, item_id?, item?, url?, created_at, dismissed_at?}]`. Agents have no inbox (403) |
+| `unison inbox send <text> [--to NAME] [--item ID] [--url URL]` | `POST /api/workspaces/{ws}/inbox` `{"body", "to"?, "item_id"?, "url"?}`: `to` is a participant's name (resolved to its account; agents and unlinked participants have none, 400) or a member's display name; without it, an agent's entry goes to the member it acts for. Events (`inbox.created`, `.dismissed`, `.restored`) carry only `{id, recipient_user_id}`, never the text, and don't wake `unison wait` |
+| `unison inbox dismiss <id>` / `inbox restore <id>` | `POST /api/workspaces/{ws}/inbox/{id}/dismiss` / `.../restore` (your own entries only; others' are 404) |
 | `unison backlog [--status open\|assigned\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
 | `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `prs`, `comment_count` and `message_count`) |
 | `unison backlog show <id>` (chat part) | `GET /api/workspaces/{ws}/backlog/{id}/messages` (chat messages about the item, oldest first; each message's `item` is `{id, title, status}`) |

@@ -102,6 +102,14 @@ Chat:
                                      --item ties it to a backlog item (e.g. a
                                      status update about the item you work on)
 
+Inbox (what a human must act on; status updates go to chat):
+  inbox [--all]                      your inbox (members): open entries, or all
+  inbox send <text> [--to NAME] [--item ID] [--url URL]
+                                     ask a member to act (review a PR, answer a
+                                     question, set something up); an agent's
+                                     default --to is the member it acts for
+  inbox dismiss <id>                 done with an entry (inbox restore <id> undoes)
+
 Backlog (#1 is the highest priority):
   backlog [list] [--status open|assigned|done|all]
   backlog show <id>                  the item, its comments and the chat
@@ -217,6 +225,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.logout(rest)
 	case "invite", "invites":
 		return a.invites(cmd, rest)
+	case "inbox":
+		return a.inbox(rest)
 	case "pass":
 		return a.pass(rest)
 	case "sessions":
