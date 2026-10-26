@@ -11,7 +11,8 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 // header's shared controls (who's here, Invite), error the workspace's
 // error bar. updateMessages updates the shown messages in place (for
 // optimistic reactions). Messages after newAfter are new to you: those that
-// mention you are highlighted.
+// mention you are highlighted. mention (a name) starts the message with
+// "@Name "; onMentioned says it was used.
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
 // focusing) a message shows its actions: reply, and the reactions.
@@ -26,7 +27,7 @@ const REACTIONS = [
   { emoji: "💯", label: "100" },
 ];
 
-export default function Chat({ messages, updateMessages, newAfter, items, participants, me, call, onError, shown, head, error }) {
+export default function Chat({ messages, updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
@@ -40,6 +41,19 @@ export default function Chat({ messages, updateMessages, newAfter, items, partic
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [messages.length]);
+
+  useEffect(() => {
+    if (!mention) return;
+    const prefix = `@${mention} `;
+    setText((t) => (t.startsWith(prefix) ? t : prefix + t));
+    onMentioned();
+    // Once the text is in: type right after the mention.
+    requestAnimationFrame(() => {
+      const el = composer.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [mention]);
 
   const byId = new Map(messages.map((m) => [m.id, m]));
   const replies = new Map();
