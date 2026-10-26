@@ -1,12 +1,13 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderGit2, KeyRound, LayoutGrid, ArrowUpRight, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { FolderGit2, KeyRound, LayoutGrid, Link2, ArrowUpRight, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
-import { SHOW_MESSAGE } from "./nav.js";
+import { SHOW_MESSAGE, spaLink } from "./nav.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
+import { UrlBox } from "./settings/Webhooks.jsx";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Popover from "./ui/Popover.jsx";
@@ -254,7 +255,7 @@ function TopBar({ workspace, view, me, joined, participants, live, call, onError
       <span className={live ? "live live-on" : "live"}>{live ? "live" : "reconnecting…"}</span>
       <ThemeSwitch />
       <Popover
-        title="Invite an agent"
+        title="Invite a person or an agent"
         trigger={
           <>
             <UserPlus aria-hidden="true" />
@@ -262,7 +263,7 @@ function TopBar({ workspace, view, me, joined, participants, live, call, onError
           </>
         }
       >
-        {() => <Invite account={account} members={members} call={call} />}
+        {(close) => <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />}
       </Popover>
       <Roster participants={participants} me={me} call={call} onError={onError} />
       {me && (
@@ -347,11 +348,76 @@ function JoinCard({ workspaceId, account, onJoined }) {
   );
 }
 
-// Invite an agent. A signed-in member gets a single-use pass (15 minutes)
-// embedded in the prompt, so the agent joins as their agent. Agents can't
-// join without one. (People are invited from Settings → Invites.)
-function Invite({ account, members, call }) {
+// Invite: people get an invite link (Settings → Invites has email invites,
+// expiry choices and revoking); agents get a single-use pass.
+function Invite({ workspaceId, account, members, call, onNavigate }) {
   const member = Boolean(account.user && members.members.some((m) => m.user_id === account.user.id));
+  const [kind, setKind] = useState("person");
+  if (!member) {
+    return (
+      <p className="pass-status muted">
+        <KeyRound aria-hidden="true" />
+        {account.user ? "Join this workspace to invite people and agents." : "Sign in to invite people and agents."}
+      </p>
+    );
+  }
+  return (
+    <>
+      <div className="seg invite-kind" role="group" aria-label="Invite">
+        {[
+          ["person", "A person"],
+          ["agent", "An agent"],
+        ].map(([k, label]) => (
+          <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>
+            {label}
+          </button>
+        ))}
+      </div>
+      {kind === "person" ? <InvitePerson workspaceId={workspaceId} call={call} onNavigate={onNavigate} /> : <InviteAgent call={call} />}
+    </>
+  );
+}
+
+// InvitePerson makes an invite link (7 days, any number of people) to send
+// to someone: they sign in (or sign up) with it and land in the workspace.
+function InvitePerson({ workspaceId, call, onNavigate }) {
+  const [created, setCreated] = useState(null); // {url, invite}
+  const [error, setError] = useState("");
+  const create = () => {
+    setError("");
+    call("POST", "/invites", { link: true, expires_in: "7d" }).then(setCreated, (e) => setError(e.message));
+  };
+  return (
+    <>
+      <p>Send a link: whoever opens it signs in and goes straight to this workspace.</p>
+      {created ? (
+        <>
+          <UrlBox url={created.url} label="Invite link" />
+          <p className="pass-status muted">
+            <KeyRound aria-hidden="true" />
+            Shown once · works until {new Date(created.invite.expires_at).toLocaleDateString(undefined, { dateStyle: "medium" })}
+          </p>
+        </>
+      ) : (
+        <div className="actions-row">
+          <Button type="button" variant="primary" onClick={create}>
+            <Link2 aria-hidden="true" />
+            Create invite link
+          </Button>
+        </div>
+      )}
+      {error && <p role="alert">Error: {error}</p>}
+      <p className="field-description">
+        Email invites, other expiry times and revoking: <a {...spaLink(`/w/${workspaceId}/settings#invites`, onNavigate)}>Settings → Invites</a>.
+      </p>
+    </>
+  );
+}
+
+// InviteAgent: a signed-in member gets a single-use pass (15 minutes)
+// embedded in the prompt, so the agent joins as their agent. Agents can't
+// join without one.
+function InviteAgent({ call }) {
   const [minted, setMinted] = useState(null); // {pass, expires_at, invite_prompt}
   const [error, setError] = useState("");
   const [now, setNow] = useState(Date.now());
@@ -359,23 +425,13 @@ function Invite({ account, members, call }) {
     setError("");
     call("POST", "/passes").then(setMinted, (e) => setError(e.message));
   };
-  useEffect(() => {
-    if (member) mint();
-  }, [member]);
+  useEffect(mint, []);
   useEffect(() => {
     const t = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(t);
   }, []);
   const left = minted ? Math.max(0, Math.round((minted.expires_at - now) / 1000)) : 0;
   const prompt = minted && left > 0 ? minted.invite_prompt : "";
-  if (!member) {
-    return (
-      <p className="pass-status muted">
-        <KeyRound aria-hidden="true" />
-        {account.user ? "Join this workspace to invite agents." : "Sign in to invite agents: each gets a secure, single-use pass."}
-      </p>
-    );
-  }
   return (
     <>
       <p>Paste this into any coding agent:</p>

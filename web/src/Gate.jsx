@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import { Lock, UserPlus } from "lucide-react";
-import { AccountMenu, SignInOptions, primaryEmail } from "./Account.jsx";
-import { api } from "./api.js";
+import { AccountMenu, SignInOptions, participantName, primaryEmail } from "./Account.jsx";
+import { ApiError, api } from "./api.js";
 import { spaLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import Field from "./ui/Field.jsx";
@@ -35,9 +35,9 @@ function GateShell({ account, title, children }) {
   );
 }
 
-function SignIn({ providers }) {
+function SignIn({ providers, returnTo }) {
   return providers.length > 0 ? (
-    <SignInOptions providers={providers} />
+    <SignInOptions providers={providers} returnTo={returnTo} />
   ) : (
     <p className="muted">
       Sign-in isn't configured on this server. Whoever runs it can add GitHub or Google sign-in (or set <code>UNISON_AUTH=off</code> for local
@@ -126,17 +126,29 @@ export function JoinForm({ workspaceId, invite = "", onJoined }) {
   );
 }
 
+// The invite token travels in the link's fragment (#invite=…), which the
+// browser never sends to the server. The join page keeps it in this tab's
+// sessionStorage while the visitor signs in, and takes it out of the address
+// bar right away, so it never appears in a URL the server (or its request
+// logs) sees: not the page, not the sign-in return path, not an API call.
+const inviteKey = (id) => `unison.invite.${id}`;
+
+function takeInviteToken(id) {
+  const fromLink = new URLSearchParams(window.location.hash.slice(1)).get("invite") || new URLSearchParams(window.location.search).get("invite");
+  if (fromLink) {
+    sessionStorage.setItem(inviteKey(id), fromLink);
+    window.history.replaceState(null, "", window.location.pathname);
+  }
+  return fromLink || sessionStorage.getItem(inviteKey(id)) || "";
+}
+
 // JoinPage is where an invite link lands. Signed out, it asks you to sign
-// in (and comes back here); signed in, it shows the workspace and joins.
-export function JoinPage({ id, account, navigate }) {
-  const invite = new URLSearchParams(window.location.search).get("invite") || "";
+// in and brings you back; signed in, it joins you (with your account's
+// first name) and opens the workspace, with no further clicks.
+export function JoinPage({ id, account }) {
+  const [invite] = useState(() => takeInviteToken(id));
   const { ready, user, providers } = account;
-  const [target, setTarget] = useState(null); // {workspace_id, workspace_name, expires_at}
-  const [error, setError] = useState("");
-  useEffect(() => {
-    if (!user || !invite) return;
-    api("GET", `/api/invites/lookup?token=${encodeURIComponent(invite)}`).then(setTarget, (e) => setError(e.message));
-  }, [user, invite]);
+  const state = useAutoJoin(id, invite, user);
 
   if (!ready) {
     return (
@@ -148,31 +160,78 @@ export function JoinPage({ id, account, navigate }) {
   if (!user) {
     return (
       <GateShell account={account} title="You're invited to a Unison workspace">
-        <p>Sign in to accept: you'll join as your account, and come right back here.</p>
-        <SignIn providers={providers} />
+        <p>Sign in to accept: you'll join as your account, and go straight to the workspace.</p>
+        <SignIn providers={providers} returnTo={`/w/${id}/join`} />
       </GateShell>
     );
   }
-  if (!invite || error) {
+  if (state.status === "invalid") {
     return (
       <GateShell account={account} title="This invite link doesn't work">
         <p>It may have expired or been revoked. Ask a member for a new one.</p>
       </GateShell>
     );
   }
-  if (!target) {
+  if (state.status === "failed") {
+    // Joining didn't go through (say, the name is taken): pick one.
     return (
-      <GateShell account={account} title="Invitation">
-        <p className="muted">Loading…</p>
+      <GateShell account={account} title={`Join ${state.target.workspace_name}`}>
+        <p role="alert" className="field-error">
+          {state.error}
+        </p>
+        <JoinForm workspaceId={state.target.workspace_id} invite={invite} onJoined={() => openWorkspace(id, state.target.workspace_id)} />
       </GateShell>
     );
   }
   return (
-    <GateShell account={account} title={`Join ${target.workspace_name}`}>
-      <p>
-        You'll join as <strong>{user.display_name || primaryEmail(user)}</strong>. Pick a name and emoji for this workspace.
+    <GateShell account={account} title={state.target ? `Joining ${state.target.workspace_name}…` : "Invitation"}>
+      <p className="muted" aria-live="polite">
+        {state.target ? `Joining as ${user.display_name || primaryEmail(user)}…` : "Checking the invite…"}
       </p>
-      <JoinForm workspaceId={target.workspace_id || id} invite={invite} onJoined={() => navigate(`/w/${target.workspace_id || id}`)} />
     </GateShell>
   );
+}
+
+// openWorkspace forgets the used invite token and opens the workspace in
+// place of the join page (Back doesn't return to a spent link).
+function openWorkspace(id, wsID) {
+  sessionStorage.removeItem(inviteKey(id));
+  window.history.replaceState(null, "", `/w/${wsID}`);
+  window.dispatchEvent(new PopStateEvent("popstate"));
+}
+
+// useAutoJoin looks the invite up and joins as the signed-in account: with
+// the account's first name, or (if that name is taken there) an assigned
+// one. Members already in are simply let in. Without a token (say, Back to
+// a used join page) it opens the workspace page, which lets members in.
+function useAutoJoin(id, invite, user) {
+  const [state, setState] = useState({ status: "checking", target: null, error: "" });
+  useEffect(() => {
+    if (!user) return;
+    if (!invite) return openWorkspace(id, id);
+    let cancelled = false;
+    (async () => {
+      let target;
+      try {
+        target = await api("POST", "/api/invites/lookup", { body: { token: invite } });
+      } catch {
+        sessionStorage.removeItem(inviteKey(id));
+        if (!cancelled) setState({ status: "invalid", target: null, error: "" });
+        return;
+      }
+      if (cancelled) return;
+      setState({ status: "joining", target, error: "" });
+      const join = (name) => api("POST", `/api/workspaces/${target.workspace_id}/join`, { body: { name, emoji: "", invite } });
+      try {
+        await join(participantName(user)).catch((e) => (e instanceof ApiError && e.status === 409 ? join("") : Promise.reject(e)));
+        if (!cancelled) openWorkspace(id, target.workspace_id);
+      } catch (e) {
+        if (!cancelled) setState({ status: "failed", target, error: e.message });
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [user, invite]);
+  return state;
 }

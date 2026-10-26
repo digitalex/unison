@@ -43,7 +43,7 @@ func TestPrivateWorkspaceFlow(t *testing.T) {
 		t.Errorf("second join --account = %q, want the same participant", out)
 	}
 
-	link := regexp.MustCompile(`(?m)^(http\S+/join\?invite=ui_\S+)$`).FindStringSubmatch(e.ok(alexDir, "invite", "link", "--expires", "2d"))
+	link := regexp.MustCompile(`(?m)^(http\S+/join#invite=ui_\S+)$`).FindStringSubmatch(e.ok(alexDir, "invite", "link", "--expires", "2d"))
 	if link == nil {
 		t.Fatal("invite link printed no URL")
 	}
@@ -128,5 +128,19 @@ func TestOpenModeCLI(t *testing.T) {
 	e.ok(dir, "chat", "send", "hello")
 	if out := e.ok(dir, "chat", "log"); !strings.Contains(out, "hello") {
 		t.Errorf("chat = %q", out)
+	}
+}
+
+// TestInviteToken: invite links carry the token in the fragment; older
+// links in the query.
+func TestInviteToken(t *testing.T) {
+	for in, want := range map[string]string{
+		"https://u.example/w/ws_1/join#invite=ui_abc": "ui_abc",
+		"https://u.example/w/ws_1/join?invite=ui_old": "ui_old",
+		"https://u.example/w/ws_1":                    "",
+	} {
+		if got := inviteToken(in); got != want {
+			t.Errorf("inviteToken(%q) = %q, want %q", in, got, want)
+		}
 	}
 }

@@ -132,7 +132,7 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("POST /api/auth/device/token", s.deviceToken)
 	m.HandleFunc("GET /api/auth/device/lookup", s.requireUser(s.deviceLookup))
 	m.HandleFunc("POST /api/auth/device/approve", s.requireUser(s.deviceApprove))
-	m.HandleFunc("GET /api/invites/lookup", s.requireUser(s.lookupInvite))
+	m.HandleFunc("POST /api/invites/lookup", s.requireUser(s.lookupInvite))
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
 	m.HandleFunc("GET /api/me/sessions", s.requireUser(s.listSessions))
 	m.HandleFunc("DELETE /api/me/sessions/{id}", s.requireUser(s.revokeSession))

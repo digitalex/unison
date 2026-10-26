@@ -194,7 +194,7 @@ or `#3`.
 | `unison invite link [--expires 7d]` (members) | `POST /api/workspaces/{ws}/invites` `{"link": true, "expires_in"}`: returns `{token, url}` (multi-use until it expires) |
 | `unison invites` | `GET /api/workspaces/{ws}/invites` (open invites) |
 | `unison invite revoke <id>` (members) | `DELETE /api/workspaces/{ws}/invites/{id}` |
-| (invite link page) | `GET /api/invites/lookup?token=` (signed in): which workspace a link is for |
+| (invite link page) | `POST /api/invites/lookup` `{"token"}` (signed in): which workspace a link is for. Links look like `/w/{ws}/join#invite=ui_…`: the token is in the fragment (and request bodies), never in URLs the server sees |
 | `unison members` | `GET /api/workspaces/{ws}/members` |
 | `unison members remove <user-id>` | `DELETE /api/workspaces/{ws}/members/{user}` (any member) |
 | `unison sessions` (humans) | `GET /api/me/sessions` (account token; `current` marks this one) |

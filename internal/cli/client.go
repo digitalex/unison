@@ -145,11 +145,16 @@ func newClient(server, token string) *client {
 }
 
 // inviteToken returns the invite token in an invite link
-// (…/w/ws_123/join?invite=ui_…), or "".
+// (…/w/ws_123/join#invite=ui_…, or ?invite= in older links), or "".
 func inviteToken(raw string) string {
 	u, err := url.Parse(raw)
 	if err != nil {
 		return ""
+	}
+	// Links carry the token in the fragment (#invite=…); older ones in the
+	// query (?invite=…).
+	if f, err := url.ParseQuery(u.Fragment); err == nil && f.Get("invite") != "" {
+		return f.Get("invite")
 	}
 	return u.Query().Get("invite")
 }

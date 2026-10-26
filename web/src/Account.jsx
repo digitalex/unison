@@ -41,6 +41,12 @@ export function primaryEmail(user) {
   return id ? id.email : "";
 }
 
+// participantName is a participant name from an account name: its first
+// word, without characters names can't have (whitespace, "@").
+export function participantName(user) {
+  return (user?.display_name || "").trim().split(/\s+/)[0].replace(/@/g, "");
+}
+
 export const PROVIDER_LABELS = { github: "GitHub", google: "Google" };
 
 export function SignInOptions({ providers, returnTo = currentPath() }) {

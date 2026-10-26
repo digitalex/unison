@@ -12,8 +12,11 @@ import (
 
 // Invites for humans (agents use passes): by email, or by a revocable link.
 
+// inviteURL is an invite link. The token is in the fragment, which browsers
+// never send to the server, so it stays out of request logs (the join page
+// moves it out of the address bar, and posts it in request bodies only).
 func inviteURL(r *http.Request, wsID, token string) string {
-	return requestOrigin(r) + "/w/" + wsID + "/join?invite=" + url.QueryEscape(token)
+	return requestOrigin(r) + "/w/" + wsID + "/join#invite=" + url.QueryEscape(token)
 }
 
 func (s *Server) listInvites(w http.ResponseWriter, r *http.Request) {
@@ -74,9 +77,16 @@ func (s *Server) revokeInvite(w http.ResponseWriter, r *http.Request) {
 }
 
 // lookupInvite tells a signed-in visitor of an invite link which workspace
-// it is for (the join page). Signed-out visitors learn nothing.
+// it is for (the join page). Signed-out visitors learn nothing. The token
+// comes in the body ({"token"}), never the URL, to keep it out of logs.
 func (s *Server) lookupInvite(w http.ResponseWriter, r *http.Request) {
-	l, err := s.store.LookupInviteLink(r.Context(), r.URL.Query().Get("token"))
+	var req struct {
+		Token string `json:"token"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	l, err := s.store.LookupInviteLink(r.Context(), req.Token)
 	s.respond(w, http.StatusOK, l, nil, err)
 }
 

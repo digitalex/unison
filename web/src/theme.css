@@ -2574,6 +2574,16 @@ html.reordering * {
   }
 }
 
+/* ---- Top-bar Invite: a person (link) or an agent (pass) ---- */
+.seg.invite-kind {
+  display: inline-flex;
+  align-self: flex-start;
+}
+
+.invite-kind button {
+  padding: 3px var(--space-s);
+}
+
 /* ---- Agent passes ---- */
 .msg .agent-of {
   margin-left: 4px;
