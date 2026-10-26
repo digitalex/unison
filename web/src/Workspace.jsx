@@ -36,7 +36,7 @@ function collectionFor({ type, data }) {
 
 // The server's refusals that mean "you can't see this workspace" (as
 // opposed to an error in a request you may make).
-const GATE_CODES = ["sign_in", "legacy", "not_member", "revoked", "other_space"];
+const GATE_CODES = ["sign_in", "not_member", "revoked", "other_space"];
 
 function isGateError(e) {
   return e instanceof ApiError && GATE_CODES.includes(e.code);
@@ -60,7 +60,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [messages, setMessages] = useState([]);
   const [backlog, setBacklog] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
-  const [members, setMembers] = useState({ members: [], unlinked: [] });
+  const [members, setMembers] = useState({ members: [] });
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
@@ -84,9 +84,8 @@ export default function Workspace({ id, view, navigate, account }) {
   };
   const refused = (e) => {
     if (!isGateError(e)) return setError(e.message);
-    // A token that stopped working is useless: forget it (legacy ones are
-    // kept, so the page can explain them until you sign in).
-    if (token && e.code !== "legacy" && e.code !== "not_member") setToken(id, "");
+    // A token that stopped working is useless: forget it.
+    if (token && e.code !== "not_member") setToken(id, "");
     setGate({ code: e.code, message: e.message });
   };
   const reload = (name) => loaders[name]().catch(refused);

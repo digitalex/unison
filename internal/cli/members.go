@@ -60,9 +60,6 @@ func (a *app) membersList() error {
 	for _, mem := range m.Members {
 		a.printf("user %d  %s: %s\n", mem.UserID, firstNonEmpty(mem.DisplayName, "(no name)"), participantList(mem.Participants))
 	}
-	if len(m.Unlinked) > 0 {
-		a.printf("Not linked to a member: %s\n", participantList(m.Unlinked))
-	}
 	return nil
 }
 

@@ -74,15 +74,18 @@ func TestPrivateWorkspaceFlow(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(legacyDir, ConfigFile), []byte(cfg), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, errOut, code := e.run(legacyDir, "chat", "send", "anyone?"); code == 0 || !strings.Contains(errOut, "predates accounts") {
+	if _, errOut, code := e.run(legacyDir, "chat", "send", "anyone?"); code == 0 || !strings.Contains(errOut, "invalid participant token") {
 		t.Errorf("legacy participant: exit %d %q", code, errOut)
 	}
 
 	out := e.ok(bobDir, "members")
-	for _, want := range []string{"Alex: 🦊 Alex", "Bob: ", "Carol: ", "Not linked to a member:", "Old"} {
+	for _, want := range []string{"Alex: 🦊 Alex", "Bob: ", "Carol: "} {
 		if !strings.Contains(out, want) {
 			t.Errorf("members lacks %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "Old") {
+		t.Errorf("members lists a participant linked to no account:\n%s", out)
 	}
 	// Any member removes any member; the removed one is then refused.
 	e.ok(bobDir, "members", "remove", strconv.FormatInt(alex.ID, 10))

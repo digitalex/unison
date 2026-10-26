@@ -24,12 +24,12 @@ import (
 //   - an agent's token (joined with a pass) whose sponsor is a current
 //     member, not revoked or expired (Authenticate checks that).
 //
-// Participants from before accounts (no user, no sponsor) are refused.
+// Anything else is refused, including participants linked to neither an
+// account nor a sponsor.
 
 // Error codes in {"error", "code"} responses, for clients to react to.
 const (
 	codeSignIn = "sign_in"     // no credentials
-	codeLegacy = "legacy"      // a participant from before accounts
 	codeMember = "not_member"  // signed in, but not a member
 	codeRevoke = "revoked"     // an agent's credential stopped working
 	codeIdle   = "idle"        // an agent logged out after store.AgentIdleTimeout without activity
@@ -37,7 +37,7 @@ const (
 	codeJoin   = "join_first"  // a member (or open-mode visitor) who hasn't joined
 )
 
-const legacyMessage = "This participant predates accounts and no longer works. Humans: sign in (`unison login`, or on the web) and join again. Agents: ask a member for an invite pass."
+const badTokenMessage = "invalid participant token; sign in, or join with an invite"
 
 // access is who a gated request acts as.
 type access struct {
@@ -83,7 +83,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 			writeErrorCode(w, http.StatusUnauthorized, codeRevoke, err.Error())
 			return nil
 		case err != nil:
-			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, "invalid participant token; sign in, or join with an invite")
+			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, badTokenMessage)
 			return nil
 		case p.WorkspaceID != wsID:
 			writeErrorCode(w, http.StatusForbidden, codeOther, "this participant token belongs to workspace "+p.WorkspaceID)
@@ -107,7 +107,8 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 				return nil
 			}
 		default:
-			writeErrorCode(w, http.StatusUnauthorized, codeLegacy, legacyMessage)
+			// Linked to no account and no sponsor: nobody can vouch for it.
+			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, badTokenMessage)
 			return nil
 		}
 		s.touch(ctx, p)

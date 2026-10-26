@@ -62,14 +62,6 @@ export function GatePage({ gate, account, workspaceId, onJoined }) {
       </GateShell>
     );
   }
-  if (gate.code === "legacy") {
-    return (
-      <GateShell account={account} title="This browser's old sign-in no longer works">
-        <p>It's from before accounts. Sign in and you're back in if you're a member; otherwise ask a member for an invite.</p>
-        <SignIn providers={providers} />
-      </GateShell>
-    );
-  }
   if (gate.code === "not_member") {
     return (
       <GateShell account={account} title="You're no longer a member of this workspace">

@@ -50,9 +50,6 @@ export default function Members({ members, invites, account, call, onError }) {
           Invited, not joined yet: {pending.map((i) => i.email).join(" · ")} (<a href="#invites">manage</a>)
         </p>
       )}
-      {members.unlinked.length > 0 && (
-        <p className="muted member-unlinked">From before accounts, no longer able to get in: {participantNames(members.unlinked)}</p>
-      )}
       {!account.user && members.members.length > 0 && <p className="field-description">Sign in to remove members.</p>}
     </>
   );
