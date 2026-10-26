@@ -190,18 +190,24 @@ func TestInvitesAPI(t *testing.T) {
 
 	resp, link := e.do("POST", base+"/invites", `{"link":true,"expires_in":"2d"}`, withCookie(ada), withCSRF())
 	token, _ := link["token"].(string)
-	if resp.StatusCode != 201 || !strings.HasPrefix(token, store.InviteTokenPrefix) || link["url"] != e.ts.URL+"/w/"+wsID+"/join?invite="+token {
+	if resp.StatusCode != 201 || !strings.HasPrefix(token, store.InviteTokenPrefix) || link["url"] != e.ts.URL+"/w/"+wsID+"/join#invite="+token {
 		t.Fatalf("link invite = %d %v", resp.StatusCode, link)
 	}
 	if resp, _ := e.do("POST", base+"/invites", `{"link":true,"expires_in":"soon"}`, withCookie(ada), withCSRF()); resp.StatusCode != 400 {
 		t.Errorf("bad expiry = %d", resp.StatusCode)
 	}
-	lookup := "/api/invites/lookup?token=" + token
-	if resp, _ := e.do("GET", lookup, ""); resp.StatusCode != 401 {
+	lookup, lookupBody := "/api/invites/lookup", `{"token":"`+token+`"}`
+	if resp, _ := e.do("POST", lookup, lookupBody); resp.StatusCode != 401 {
 		t.Errorf("anonymous lookup = %d (signed-out visitors learn nothing)", resp.StatusCode)
 	}
 	carol, _ := e.login("github", "/", map[string]any{"id": 303, "login": "carol"}, nil)
-	if resp, l := e.do("GET", lookup, "", withCookie(carol)); resp.StatusCode != 200 || l["workspace_name"] != "Unison" {
+	if resp, _ := e.do("GET", lookup+"?token="+token, "", withCookie(carol)); resp.StatusCode == http.StatusOK {
+		t.Error("GET lookup (token in the URL) still works")
+	}
+	if resp, _ := e.do("POST", lookup, lookupBody, withCookie(carol)); resp.StatusCode != 403 {
+		t.Errorf("cookie lookup without the CSRF header = %d, want 403", resp.StatusCode)
+	}
+	if resp, l := e.do("POST", lookup, lookupBody, withCookie(carol), withCSRF()); resp.StatusCode != 200 || l["workspace_name"] != "Unison" {
 		t.Errorf("lookup = %d %v", resp.StatusCode, l)
 	}
 	if resp, out := e.do("POST", base+"/join", `{"name":"Carol","invite":"`+token+`"}`, withCookie(carol), withCSRF()); resp.StatusCode != 201 {
@@ -215,7 +221,7 @@ func TestInvitesAPI(t *testing.T) {
 	if resp, _ := e.do("DELETE", base+"/invites/"+id, "", withCookie(ada), withCSRF()); resp.StatusCode != 200 {
 		t.Errorf("revoke = %d", resp.StatusCode)
 	}
-	if resp, _ := e.do("GET", lookup, "", withCookie(carol)); resp.StatusCode != 404 {
+	if resp, _ := e.do("POST", lookup, lookupBody, withCookie(carol), withCSRF()); resp.StatusCode != 404 {
 		t.Errorf("lookup of a revoked link = %d", resp.StatusCode)
 	}
 	dave, _ := e.st.LoginWithProvider(ctx, "github", store.Profile{Subject: "dave"})
@@ -340,5 +346,52 @@ func TestOpenMode(t *testing.T) {
 	}
 	if resp, _ := e.do("GET", "/w/"+ws["id"].(string)+"/agent.md", ""); resp.StatusCode != 200 {
 		t.Errorf("open doorway = %d", resp.StatusCode)
+	}
+}
+
+// TestInviteLinkSignInRoundTrip: a signed-out invitee goes from the invite
+// page through GitHub sign-in back to the join page (the token never in the
+// URLs the server sees), and joining with the token makes them a member.
+// The return path is restricted to same-origin paths.
+func TestInviteLinkSignInRoundTrip(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := t.Context()
+	ada, _ := e.login("github", "/", adaGitHub, adaGitHubEmails)
+	resp, ws := e.do("POST", "/api/workspaces", `{"name":"Unison"}`, withCookie(ada), withCSRF())
+	if resp.StatusCode != 201 {
+		t.Fatalf("create = %d", resp.StatusCode)
+	}
+	wsID := ws["id"].(string)
+	_, link := e.do("POST", "/api/workspaces/"+wsID+"/invites", `{"link":true}`, withCookie(ada), withCSRF())
+	token := link["token"].(string)
+	joinPage := "/w/" + wsID + "/join"
+	if u := link["url"].(string); !strings.HasSuffix(u, joinPage+"#invite="+token) {
+		t.Fatalf("invite URL = %q, want the token in the fragment", u)
+	}
+
+	// The page sends people to sign in with return_to = the join page alone.
+	bob, loc := e.login("github", joinPage, map[string]any{"id": 202, "login": "bob", "name": "Bob Builder"}, nil)
+	if loc != joinPage {
+		t.Fatalf("after sign-in: %q, want %q", loc, joinPage)
+	}
+	for _, evil := range []string{"https://evil.example" + joinPage, "//evil.example" + joinPage, "/\\evil.example"} {
+		if _, loc := e.login("github", evil, map[string]any{"id": 202, "login": "bob"}, nil); loc != "/" {
+			t.Errorf("return_to %q: redirected to %q", evil, loc)
+		}
+	}
+	if resp, l := e.do("POST", "/api/invites/lookup", `{"token":"`+token+`"}`, withCookie(bob), withCSRF()); resp.StatusCode != 200 || l["workspace_id"] != wsID {
+		t.Fatalf("lookup = %d %v", resp.StatusCode, l)
+	}
+	resp, out := e.do("POST", "/api/workspaces/"+wsID+"/join", `{"name":"Bob","invite":"`+token+`"}`, withCookie(bob), withCSRF())
+	if resp.StatusCode != 201 {
+		t.Fatalf("join = %d %v", resp.StatusCode, out)
+	}
+	_, u, _ := e.st.SessionByToken(ctx, bob.Value)
+	if ok, _ := e.st.IsMember(ctx, wsID, u.ID); !ok {
+		t.Error("Bob is not a member after joining with the link")
+	}
+	// Opening the link again (already a member) returns the same participant.
+	if resp, again := e.do("POST", "/api/workspaces/"+wsID+"/join", `{"invite":"`+token+`"}`, withCookie(bob), withCSRF()); resp.StatusCode/100 != 2 || again["token"] != out["token"] {
+		t.Errorf("rejoin = %d %v", resp.StatusCode, again)
 	}
 }

@@ -1,5 +1,6 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
+import { participantName } from "./Account.jsx";
 import { ApiError, api } from "./api.js";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
@@ -143,16 +144,10 @@ function mainRepo(ws) {
   return ws.repos?.[0]?.url || ws.repo_url || "";
 }
 
-// defaultName is a participant name from an account name: its first word,
-// without characters names can't have.
-function defaultName(user) {
-  return (user?.display_name || "").trim().split(/\s+/)[0].replace(/@/g, "");
-}
-
 // NewWorkspaceDialog creates a workspace and joins it as the signed-in
 // account (with the name and emoji given here), then opens it.
 function NewWorkspaceDialog({ account, navigate, onClose }) {
-  const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "", me: defaultName(account.user), emoji: "" });
+  const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "", me: participantName(account.user), emoji: "" });
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
