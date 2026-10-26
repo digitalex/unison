@@ -9,7 +9,8 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 // The workspace chat room, a screen of its own. Threads are one level deep:
 // replies are listed under the message that started the thread. head is the
 // header's shared controls (who's here, Invite), error the workspace's
-// error bar.
+// error bar. updateMessages updates the shown messages in place (for
+// optimistic reactions).
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
 // focusing) a message shows its actions: reply, and the reactions.
@@ -24,7 +25,7 @@ const REACTIONS = [
   { emoji: "💯", label: "100" },
 ];
 
-export default function Chat({ messages, items, participants, me, call, onError, shown, head, error }) {
+export default function Chat({ messages, updateMessages, items, participants, me, call, onError, shown, head, error }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
   const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
@@ -79,12 +80,17 @@ export default function Chat({ messages, items, participants, me, call, onError,
     setReplyItem(null);
     setLinked(false);
   };
-  // react toggles your reaction (the server says what everyone sees).
+  // react toggles your reaction. It shows at once (optimistically); the
+  // live update that follows brings what the server says everyone sees, and
+  // a failed call puts it back.
   const react = async (m, emoji) => {
     const mine = m.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
+    const show = (on) => updateMessages((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: withReaction(x.reactions || [], emoji, me?.id, on) } : x)));
+    show(!mine);
     try {
       await call(mine ? "DELETE" : "PUT", `/messages/${m.id}/reactions/${encodeURIComponent(emoji)}`);
     } catch (err) {
+      show(mine);
       onError(err.message);
     }
   };
@@ -247,6 +253,20 @@ function Message({ message, participants, me, flashed, onReply, onReact, actions
       </button>
     </div>
   );
+}
+
+// withReaction returns reactions with participant id's reaction emoji on or
+// off. A new emoji goes last, as the server orders them (first reacted first).
+function withReaction(reactions, emoji, id, on) {
+  const has = reactions.some((r) => r.emoji === emoji && r.by.includes(id));
+  if (has === on) return reactions;
+  if (!on) {
+    return reactions
+      .map((r) => (r.emoji === emoji ? { ...r, count: r.count - 1, by: r.by.filter((b) => b !== id) } : r))
+      .filter((r) => r.count > 0);
+  }
+  if (!reactions.some((r) => r.emoji === emoji)) return [...reactions, { emoji, count: 1, by: [id] }];
+  return reactions.map((r) => (r.emoji === emoji ? { ...r, count: r.count + 1, by: [...r.by, id] } : r));
 }
 
 // Reactions are a message's reaction chips: highlighted when one is yours,
