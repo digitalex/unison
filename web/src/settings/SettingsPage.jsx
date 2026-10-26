@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { ArrowLeft } from "lucide-react";
+import { useEffect, useRef } from "react";
 import Button from "../ui/Button.jsx";
 import Agents from "./Agents.jsx";
 import General from "./General.jsx";
@@ -18,65 +17,36 @@ const SECTIONS = [
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
 ];
 
-function currentHash() {
-  const id = window.location.hash.slice(1);
-  return SECTIONS.some((s) => s.id === id) ? id : SECTIONS[0].id;
-}
-
-// SettingsPage is the full-page workspace settings (/w/{ws}/settings): a
-// section nav (sticky on wide screens, a scroller on phones) and one card
-// per section. The data and live updates come from Workspace.
-export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, navigate }) {
-  const [active, setActive] = useState(currentHash);
+// SettingsPage is the full-page workspace settings (/w/{ws}/settings): one
+// card per section, scrolled through (the sidebar or tab bar leads back to
+// the workspace). The data and live updates come from Workspace.
+export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError }) {
   const scroller = useRef(null);
-  const back = `/w/${workspace.id}`;
 
-  // A deep link (or a nav click) pins its section: the page scrolls to it,
-  // and keeps it in place while lists load and cards grow, until the reader
-  // scrolls on their own. Meanwhile the highlight follows the scroll.
+  // A deep link (#invites) pins its section: the page scrolls to it, and
+  // keeps it in place while lists load and cards grow, until the reader
+  // scrolls on their own.
   const pinned = useRef(null);
   useEffect(() => {
-    const root = scroller.current;
-    const content = root.querySelector(".settings-content");
+    const content = scroller.current.querySelector(".settings-content");
     const scrollToPinned = () => pinned.current && document.getElementById(pinned.current)?.scrollIntoView({ block: "start" });
     const follow = () => {
-      const id = currentHash();
-      setActive(id);
-      pinned.current = window.location.hash ? id : null;
+      const id = window.location.hash.slice(1);
+      pinned.current = SECTIONS.some((s) => s.id === id) ? id : null;
       scrollToPinned();
     };
     const unpin = () => {
       pinned.current = null;
     };
-    const onScroll = () => {
-      if (pinned.current) return setActive(pinned.current);
-      const line = Math.max(root.getBoundingClientRect().top, 0) + 120;
-      let current = SECTIONS[0].id;
-      for (const s of SECTIONS) {
-        const el = document.getElementById(s.id);
-        if (el && el.getBoundingClientRect().top <= line) current = s.id;
-      }
-      // At the very end the last cards can't reach the top: pick the last.
-      const doc = document.documentElement;
-      const own = root.scrollHeight > root.clientHeight;
-      const scrolled = own ? root.scrollTop > 0 : window.scrollY > 0;
-      const atEnd = own ? root.scrollTop + root.clientHeight >= root.scrollHeight - 2 : window.scrollY + window.innerHeight >= doc.scrollHeight - 2;
-      if (scrolled && atEnd) current = SECTIONS[SECTIONS.length - 1].id;
-      setActive(current);
-    };
     const grown = new ResizeObserver(scrollToPinned);
     grown.observe(content);
     follow();
     window.addEventListener("hashchange", follow);
-    root.addEventListener("scroll", onScroll, { passive: true });
-    window.addEventListener("scroll", onScroll, { passive: true });
     const userScroll = ["wheel", "touchstart", "keydown"];
     userScroll.forEach((t) => window.addEventListener(t, unpin, { passive: true }));
     return () => {
       grown.disconnect();
       window.removeEventListener("hashchange", follow);
-      root.removeEventListener("scroll", onScroll);
-      window.removeEventListener("scroll", onScroll);
       userScroll.forEach((t) => window.removeEventListener(t, unpin));
     };
   }, []);
@@ -93,28 +63,6 @@ export default function SettingsPage({ workspace, members, invites, participants
   return (
     <div className="settings-page" ref={scroller}>
       <div className="settings-layout">
-        <nav className="settings-nav" aria-label="Settings sections">
-          <a
-            className="settings-back"
-            href={back}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(back);
-            }}
-          >
-            <ArrowLeft aria-hidden="true" />
-            Back to workspace
-          </a>
-          <ul>
-            {SECTIONS.map((s) => (
-              <li key={s.id}>
-                <a href={`#${s.id}`} aria-current={active === s.id ? "location" : undefined}>
-                  {s.title}
-                </a>
-              </li>
-            ))}
-          </ul>
-        </nav>
         <div className="settings-content">
           <h2 className="settings-title">Settings</h2>
           {error && (
