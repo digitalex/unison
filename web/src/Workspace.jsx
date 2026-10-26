@@ -68,6 +68,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
   const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat");
+  const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
 
@@ -153,7 +154,16 @@ export default function Workspace({ id, view, navigate, account }) {
         people={
           joined && (
             <>
-              <People participants={participants} me={me} call={call} onError={setError} />
+              <People
+                participants={participants}
+                me={me}
+                call={call}
+                onError={setError}
+                onMention={(name) => {
+                  setMention(name);
+                  screens.show("chat");
+                }}
+              />
               <InviteButton workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" align="start" />
             </>
           )
@@ -187,6 +197,8 @@ export default function Workspace({ id, view, navigate, account }) {
               messages={messages}
               updateMessages={setMessages}
               newAfter={newAfter}
+              mention={mention}
+              onMentioned={() => setMention(null)}
               items={backlog}
               participants={participants}
               me={me}
@@ -609,8 +621,8 @@ function rosterGroups(participants) {
 
 // People: who's here, one row per person (participants linked to the same
 // account are grouped), with a presence dot and their status. Your own row
-// sets your status.
-function People({ participants, me, call, onError }) {
+// sets your status; anyone else's starts a chat message to them (@Name).
+function People({ participants, me, call, onError, onMention }) {
   const setStatus = async () => {
     const status = window.prompt("Your status", me?.status || "");
     if (status === null) return;
@@ -649,9 +661,9 @@ function People({ participants, me, call, onError }) {
                 {content}
               </button>
             ) : (
-              <span className="nav-link person" title={label} aria-label={label} role="img">
+              <button type="button" className="nav-link person" title={`${label} · message @${p.name}`} aria-label={`${label}. Message @${p.name}`} onClick={() => onMention(p.name)}>
                 {content}
-              </span>
+              </button>
             )}
           </li>
         );
