@@ -27,7 +27,9 @@ export default function App() {
   };
   const match = path.match(/^\/w\/([^/]+)(\/settings|\/join)?/);
   if (match && match[2] === "/join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
-  if (match) return <Workspace id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
+  // Keyed by id: switching workspaces remounts the page, so its data, live
+  // stream and dialogs start fresh for the new one.
+  if (match) return <Workspace key={match[1]} id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
   if (path === "/me") return <Profile account={account} navigate={navigate} />;
   return <Home navigate={navigate} account={account} />;

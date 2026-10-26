@@ -840,17 +840,134 @@ body:has(.splitter.dragging) {
 }
 
 .ws-name {
+  min-width: 0;
+  margin: 0;
+  font: inherit;
+}
+
+/* ---- Workspace switcher (WorkspaceSwitcher.jsx) ---- */
+.switcher {
+  min-width: 0;
+}
+
+.switcher-trigger.button {
+  max-width: 320px;
+  gap: 4px;
+  padding: 0 6px;
+  margin-left: -2px;
+  color: var(--text);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.switcher-trigger .lucide {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.switcher-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.ws-name a {
-  color: inherit;
+.switcher-menu.popover {
+  width: 300px;
+  padding: var(--space-xxs);
+  gap: 0;
 }
 
-.ws-name a:hover {
-  text-decoration: none;
+.switcher-heading {
+  padding: var(--space-xs) var(--space-xs) var(--space-xxs);
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.switcher-loading {
+  margin: 0;
+  padding: var(--space-xs);
+}
+
+.switcher-item {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: 36px;
+  padding: 4px var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  font-weight: var(--weight-ui-regular);
+  text-align: left;
+  cursor: pointer;
+}
+
+.switcher-item:hover,
+.switcher-item:focus-visible,
+.switcher-item:focus {
+  outline: none;
+  background: var(--surface-hover);
+}
+
+.switcher-item .lucide {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+
+.switcher-check {
+  visibility: hidden;
+  color: var(--accent);
+}
+
+.switcher-item[aria-checked="true"] .switcher-check {
+  visibility: visible;
+}
+
+.switcher-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.switcher-item-name,
+.switcher-item-repo {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.switcher-item[aria-checked="true"] .switcher-item-name {
+  font-weight: var(--weight-ui-semibold);
+}
+
+.switcher-item-repo {
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+}
+
+.switcher-sep {
+  height: var(--border-s);
+  margin: var(--space-xxs) 0;
+  background: var(--panel-edge);
+}
+
+@media (min-width: 641px) {
+  .new-workspace-dialog {
+    width: min(480px, calc(100vw - 2 * var(--space-l)));
+  }
+}
+
+.new-workspace-me {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 96px;
+  gap: var(--space-s);
 }
 
 .ws-mark {
@@ -2168,6 +2285,12 @@ html.reordering * {
     min-width: 22px;
   }
 
+  /* The switcher keeps a few letters of the name, truncated. */
+  .switcher-trigger.button {
+    min-width: 56px;
+    max-width: 140px;
+  }
+
   .topbar .label,
   .canvas-link .lucide-arrow-up-right,
   .row .meta {
@@ -2237,8 +2360,7 @@ html.reordering * {
     gap: 6px;
   }
 
-  .topbar .icon-link,
-  .topbar .ws-name {
+  .topbar .icon-link {
     display: none;
   }
 
