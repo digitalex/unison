@@ -602,8 +602,11 @@ function InviteAgent({ call }) {
 }
 
 // rosterGroups folds the participants linked to one account into a single
-// entry shown with its most recently active participant (the list arrives
-// most recently active first). Unlinked participants are their own entries.
+// entry, in a stable order (by name) so the list doesn't reshuffle as people
+// come and go. An entry is shown with its first participant (the oldest:
+// its name doesn't change with the device used last) and the status of its
+// most recently active one (the list arrives most recently active first).
+// Unlinked participants are their own entries.
 function rosterGroups(participants) {
   const groups = [];
   const byUser = new Map();
@@ -612,11 +615,15 @@ function rosterGroups(participants) {
       byUser.get(p.user_id).all.push(p);
       continue;
     }
-    const g = { key: p.user_id ? `u${p.user_id}` : `p${p.id}`, primary: p, all: [p] };
+    const g = { key: p.user_id ? `u${p.user_id}` : `p${p.id}`, all: [p] };
     if (p.user_id) byUser.set(p.user_id, g);
     groups.push(g);
   }
-  return groups;
+  for (const g of groups) {
+    g.primary = g.all.reduce((a, b) => (b.id < a.id ? b : a));
+    g.status = g.all.find((q) => q.status)?.status || "";
+  }
+  return groups.sort((a, b) => a.primary.name.localeCompare(b.primary.name, undefined, { sensitivity: "base" }) || a.primary.id - b.primary.id);
 }
 
 // People: who's here, one row per person (participants linked to the same
@@ -642,7 +649,7 @@ function People({ participants, me, call, onError, onMention }) {
         const mine = me && g.all.some((q) => q.id === me.id);
         const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-        const status = p.status || (active ? "active" : "away");
+        const status = g.status || (active ? "active" : "away");
         const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — ${status}`;
         const content = (
           <>
@@ -651,7 +658,7 @@ function People({ participants, me, call, onError, onMention }) {
               <span className="dot" />
             </span>
             <span className="person-name">{p.name}</span>
-            {p.status && <span className="person-status">{p.status}</span>}
+            {g.status && <span className="person-status">{g.status}</span>}
           </>
         );
         return (
