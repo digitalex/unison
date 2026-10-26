@@ -165,7 +165,7 @@ export default function Workspace({ id, view, navigate, account }) {
         }
       />
       {view === "settings" && joined ? (
-        <main className="shell-main shell-settings">
+        <main className="shell-main panel">
           <SettingsPage
             workspace={workspace}
             members={members}
@@ -174,8 +174,9 @@ export default function Workspace({ id, view, navigate, account }) {
             webhooks={webhooks}
             account={account}
             call={call}
-            error={error}
+            error={errorBar}
             onError={setError}
+            head={headExtras}
           />
         </main>
       ) : (
