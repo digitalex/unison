@@ -2,6 +2,7 @@ import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, GitPullRequest, GripVertical, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { meta, name, prLabel } from "./backlogFormat.js";
+import { OPEN_ITEM } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import SectionToggle from "./ui/SectionToggle.jsx";
 import useSectionOpen from "./useSectionOpen.js";
@@ -206,6 +207,8 @@ function urlWithItem(id) {
 
 // useItemParam keeps the open item in the URL: opening pushes ?item=12,
 // closing goes back (so the browser's back button closes the dialog too).
+// Links elsewhere on the board (itemLink, e.g. a chat message's chip) open
+// items through the OPEN_ITEM event.
 function useItemParam() {
   const [id, setId] = useState(itemFromURL);
   const pushed = useRef(false);
@@ -214,14 +217,19 @@ function useItemParam() {
       pushed.current = false;
       setId(itemFromURL());
     };
+    const onOpen = (e) => open(e.detail);
     window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    window.addEventListener(OPEN_ITEM, onOpen);
+    return () => {
+      window.removeEventListener("popstate", onPop);
+      window.removeEventListener(OPEN_ITEM, onOpen);
+    };
   }, []);
-  const open = (next) => {
+  function open(next) {
     window.history.pushState(null, "", urlWithItem(next));
     pushed.current = true;
     setId(next);
-  };
+  }
   const close = () => {
     if (pushed.current) {
       pushed.current = false;

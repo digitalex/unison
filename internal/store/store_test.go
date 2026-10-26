@@ -242,9 +242,9 @@ func TestClaimNextConcurrent(t *testing.T) {
 func TestMessagesThreadOneLevel(t *testing.T) {
 	s, _, a, b := setup(t)
 	ctx := context.Background()
-	root, _, _ := s.PostMessage(ctx, a, "hello @"+b.Name, nil)
-	reply, _, _ := s.PostMessage(ctx, b, "hi", &root.ID)
-	nested, _, err := s.PostMessage(ctx, a, "nested", &reply.ID)
+	root, _, _ := s.PostMessage(ctx, a, "hello @"+b.Name, nil, nil)
+	reply, _, _ := s.PostMessage(ctx, b, "hi", &root.ID, nil)
+	nested, _, err := s.PostMessage(ctx, a, "nested", &reply.ID, nil)
 	if err != nil {
 		t.Fatal(err)
 	}

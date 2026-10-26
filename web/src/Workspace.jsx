@@ -5,6 +5,7 @@ import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
+import { SHOW_MESSAGE } from "./nav.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -15,9 +16,10 @@ import Splitter, { useChatWidth } from "./ui/Splitter.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
-// Which collections each event type invalidates.
-function collectionFor(type) {
-  if (type.startsWith("message.")) return ["messages"];
+// Which collections each event invalidates.
+function collectionFor({ type, data }) {
+  // A message about an item changes the item's message count.
+  if (type.startsWith("message.")) return data?.item_id || type !== "message.created" ? ["messages", "backlog"] : ["messages"];
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
@@ -56,6 +58,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
   const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
+  const shownMessage = useShownMessage(setChatOpen);
   const chatWidth = useChatWidth();
   const [error, setError] = useState("");
   const joined = Boolean(me);
@@ -99,7 +102,7 @@ export default function Workspace({ id, view, navigate, account }) {
     src.onopen = () => setLive(true);
     src.onerror = () => setLive(false);
     src.onmessage = (msg) => {
-      collectionFor(JSON.parse(msg.data).type).forEach(reload);
+      collectionFor(JSON.parse(msg.data)).forEach(reload);
     };
     const roster = setInterval(() => reload("participants"), 30000);
     return () => {
@@ -167,18 +170,46 @@ export default function Workspace({ id, view, navigate, account }) {
             <Chat
               workspaceId={id}
               messages={messages}
+              items={backlog}
               participants={participants}
               me={me}
               call={call}
               onError={setError}
               open={chatOpen}
               onToggle={setChatOpen}
+              shown={shownMessage}
             />
           )}
         </div>
       )}
     </div>
   );
+}
+
+// messageFromURL reads a deep link to a chat message: #msg-12 or ?msg=12.
+function messageFromURL() {
+  const m = window.location.hash.match(/^#msg-(\d+)$/) || window.location.search.match(/[?&]msg=(\d+)/);
+  return m ? Number(m[1]) : null;
+}
+
+// useShownMessage is the chat message to scroll to and highlight: from a
+// deep link, or a link elsewhere on the board (messageLink). Showing one
+// opens a minimized chat. `at` makes showing the same message again count.
+function useShownMessage(setChatOpen) {
+  const [shown, setShown] = useState(() => {
+    const id = messageFromURL();
+    return id ? { id, at: Date.now() } : null;
+  });
+  useEffect(() => {
+    if (shown) setChatOpen(true);
+    const onShow = (e) => {
+      setChatOpen(true);
+      setShown({ id: e.detail, at: Date.now() });
+    };
+    window.addEventListener(SHOW_MESSAGE, onShow);
+    return () => window.removeEventListener(SHOW_MESSAGE, onShow);
+  }, []);
+  return shown;
 }
 
 function TopBar({ workspace, view, me, joined, participants, live, call, onError, navigate, account, members }) {

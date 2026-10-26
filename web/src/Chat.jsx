@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
-import { MessageSquare, Reply, X } from "lucide-react";
+import { ListChecks, MessageSquare, Reply, X } from "lucide-react";
+import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Markdown from "./Markdown.jsx";
@@ -8,9 +9,14 @@ import SectionToggle from "./ui/SectionToggle.jsx";
 // The workspace chat room. Threads are one level deep: replies are listed
 // under the message that started the thread. It can be minimized (open and
 // onToggle come from Workspace, which also gives the space back to the backlog).
-export default function Chat({ workspaceId, messages, participants, me, call, onError, open, onToggle }) {
+// A message can be about a backlog item: it shows a chip that opens the item.
+// `shown` ({id, at}) is a message to scroll to and highlight.
+export default function Chat({ workspaceId, messages, items, participants, me, call, onError, open, onToggle, shown }) {
   const [text, setText] = useState("");
   const [replyTo, setReplyTo] = useState(null);
+  const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
+  const mentionedItem = itemMentioned(text, items);
+  const flashed = useShowMessage(shown, messages, open);
   const seenKey = `unison.chat.seen.${workspaceId}`;
   const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
   const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
@@ -42,9 +48,10 @@ export default function Chat({ workspaceId, messages, participants, me, call, on
     e.preventDefault();
     if (!text.trim()) return;
     try {
-      await call("POST", "/messages", { body: text, parent_id: replyTo?.id });
+      await call("POST", "/messages", { body: text, parent_id: replyTo?.id, item_id: linked && mentionedItem ? mentionedItem.id : undefined });
       setText("");
       setReplyTo(null);
+      setLinked(false);
     } catch (err) {
       onError(err.message);
     }
@@ -64,11 +71,11 @@ export default function Chat({ workspaceId, messages, participants, me, call, on
       <div className="chat-log">
         {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
         {roots.map((m) => (
-          <Message key={m.id} message={m} participants={participants} me={me} onReply={() => setReplyTo(m)}>
+          <Message key={m.id} message={m} participants={participants} me={me} flashed={flashed} onReply={() => setReplyTo(m)}>
             {replies.has(m.id) && (
               <div className="thread">
                 {replies.get(m.id).map((r) => (
-                  <Message key={r.id} message={r} participants={participants} me={me} onReply={() => setReplyTo(m)} />
+                  <Message key={r.id} message={r} participants={participants} me={me} flashed={flashed} onReply={() => setReplyTo(m)} />
                 ))}
               </div>
             )}
@@ -96,7 +103,20 @@ export default function Chat({ workspaceId, messages, participants, me, call, on
           placeholder="Message the workspace…  @Name to mention"
         />
         <div className="composer-foot">
-          <span className="hint">Enter to send · Shift+Enter for a new line</span>
+          {mentionedItem ? (
+            <button
+              type="button"
+              className={linked ? "chip link-item linked" : "chip link-item"}
+              aria-pressed={linked}
+              title={linked ? "The message will be tied to this backlog item" : "Tie the message to this backlog item"}
+              onClick={() => setLinked(!linked)}
+            >
+              <ListChecks aria-hidden="true" />
+              {linked ? "Linked to" : "Link to"} #{mentionedItem.id} <span className="link-item-title">{mentionedItem.title}</span>
+            </button>
+          ) : (
+            <span className="hint">Enter to send · Shift+Enter for a new line</span>
+          )}
           <Button variant="primary" type="submit">
             Send
           </Button>
@@ -106,13 +126,45 @@ export default function Chat({ workspaceId, messages, participants, me, call, on
   );
 }
 
-function Message({ message, participants, me, onReply, children }) {
+// itemMentioned is the first backlog item the text names as #id, if any.
+function itemMentioned(text, items) {
+  for (const m of text.matchAll(/(?:^|[^\w&/])#(\d+)\b/g)) {
+    const item = items.find((it) => it.id === Number(m[1]));
+    if (item) return item;
+  }
+  return null;
+}
+
+// useShowMessage scrolls to the shown message once it is rendered (and chat
+// is open), focuses it, and returns its id while it should be highlighted.
+function useShowMessage(shown, messages, open) {
+  const [flashed, setFlashed] = useState(null);
+  const present = Boolean(shown && open && messages.some((m) => m.id === shown.id));
+  useEffect(() => {
+    if (!present) return;
+    setFlashed(shown.id);
+    // After the bottom-scroll and any dialog's focus restore.
+    const go = setTimeout(() => {
+      const el = document.getElementById(`msg-${shown.id}`);
+      el?.scrollIntoView({ block: "center" });
+      el?.focus({ preventScroll: true });
+    }, 80);
+    const done = setTimeout(() => setFlashed(null), 2500);
+    return () => {
+      clearTimeout(go);
+      clearTimeout(done);
+    };
+  }, [present, shown?.at]);
+  return flashed;
+}
+
+function Message({ message, participants, me, flashed, onReply, children }) {
   const author = participants.find((p) => p.id === message.author_id);
   const mentioned = me && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
   const created = new Date(message.created_at);
   const isReply = Boolean(message.parent_id);
   return (
-    <div className={mentioned ? "msg mention" : "msg"}>
+    <div id={`msg-${message.id}`} tabIndex={-1} className={["msg", mentioned && "mention", flashed === message.id && "msg-flash"].filter(Boolean).join(" ")}>
       {!isReply && (
         <span className="avatar" aria-hidden="true">
           {author?.emoji}
@@ -127,6 +179,11 @@ function Message({ message, participants, me, onReply, children }) {
         <div className="text">
           <Markdown text={message.body} />
         </div>
+        {message.item && (
+          <a className="chip msg-item" title={`About backlog item #${message.item.id}: ${message.item.title}`} {...itemLink(message.item.id)}>
+            <ListChecks aria-hidden="true" />#{message.item.id} <span className="msg-item-title">{message.item.title}</span>
+          </a>
+        )}
         {children}
       </div>
       <Button variant="ghost" className="msg-reply" title="Reply in thread" onClick={onReply}>

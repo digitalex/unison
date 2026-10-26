@@ -119,6 +119,7 @@ func (s *Server) routes() {
 	h("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	h("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
 	h("GET "+ws+"/backlog/{id}/comments", s.listComments)
+	h("GET "+ws+"/backlog/{id}/messages", s.listItemMessages)
 	h("POST "+ws+"/backlog/{id}/comments", s.auth(s.addComment))
 	h("DELETE "+ws+"/backlog/{id}/comments/{cid}", s.auth(s.deleteComment))
 	h("POST "+ws+"/backlog/{id}/prs", s.auth(s.linkPR))
@@ -395,11 +396,12 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Body     string `json:"body"`
 		ParentID *int64 `json:"parent_id"`
+		ItemID   *int64 `json:"item_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	m, evs, err := s.store.PostMessage(r.Context(), actor(r), req.Body, req.ParentID)
+	m, evs, err := s.store.PostMessage(r.Context(), actor(r), req.Body, req.ParentID, req.ItemID)
 	s.respond(w, http.StatusCreated, m, evs, err)
 }
 
@@ -521,6 +523,16 @@ func (s *Server) listComments(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	list, err := s.store.ListComments(r.Context(), r.PathValue("ws"), id)
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+// listItemMessages lists the chat messages about a backlog item.
+func (s *Server) listItemMessages(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	list, err := s.store.ItemMessages(r.Context(), r.PathValue("ws"), id)
 	s.respond(w, http.StatusOK, list, nil, err)
 }
 

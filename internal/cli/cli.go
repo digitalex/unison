@@ -97,11 +97,15 @@ Accounts and invites:
 
 Chat:
   chat log [--limit N]               recent messages, with threads
-  chat send <text> [--reply-to ID]   post a message (or reply in a thread)
+  chat send <text> [--reply-to ID] [--item ID]
+                                     post a message (or reply in a thread);
+                                     --item ties it to a backlog item (e.g. a
+                                     status update about the item you work on)
 
 Backlog (#1 is the highest priority):
   backlog [list] [--status open|assigned|done|all]
-  backlog show <id>
+  backlog show <id>                  the item, its comments and the chat
+                                     messages about it
   backlog add <title> [--body B] [--position N]
   backlog edit <id> [--title T] [--body B]
   backlog move <id> <position>
@@ -888,12 +892,21 @@ func (a *app) printMessage(people map[int64]store.Participant, m store.Message, 
 	}
 	when := time.UnixMilli(m.CreatedAt).Format("15:04")
 	body := strings.ReplaceAll(m.Body, "\n", "\n"+indent+"      ")
-	a.printf("%s[#%d %s] %s%s: %s\n", indent, m.ID, when, label(people, m.AuthorID), thread, body)
+	a.printf("%s[#%d %s] %s%s%s: %s\n", indent, m.ID, when, label(people, m.AuthorID), itemMarker(m), thread, body)
+}
+
+// itemMarker labels a message about a backlog item: " [item #12]".
+func itemMarker(m store.Message) string {
+	if m.ItemID == nil {
+		return ""
+	}
+	return fmt.Sprintf(" [item #%d]", *m.ItemID)
 }
 
 func (a *app) chatSend(args []string) error {
 	fs := flag.NewFlagSet("chat send", flag.ContinueOnError)
 	replyTo := fs.String("reply-to", "", "message ID to reply to (threads)")
+	item := fs.String("item", "", "backlog item ID the message is about")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -902,18 +915,25 @@ func (a *app) chatSend(args []string) error {
 		return fmt.Errorf("%w: chat send <text>", errUsage)
 	}
 	body := map[string]any{"body": strings.Join(pos, " ")}
-	if *replyTo != "" {
-		id, err := parseID(*replyTo)
+	for key, v := range map[string]string{"parent_id": *replyTo, "item_id": *item} {
+		if v == "" {
+			continue
+		}
+		id, err := parseID(v)
 		if err != nil {
 			return err
 		}
-		body["parent_id"] = id
+		body[key] = id
 	}
 	var m store.Message
 	if ok, err := a.call("POST", "/messages", body, &m, true); !ok {
 		return err
 	}
-	a.printf("Sent message #%d.\n", m.ID)
+	if m.Item != nil {
+		a.printf("Sent message #%d about #%d %q.\n", m.ID, m.Item.ID, m.Item.Title)
+	} else {
+		a.printf("Sent message #%d.\n", m.ID)
+	}
 	return nil
 }
 
@@ -1101,18 +1121,17 @@ func (a *app) backlogShow(args []string) error {
 		return err
 	}
 	if a.jsonOut {
-		var it, comments json.RawMessage
+		var it, comments, messages json.RawMessage
 		path, err := a.wsPath(fmt.Sprintf("/backlog/%d", id))
 		if err != nil {
 			return err
 		}
-		if err := a.client().do("GET", path, nil, &it); err != nil {
-			return err
+		for suffix, out := range map[string]*json.RawMessage{"": &it, "/comments": &comments, "/messages": &messages} {
+			if err := a.client().do("GET", path+suffix, nil, out); err != nil {
+				return err
+			}
 		}
-		if err := a.client().do("GET", path+"/comments", nil, &comments); err != nil {
-			return err
-		}
-		return a.printJSON(json.RawMessage(fmt.Sprintf(`{"item":%s,"comments":%s}`, it, comments)))
+		return a.printJSON(json.RawMessage(fmt.Sprintf(`{"item":%s,"comments":%s,"messages":%s}`, it, comments, messages)))
 	}
 	var it store.Item
 	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d", id), nil, &it, false); err != nil {
@@ -1121,11 +1140,39 @@ func (a *app) backlogShow(args []string) error {
 	if err := a.printItemDetail(&it); err != nil {
 		return err
 	}
-	if it.CommentCount == 0 {
-		return nil
+	if it.CommentCount > 0 {
+		a.printf("\n")
+		if err := a.printComments(id); err != nil {
+			return err
+		}
 	}
-	a.printf("\n")
-	return a.printComments(id)
+	if it.MessageCount > 0 {
+		a.printf("\n")
+		return a.printItemMessages(id)
+	}
+	return nil
+}
+
+// printItemMessages lists the chat messages about an item, one line each.
+func (a *app) printItemMessages(id int64) error {
+	var list []store.Message
+	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d/messages", id), nil, &list, false); err != nil {
+		return err
+	}
+	people, err := a.participants()
+	if err != nil {
+		return err
+	}
+	a.printf("Chat about #%d:\n", id)
+	for _, m := range list {
+		when := time.UnixMilli(m.CreatedAt).Format("Jan 2 15:04")
+		first, _, more := strings.Cut(m.Body, "\n")
+		if more {
+			first += " …"
+		}
+		a.printf("[#%d %s] %s: %s\n", m.ID, when, label(people, m.AuthorID), first)
+	}
+	return nil
 }
 
 func (a *app) printComments(id int64) error {
@@ -1636,6 +1683,9 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		where := ""
 		if m.ParentID != nil {
 			where = fmt.Sprintf(" (reply in thread #%d — answer with --reply-to %d)", *m.ParentID, *m.ParentID)
+		}
+		if m.Item != nil {
+			where += fmt.Sprintf(" (about item #%d %q)", m.Item.ID, m.Item.Title)
 		}
 		return fmt.Sprintf("💬 [#%d] %s%s: %s", m.ID, who, where, m.Body)
 	case strings.HasPrefix(e.Type, "backlog."):

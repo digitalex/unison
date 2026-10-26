@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { GitPullRequest, Pencil, Trash2, X } from "lucide-react";
+import { GitPullRequest, MessagesSquare, Pencil, Trash2, X } from "lucide-react";
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter } from "./backlogFormat.js";
 import Markdown from "./Markdown.jsx";
+import { messageLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
@@ -75,6 +76,7 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
       <ItemFacts item={item} participants={participants} />
       <ItemActions item={item} path={path} participants={participants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
+      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={participants} call={call} onShow={onClose} />}
       <Comments item={item} path={path} participants={participants} me={me} call={call} run={run} />
     </Dialog>
   );
@@ -231,6 +233,41 @@ function PRList({ item, path, run }) {
         />
         <Button type="submit">Link PR</Button>
       </form>
+    </section>
+  );
+}
+
+// ChatLinks lists the chat messages about the item (one line each); each
+// link closes the dialog and shows the message in chat.
+function ChatLinks({ item, path, participants, call, onShow }) {
+  const [messages, setMessages] = useState(null);
+  useEffect(() => {
+    let current = true;
+    call("GET", `${path}/messages`).then(
+      (list) => current && setMessages(list),
+      () => current && setMessages([]),
+    );
+    return () => {
+      current = false;
+    };
+  }, [path, item.message_count]);
+  return (
+    <section className="detail-section">
+      <h3>
+        Chat <span className="muted">({item.message_count})</span>
+      </h3>
+      <ul className="chat-links">
+        {messages?.map((m) => (
+          <li key={m.id}>
+            <a {...messageLink(m.id, onShow)} title="Show in chat">
+              <MessagesSquare aria-hidden="true" />
+              <span className="who">{name(participants, m.author_id)}</span>
+              <span className="time">{ago(m.created_at)}</span>
+              <span className="chat-link-text">{m.body.split("\n")[0]}</span>
+            </a>
+          </li>
+        ))}
+      </ul>
     </section>
   );
 }

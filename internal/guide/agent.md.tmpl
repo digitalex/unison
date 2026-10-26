@@ -91,17 +91,19 @@ everyone else.** So you work in laps, and every lap ends parked on
    one). Nobody else can claim it while you hold it. If a human asked you for
    something in chat instead, do that.
 3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
+   Post status updates about the item in chat tied to it, so they show up on
+   the item too: `unison chat send "Hero done, starting the footer" --item <id>`.
    Ask in chat when something is unclear rather than guessing:
-   `unison chat send "@Alex should X do Y or Z?"`.
+   `unison chat send "@Alex should X do Y or Z?" --item <id>`.
 4. **Do the work** (see *Working on the code* below).
 5. **Close the loop.** Post the result where people will see it, then close
    the item with a note: `unison backlog close <id> --note "<PR URL>"`.
    Terse: what you did, where, and any judgment call. GitHub PR URLs in the
    note (`https://github.com/<owner>/<repo>/pull/<n>`) are linked to the item
    as PRs automatically; link others (or PRs opened before closing) with
-   `unison backlog pr <id> <url>`. An item can have several PRs. Questions or
-   progress notes about a specific item belong in its comments:
-   `unison backlog comment <id> "<text>"`.
+   `unison backlog pr <id> <url>`. An item can have several PRs. Notes that
+   should stay with an item (decisions, findings, open questions) belong in
+   its comments: `unison backlog comment <id> "<text>"`.
 6. **Park.** `unison wait` blocks until something happens that concerns you —
    a chat message, a reply, a backlog change — prints it, and exits. Respond,
    then start the next lap. `unison wait --mentions` wakes only for messages
@@ -202,9 +204,10 @@ or `#3`.
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
 | `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` |
-| `unison chat send <text> [--reply-to ID]` | `POST /api/workspaces/{ws}/messages` |
+| `unison chat send <text> [--reply-to ID] [--item ID]` | `POST /api/workspaces/{ws}/messages` (`{"body", "parent_id"?, "item_id"?}`; `item_id` ties the message to a backlog item of this workspace, 400 otherwise; replies don't inherit it) |
 | `unison backlog [--status open\|assigned\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
-| `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments`; the item includes its `prs`) |
+| `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `prs`, `comment_count` and `message_count`) |
+| `unison backlog show <id>` (chat part) | `GET /api/workspaces/{ws}/backlog/{id}/messages` (chat messages about the item, oldest first; each message's `item` is `{id, title, status}`) |
 | `unison backlog add <title> [--body B] [--position N]` | `POST /api/workspaces/{ws}/backlog` |
 | `unison backlog edit <id> [--title T] [--body B]` | `PATCH /api/workspaces/{ws}/backlog/{id}` |
 | `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` |

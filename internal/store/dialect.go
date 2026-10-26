@@ -185,12 +185,15 @@ func (d db) applySchema(lock, schema string) error {
 //
 // oauth_states.link_user_id (#18) marks a pending OAuth login that links a
 // new identity to an already signed-in user; NULL for ordinary sign-ins.
+// messages.item_id (#27) ties a chat message to the backlog item it is
+// about; NULL for most messages.
 var addedColumns = []struct{ table, name, sqlite, pg string }{
 	{"participants", "user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
 	{"participants", "sponsor_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
 	{"participants", "token_expires_at", "INTEGER", "BIGINT"},
 	{"participants", "revoked_at", "INTEGER", "BIGINT"},
 	{"oauth_states", "link_user_id", "INTEGER", "BIGINT"},
+	{"messages", "item_id", "INTEGER REFERENCES items(id)", "BIGINT REFERENCES items(id)"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
@@ -204,6 +207,7 @@ func (d db) addParticipantColumns(t *sql.Tx) error {
 	for _, q := range []string{
 		`CREATE INDEX IF NOT EXISTS participants_user ON participants(user_id)`,
 		`CREATE INDEX IF NOT EXISTS participants_sponsor ON participants(sponsor_user_id)`,
+		`CREATE INDEX IF NOT EXISTS messages_item ON messages(item_id)`,
 	} {
 		if _, err := t.Exec(q); err != nil {
 			return err
