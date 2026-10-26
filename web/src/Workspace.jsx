@@ -7,6 +7,7 @@ import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import Inbox from "./Inbox.jsx";
 import { SHOW_MESSAGE, spaLink } from "./nav.js";
+import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
 import Button from "./ui/Button.jsx";
@@ -324,7 +325,7 @@ function RepoLinks({ repos }) {
             {repos.map((r) => (
               <li key={r.id}>
                 <a href={r.url} target="_blank" rel="noreferrer">
-                  <span className="repo-label">{r.label || repoName(r.url)}</span>
+                  <span className="repo-label">{repoName(r.url)}</span>
                   <span className="repo-url">{r.url}</span>
                 </a>
               </li>
@@ -334,10 +335,6 @@ function RepoLinks({ repos }) {
       )}
     </Popover>
   );
-}
-
-function repoName(url) {
-  return url.replace(/\/+$/, "").split("/").pop().replace(/\.git$/, "");
 }
 
 // JoinCard: a member who hasn't joined yet picks a name. Signed out, you
@@ -387,14 +384,14 @@ function Invite({ workspaceId, account, members, call, onNavigate }) {
   );
 }
 
-// InvitePerson makes an invite link (7 days, any number of people) to send
+// InvitePerson makes an invite link (48 hours, any number of people) to send
 // to someone: they sign in (or sign up) with it and land in the workspace.
 function InvitePerson({ workspaceId, call, onNavigate }) {
   const [created, setCreated] = useState(null); // {url, invite}
   const [error, setError] = useState("");
   const create = () => {
     setError("");
-    call("POST", "/invites", { link: true, expires_in: "7d" }).then(setCreated, (e) => setError(e.message));
+    call("POST", "/invites", { link: true }).then(setCreated, (e) => setError(e.message));
   };
   return (
     <>
@@ -404,7 +401,7 @@ function InvitePerson({ workspaceId, call, onNavigate }) {
           <UrlBox url={created.url} label="Invite link" />
           <p className="pass-status muted">
             <KeyRound aria-hidden="true" />
-            Shown once · works until {new Date(created.invite.expires_at).toLocaleDateString(undefined, { dateStyle: "medium" })}
+            Shown once · works for 48 hours
           </p>
         </>
       ) : (
@@ -417,7 +414,7 @@ function InvitePerson({ workspaceId, call, onNavigate }) {
       )}
       {error && <p role="alert">Error: {error}</p>}
       <p className="field-description">
-        Email invites, other expiry times and revoking: <a {...spaLink(`/w/${workspaceId}/settings#invites`, onNavigate)}>Settings → Invites</a>.
+        Email invites and revoking: <a {...spaLink(`/w/${workspaceId}/settings#invites`, onNavigate)}>Settings → Invites</a>.
       </p>
     </>
   );

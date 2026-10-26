@@ -36,7 +36,7 @@ func TestAgentPass(t *testing.T) {
 	owner, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "owner", Name: "Owner"})
 	ws, _, _ := st.CreateWorkspaceFor(t.Context(), owner.ID, "Unison", "", "")
 	invite := ts.URL + "/w/" + ws.ID
-	_, link, _, _ := st.CreateLinkInvite(t.Context(), ws.ID, owner.ID, 0)
+	_, link, _, _ := st.CreateLinkInvite(t.Context(), ws.ID, owner.ID)
 	alex, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "1", Name: "Alex"})
 	browser, _, _ := st.CreateSession(t.Context(), alex.ID, store.SessionBrowser, "test")
 	if _, errOut, code := e.run(human, "--workspace", ws.ID, "pass"); code == 0 || !strings.Contains(errOut, "unison login") {

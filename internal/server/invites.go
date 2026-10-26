@@ -3,9 +3,6 @@ package server
 import (
 	"net/http"
 	"net/url"
-	"strconv"
-	"strings"
-	"time"
 
 	"github.com/digitalex/unison/internal/store"
 )
@@ -24,38 +21,20 @@ func (s *Server) listInvites(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, http.StatusOK, list, nil, err)
 }
 
-// parseTTL accepts "7d", "12h", "30m" or Go durations; "" is the default.
-func parseTTL(v string) (time.Duration, error) {
-	v = strings.TrimSpace(v)
-	if v == "" {
-		return 0, nil
-	}
-	if n, ok := strings.CutSuffix(v, "d"); ok {
-		days, err := strconv.Atoi(n)
-		return time.Duration(days) * 24 * time.Hour, err
-	}
-	return time.ParseDuration(v)
-}
-
-// createInvite: {"email": "…"} invites an address; {"link": true,
-// "expires_in": "7d"} creates an invite link (returned once, with its URL).
+// createInvite: {"email": "…"} invites an address; {"link": true} creates
+// an invite link (returned once, with its URL). Both work for 48 hours; an
+// "expires_in" from older clients is ignored.
 func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Email     string `json:"email"`
-		Link      bool   `json:"link"`
-		ExpiresIn string `json:"expires_in"`
+		Email string `json:"email"`
+		Link  bool   `json:"link"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	ws, u := r.PathValue("ws"), signedIn(r).user
 	if req.Link {
-		ttl, err := parseTTL(req.ExpiresIn)
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "expires_in must look like 7d, 12h or 30m")
-			return
-		}
-		inv, token, evs, err := s.store.CreateLinkInvite(r.Context(), ws, u.ID, ttl)
+		inv, token, evs, err := s.store.CreateLinkInvite(r.Context(), ws, u.ID)
 		resp := map[string]any{"invite": inv}
 		if err == nil {
 			resp["token"], resp["url"] = token, inviteURL(r, ws, token)

@@ -27,9 +27,9 @@ export const STATUS_LABELS = { open: "Open", assigned: "In progress", done: "Don
 const GITHUB_PR = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 const GITHUB_REPO = /github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i;
 
-// prLabel shortens a PR URL. In a workspace repository it is "label#4" (or
-// "#4" when that is the only repository, else "repo#4"); in another GitHub
-// repository "owner/repo#4"; otherwise the host name.
+// prLabel shortens a PR URL. In a workspace repository it is "#4" when that
+// is the only repository, else "repo#4"; in another GitHub repository
+// "owner/repo#4"; otherwise the host name.
 export function prLabel(url, repos) {
   const pr = url.match(GITHUB_PR);
   if (!pr) {
@@ -46,7 +46,6 @@ export function prLabel(url, repos) {
   };
   const repo = repos.find(same);
   if (!repo) return `${owner}/${name}#${number}`;
-  if (repo.label) return `${repo.label}#${number}`;
   return repos.length === 1 ? `#${number}` : `${name}#${number}`;
 }
 

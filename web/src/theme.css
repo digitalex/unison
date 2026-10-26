@@ -2226,8 +2226,14 @@ html.reordering * {
   height: 28px;
 }
 
-.repo-form .repo-label-input {
-  flex: 0 0 88px;
+.repo-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 40%;
+  overflow: hidden;
+  font-weight: var(--weight-ui-medium);
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .repo-form .control[type="url"] {
@@ -2636,15 +2642,6 @@ html.reordering * {
     right: 8px;
     width: auto;
     max-width: none;
-  }
-
-  .repo-form {
-    flex-wrap: wrap;
-  }
-
-  .repo-form .control[type="url"] {
-    flex-basis: 100%;
-    order: 3;
   }
 
   .pr-count {
@@ -3305,13 +3302,9 @@ html.reordering * {
   color: var(--text-muted);
 }
 
-.invite-expiry-label {
+.invite-link-label {
   flex: 1;
   font-size: var(--size-s);
-}
-
-.invite-expiry-label + .select {
-  flex: none;
 }
 
 /* Narrow screens: the page scrolls with the document and the section nav

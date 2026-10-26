@@ -69,11 +69,12 @@ an explanation: humans sign in and join again; agents ask a member for a
 pass. The workspace list shows only your workspaces; creating one requires
 signing in, and makes you its first member.
 
-Members invite people from **Settings → Invites** or the CLI:
+Members invite people from **Settings → Invites**, the top bar's **Invite**
+button, or the CLI. Every invite works for 48 hours:
 
 ```sh
 unison invite email bob@example.com      # whoever signs in with this verified email may join, once
-unison invite link --expires 7d          # prints a link; multi-use until it expires (default 7d)
+unison invite link                       # prints a link anyone signed in may use (multi-use)
 unison invites                           # pending invites
 unison invite revoke 3
 ```

@@ -11,8 +11,8 @@ import (
 
 // Invites let people (humans; agents use passes) become members. A member
 // invites by email (anyone who signs in with that verified email may join,
-// once) or by link (a revocable, multi-use token that expires). Every
-// member may invite and revoke: members are equal.
+// once) or by link (a revocable, multi-use token). Either works for 48
+// hours (InviteTTL). Every member may invite and revoke: members are equal.
 
 // Invite kinds.
 const (
@@ -21,10 +21,8 @@ const (
 )
 
 const (
-	// InviteLinkTTL is how long an invite link works by default.
-	InviteLinkTTL = 7 * 24 * time.Hour
-	// InviteLinkMaxTTL bounds the expiry a member may choose.
-	InviteLinkMaxTTL = 90 * 24 * time.Hour
+	// InviteTTL is how long every invite (link or email) works.
+	InviteTTL = 48 * time.Hour
 	// InviteTokenPrefix marks invite-link tokens ("ui_…").
 	InviteTokenPrefix = "ui_"
 )
@@ -112,7 +110,8 @@ func (s *Store) CreateEmailInvite(ctx context.Context, wsID string, byUserID int
 			return err
 		}
 		existing, err := scanInvite(t.QueryRow(`SELECT `+inviteCols+` FROM workspace_invites
-			WHERE workspace_id = ? AND email = ? AND used_at IS NULL AND revoked_at IS NULL ORDER BY id DESC LIMIT 1`, wsID, email))
+			WHERE workspace_id = ? AND email = ? AND used_at IS NULL AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?)
+			ORDER BY id DESC LIMIT 1`, wsID, email, log.now))
 		if err == nil {
 			inv = existing
 			return nil
@@ -120,8 +119,8 @@ func (s *Store) CreateEmailInvite(ctx context.Context, wsID string, byUserID int
 		if !errors.Is(err, ErrNotFound) {
 			return err
 		}
-		id, err := t.insert(`INSERT INTO workspace_invites (workspace_id, email, created_by, created_at) VALUES (?, ?, ?, ?)`, "id",
-			wsID, email, byUserID, log.now)
+		id, err := t.insert(`INSERT INTO workspace_invites (workspace_id, email, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, "id",
+			wsID, email, byUserID, log.now, log.now+InviteTTL.Milliseconds())
 		if err != nil {
 			return err
 		}
@@ -137,15 +136,9 @@ func (s *Store) CreateEmailInvite(ctx context.Context, wsID string, byUserID int
 }
 
 // CreateLinkInvite creates an invite link token (returned once; only its
-// hash is stored) that anyone signed in may use until it expires (ttl;
-// InviteLinkTTL when 0) or is revoked.
-func (s *Store) CreateLinkInvite(ctx context.Context, wsID string, byUserID int64, ttl time.Duration) (*Invite, string, []Event, error) {
-	if ttl == 0 {
-		ttl = InviteLinkTTL
-	}
-	if ttl < time.Minute || ttl > InviteLinkMaxTTL {
-		return nil, "", nil, fmt.Errorf("%w: invite links expire after 1 minute to %d days", ErrInvalid, int(InviteLinkMaxTTL.Hours()/24))
-	}
+// hash is stored) that anyone signed in may use until it expires
+// (InviteTTL) or is revoked.
+func (s *Store) CreateLinkInvite(ctx context.Context, wsID string, byUserID int64) (*Invite, string, []Event, error) {
 	token := randomToken(InviteTokenPrefix, 24)
 	var inv *Invite
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
@@ -153,7 +146,7 @@ func (s *Store) CreateLinkInvite(ctx context.Context, wsID string, byUserID int6
 			return err
 		}
 		id, err := t.insert(`INSERT INTO workspace_invites (workspace_id, token_hash, created_by, created_at, expires_at) VALUES (?, ?, ?, ?, ?)`, "id",
-			wsID, HashToken(token), byUserID, log.now, log.now+ttl.Milliseconds())
+			wsID, HashToken(token), byUserID, log.now, log.now+InviteTTL.Milliseconds())
 		if err != nil {
 			return err
 		}
@@ -272,7 +265,8 @@ func acceptInvite(t *tx, log *eventLog, wsID string, userID int64, token string)
 	if len(emails) > 0 {
 		marks := strings.TrimSuffix(strings.Repeat("?, ", len(emails)), ", ")
 		inv, err := scanInvite(t.QueryRow(`SELECT `+inviteCols+` FROM workspace_invites WHERE workspace_id = ? AND email IN (`+marks+`)
-			AND used_at IS NULL AND revoked_at IS NULL ORDER BY id LIMIT 1`, append([]any{wsID}, emails...)...))
+			AND used_at IS NULL AND revoked_at IS NULL AND (expires_at IS NULL OR expires_at > ?) ORDER BY id LIMIT 1`,
+			append(append([]any{wsID}, emails...), log.now)...))
 		if err == nil {
 			if _, err := t.Exec(`UPDATE workspace_invites SET used_at = ?, uses = uses + 1 WHERE id = ?`, log.now, inv.ID); err != nil {
 				return err

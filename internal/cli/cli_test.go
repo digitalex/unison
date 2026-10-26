@@ -219,21 +219,23 @@ func TestEndToEnd(t *testing.T) {
 	}
 
 	// Repositories: a workspace can have several.
-	if out := e.ok(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web", "--label", "frontend"); !strings.Contains(out, "(frontend)") {
+	if out := e.ok(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web"); !strings.Contains(out, "2   https://github.com/digitalex/unison-web") {
 		t.Errorf("repo add = %q", out)
 	}
 	if _, errOut, code := e.run(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web"); code == 0 || !strings.Contains(errOut, "already connected") {
 		t.Errorf("duplicate repo: exit %d, stderr %q", code, errOut)
 	}
-	e.ok(agent, "workspace", "repo", "edit", "1", "--label", "backend")
+	if _, errOut, code := e.run(agent, "workspace", "repo", "add", "https://github.com/digitalex/x", "--label", "x"); code == 0 || !strings.Contains(errOut, "flag provided but not defined") {
+		t.Errorf("--label is gone: exit %d, stderr %q", code, errOut)
+	}
 	out = e.ok(agent, "workspace", "repos")
-	if !strings.Contains(out, "1   https://github.com/digitalex/unison  (backend)") || !strings.Contains(out, "2   https://github.com/digitalex/unison-web  (frontend)") {
+	if !strings.Contains(out, "1   https://github.com/digitalex/unison\n") || !strings.Contains(out, "2   https://github.com/digitalex/unison-web\n") {
 		t.Errorf("repos = %q", out)
 	}
-	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Repos      1   https://github.com/digitalex/unison  (backend)") || !strings.Contains(out, "unison-web") {
+	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Repos      1   https://github.com/digitalex/unison\n") || !strings.Contains(out, "unison-web") {
 		t.Errorf("workspace show = %q", out)
 	}
-	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository (backend) | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository (frontend) | https://github.com/digitalex/unison-web |") {
+	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison-web |") {
 		t.Errorf("agent help lacks the repositories:\n%s", out)
 	}
 	e.ok(human, "workspace", "repo", "remove", "1")
@@ -243,8 +245,8 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("after removing the first repo: %+v", after)
 	}
 	var multi store.Workspace
-	json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Multi", "--repo", "https://github.com/acme/api=backend", "--repo", "https://github.com/acme/web", "--json")), &multi)
-	if len(multi.Repos) != 2 || multi.Repos[0].Label != "backend" || multi.Repos[1].Label != "" || multi.RepoURL != "https://github.com/acme/api" {
+	json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Multi", "--repo", "https://github.com/acme/api", "--repo", "https://github.com/acme/web", "--json")), &multi)
+	if len(multi.Repos) != 2 || multi.Repos[1].URL != "https://github.com/acme/web" || multi.RepoURL != "https://github.com/acme/api" {
 		t.Errorf("create with two repos = %+v", multi)
 	}
 

@@ -1,28 +1,20 @@
 import { useState } from "react";
 import { Link2, Mail, X } from "lucide-react";
 import Button from "../ui/Button.jsx";
-import { Input, Select } from "../ui/Input.jsx";
+import { Input } from "../ui/Input.jsx";
 import { ago } from "./format.js";
 import { UrlBox } from "./Webhooks.jsx";
 
-const EXPIRY = [
-  { value: "1d", label: "1 day" },
-  { value: "7d", label: "7 days" },
-  { value: "30d", label: "30 days" },
-  { value: "90d", label: "90 days" },
-];
-
-function day(ms) {
-  return new Date(ms).toLocaleDateString(undefined, { dateStyle: "medium" });
+function when(ms) {
+  return new Date(ms).toLocaleString(undefined, { dateStyle: "medium", timeStyle: "short" });
 }
 
 // Settings → Invites: invite people (agents use passes) by email (whoever
 // signs in with that verified email may join, once) or by link (anyone
-// signed in with it may join until it expires or is revoked). Every member
-// may invite and revoke.
+// signed in with it may join). Every invite works for 48 hours, unless
+// revoked. Every member may invite and revoke.
 export default function Invites({ invites, account, call, onError }) {
   const [email, setEmail] = useState("");
-  const [expires, setExpires] = useState("7d");
   const [created, setCreated] = useState(null); // {url, invite}
   const run = (method, suffix, body) =>
     call(method, suffix, body).catch((e) => {
@@ -37,7 +29,7 @@ export default function Invites({ invites, account, call, onError }) {
   };
   const createLink = async (e) => {
     e.preventDefault();
-    const r = await run("POST", "/invites", { link: true, expires_in: expires });
+    const r = await run("POST", "/invites", { link: true });
     if (r) setCreated(r);
   };
   const revoke = async (inv) => {
@@ -56,14 +48,7 @@ export default function Invites({ invites, account, call, onError }) {
         </Button>
       </form>
       <form className="webhook-form-row" onSubmit={createLink}>
-        <span className="invite-expiry-label">Link expires in</span>
-        <Select aria-label="Link expires in" value={expires} onChange={(e) => setExpires(e.target.value)}>
-          {EXPIRY.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
+        <span className="invite-link-label">Or share a link anyone signed in can use</span>
         <Button type="submit">
           <Link2 aria-hidden="true" />
           Create link
@@ -71,7 +56,7 @@ export default function Invites({ invites, account, call, onError }) {
       </form>
       {created && (
         <div className="webhook-created">
-          <p className="field-description">Invite link: shown only now, so copy it. Anyone signed in with it can join until {day(created.invite.expires_at)}.</p>
+          <p className="field-description">Invite link: shown only now, so copy it. Anyone signed in with it can join for the next 48 hours.</p>
           <UrlBox url={created.url} label="Invite link" />
           <Button type="button" variant="ghost" onClick={() => setCreated(null)}>
             Done
@@ -89,7 +74,7 @@ export default function Invites({ invites, account, call, onError }) {
                 <div className="agent-name">{inv.kind === "email" ? inv.email : "Invite link"}</div>
                 <div className="muted agent-meta">
                   By {inv.created_by_name || `user ${inv.created_by}`} {ago(inv.created_at)}
-                  {inv.expires_at ? ` · expires ${day(inv.expires_at)}` : ""}
+                  {inv.expires_at ? ` · expires ${when(inv.expires_at)}` : ""}
                   {inv.kind === "link" ? ` · used ${inv.uses} ${inv.uses === 1 ? "time" : "times"}` : ""}
                 </div>
               </div>

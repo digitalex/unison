@@ -10,26 +10,24 @@ import (
 
 // Repo is a code repository connected to a workspace. A workspace can have
 // several (e.g. backend and frontend); the first (lowest Position) is also
-// exposed as the workspace's legacy repo_url.
+// exposed as the workspace's legacy repo_url. Repositories are known by the
+// name in their URL. (The label column from before #36 is left unused.)
 type Repo struct {
 	ID          int64  `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	URL         string `json:"url"`
-	Label       string `json:"label"`
 	Position    int64  `json:"position"`
 	CreatedAt   int64  `json:"created_at"`
 }
 
 // RepoInput holds the fields for adding a repository.
 type RepoInput struct {
-	URL   string `json:"url"`
-	Label string `json:"label"`
+	URL string `json:"url"`
 }
 
 // RepoPatch holds optional repository field updates.
 type RepoPatch struct {
-	URL   *string `json:"url"`
-	Label *string `json:"label"`
+	URL *string `json:"url"`
 }
 
 // migrateRepoURLs copies a workspace's legacy repo_url into workspace_repos
@@ -37,18 +35,18 @@ type RepoPatch struct {
 // idempotent: once a workspace has any repo row it is skipped, and repo_url is
 // kept in sync with the first repo (syncRepoURL), so removing every repo also
 // clears repo_url and nothing is resurrected on the next boot.
-const migrateRepoURLs = `INSERT INTO workspace_repos (workspace_id, url, label, position, created_at)
-SELECT w.id, w.repo_url, '', 1, w.created_at FROM workspaces w
+const migrateRepoURLs = `INSERT INTO workspace_repos (workspace_id, url, position, created_at)
+SELECT w.id, w.repo_url, 1, w.created_at FROM workspaces w
 WHERE w.repo_url <> '' AND NOT EXISTS (SELECT 1 FROM workspace_repos r WHERE r.workspace_id = w.id)`
 
-const repoCols = `id, workspace_id, url, label, position, created_at`
+const repoCols = `id, workspace_id, url, position, created_at`
 
 func scanRepos(rows *sql.Rows) ([]Repo, error) {
 	defer rows.Close()
 	out := []Repo{}
 	for rows.Next() {
 		var r Repo
-		if err := rows.Scan(&r.ID, &r.WorkspaceID, &r.URL, &r.Label, &r.Position, &r.CreatedAt); err != nil {
+		if err := rows.Scan(&r.ID, &r.WorkspaceID, &r.URL, &r.Position, &r.CreatedAt); err != nil {
 			return nil, err
 		}
 		out = append(out, r)
@@ -87,12 +85,12 @@ func insertRepo(t *tx, wsID string, in RepoInput, now int64) (*Repo, error) {
 	if err != nil {
 		return nil, err
 	}
-	r := &Repo{WorkspaceID: wsID, URL: u, Label: strings.TrimSpace(in.Label), CreatedAt: now}
+	r := &Repo{WorkspaceID: wsID, URL: u, CreatedAt: now}
 	if err := t.QueryRow(`SELECT COALESCE(MAX(position), 0) + 1 FROM workspace_repos WHERE workspace_id = ?`, wsID).Scan(&r.Position); err != nil {
 		return nil, err
 	}
-	if r.ID, err = t.insert(`INSERT INTO workspace_repos (workspace_id, url, label, position, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
-		r.WorkspaceID, r.URL, r.Label, r.Position, r.CreatedAt); err != nil {
+	if r.ID, err = t.insert(`INSERT INTO workspace_repos (workspace_id, url, position, created_at) VALUES (?, ?, ?, ?)`, "id",
+		r.WorkspaceID, r.URL, r.Position, r.CreatedAt); err != nil {
 		return nil, repoConflict(err, u)
 	}
 	return r, syncRepoURL(t, wsID)
@@ -121,10 +119,7 @@ func updateRepo(t *tx, r *Repo, p RepoPatch) error {
 		}
 		r.URL = u
 	}
-	if p.Label != nil {
-		r.Label = strings.TrimSpace(*p.Label)
-	}
-	if _, err := t.Exec(`UPDATE workspace_repos SET url = ?, label = ? WHERE id = ?`, r.URL, r.Label, r.ID); err != nil {
+	if _, err := t.Exec(`UPDATE workspace_repos SET url = ? WHERE id = ?`, r.URL, r.ID); err != nil {
 		return repoConflict(err, r.URL)
 	}
 	return syncRepoURL(t, r.WorkspaceID)
@@ -184,7 +179,7 @@ func (s *Store) AddRepo(ctx context.Context, actor *Participant, in RepoInput) (
 	return r, evs, nil
 }
 
-// EditRepo changes a repository's URL and/or label and records repo.updated.
+// EditRepo changes a repository's URL and records repo.updated.
 func (s *Store) EditRepo(ctx context.Context, actor *Participant, id int64, p RepoPatch) (*Repo, []Event, error) {
 	var r *Repo
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
