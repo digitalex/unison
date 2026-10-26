@@ -6,6 +6,7 @@ import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
+import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { agentStatus } from "./agents.js";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
@@ -68,6 +69,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
+  const notify = useNotifier(me, participants);
 
   const loaders = {
     workspace: () => call("GET").then(setWorkspace),
@@ -108,7 +110,9 @@ export default function Workspace({ id, view, navigate, account }) {
     src.onopen = () => setLive(true);
     src.onerror = () => setLive(false);
     src.onmessage = (msg) => {
-      collectionFor(JSON.parse(msg.data)).forEach(reload);
+      const event = JSON.parse(msg.data);
+      notify(event);
+      collectionFor(event).forEach(reload);
     };
     const roster = setInterval(() => reload("participants"), 30000);
     return () => {
@@ -410,9 +414,37 @@ function TabBar({ view, counts, screens }) {
 
 function ThemeRow() {
   return (
+    <>
+      <div className="account-theme">
+        <span className="muted">Theme</span>
+        <ThemeSwitch />
+      </div>
+      {notifySupported && <NotifyRow />}
+    </>
+  );
+}
+
+// NotifyRow turns desktop notifications on or off (see notify.js).
+function NotifyRow() {
+  const [on, turnOn, turnOff] = useNotifyPref();
+  const blocked = Notification.permission === "denied";
+  return (
     <div className="account-theme">
-      <span className="muted">Theme</span>
-      <ThemeSwitch />
+      <span className="muted">Desktop notifications</span>
+      {blocked ? (
+        <span className="muted" title="Allow notifications for this site in your browser's settings">
+          Blocked
+        </span>
+      ) : (
+        <div className="seg" role="group" aria-label="Desktop notifications">
+          <button type="button" aria-pressed={on} onClick={turnOn}>
+            On
+          </button>
+          <button type="button" aria-pressed={!on} onClick={turnOff}>
+            Off
+          </button>
+        </div>
+      )}
     </div>
   );
 }
