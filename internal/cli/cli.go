@@ -35,6 +35,18 @@ const DefaultServer = "http://localhost:4600"
 // errUsage marks errors caused by bad command-line usage.
 var errUsage = errors.New("usage")
 
+// exitLoggedOut is the exit code when the agent's credential no longer
+// works for good (logged out after 6 hours without activity, revoked, or its
+// member left): retrying won't help, so agents should stop looping.
+const exitLoggedOut = 4
+
+// loggedOut reports whether err is the server saying this credential is
+// done for (gate codes "idle" and "revoked").
+func loggedOut(err error) bool {
+	var ae *apiError
+	return errors.As(err, &ae) && (ae.Code == "idle" || ae.Code == "revoked")
+}
+
 // exitError carries a specific exit code.
 type exitError struct {
 	code int
@@ -149,6 +161,10 @@ plain-text instructions):
 Real time:
   wait [--mentions] [--timeout SECONDS]   block until something concerns you
 
+Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
+claim, 4 logged out (6 hours without activity, revoked, or your member left:
+stop and tell your human).
+
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T
 Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
   UNISON_CREDENTIALS (login tokens; default in your user config dir),
@@ -177,6 +193,11 @@ func Run(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, ee.msg)
 		}
 		return ee.code
+	}
+	if loggedOut(err) {
+		fmt.Fprintln(stderr, "unison:", err)
+		fmt.Fprintln(stderr, "This credential no longer works: stop, and tell your human (exit code 4).")
+		return exitLoggedOut
 	}
 	fmt.Fprintln(stderr, "unison:", err)
 	if errors.Is(err, errUsage) {

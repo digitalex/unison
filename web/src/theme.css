@@ -3291,6 +3291,15 @@ html.reordering * {
   font-size: var(--size-xs);
 }
 
+.agent-row .agent-status {
+  margin-left: auto;
+}
+
+.agent-row.agent-out .avatar,
+.agent-row.agent-out .agent-name {
+  opacity: 0.55;
+}
+
 .invite-list {
   margin-top: var(--space-xs);
 }

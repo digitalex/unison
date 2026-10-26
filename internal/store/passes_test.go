@@ -112,20 +112,24 @@ func TestAgentCredential(t *testing.T) {
 	pass, _, _ := s.MintPass(ctx, ws.ID, alex.ID)
 	agent, token, _, _ := s.JoinWithPass(ctx, ws.ID, pass, "Quill", "🪶")
 
-	// Each use (Touch) slides the expiry: 80 + 80 days of steady use is fine.
-	for i := 0; i < 2; i++ {
-		*now = now.Add(80 * 24 * time.Hour)
-		if _, err := s.Authenticate(ctx, token); err != nil {
-			t.Fatalf("after %d×80 days of use: %v", i+1, err)
+	// Each use (Touch, MarkActive) slides the expiry: 160 days of steady use
+	// (every 4 hours, within AgentIdleTimeout) is fine.
+	for step := 0; step < 160*6; step++ {
+		*now = now.Add(4 * time.Hour)
+		a, err := s.Authenticate(ctx, token)
+		if err != nil {
+			t.Fatalf("after %v of use: %v", time.Duration(step+1)*4*time.Hour, err)
 		}
 		s.Touch(ctx, agent.ID)
+		s.MarkActive(ctx, a)
 	}
 	if a, _ := s.Authenticate(ctx, token); a.TokenExpiresAt != now.UnixMilli()+AgentCredentialTTL.Milliseconds() {
 		t.Errorf("expiry did not slide: %d", a.TokenExpiresAt)
 	}
-	// 90 days idle: revoked, with a message to ask for a new invite.
+	// Long idle: logged out (AgentIdleTimeout comes long before the 90-day
+	// lapse), with a message to ask for a new pass.
 	*now = now.Add(AgentCredentialTTL + time.Second)
-	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "new invite") {
+	if _, err := s.Authenticate(ctx, token); !errors.Is(err, ErrRevoked) || !errors.Is(err, ErrIdle) || !strings.Contains(err.Error(), "new pass") {
 		t.Errorf("idle agent err = %v", err)
 	}
 	// Legacy participants never expire (until #17 decides otherwise).

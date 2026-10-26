@@ -223,11 +223,11 @@ function Agents({ agents, run, navigate }) {
                   </span>
                 </div>
                 <div className="muted prow-meta">
-                  Seen {ago(a.last_seen_at)} · {a.revoked_at ? `revoked ${day(a.revoked_at)}` : `credential expires ${day(a.token_expires_at)}`}
+                  Seen {ago(a.last_seen_at)} · {a.revoked_at ? `${a.revoke_reason === "idle" ? "logged out (inactive)" : "revoked"} ${day(a.revoked_at)}` : `credential expires ${day(a.token_expires_at)}`}
                 </div>
               </div>
               {a.revoked_at ? (
-                <span className="chip">revoked</span>
+                <span className="chip">{a.revoke_reason === "idle" ? "logged out" : "revoked"}</span>
               ) : (
                 <Button
                   variant="ghost"

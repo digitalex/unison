@@ -7,6 +7,7 @@ import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import Inbox from "./Inbox.jsx";
 import { SHOW_MESSAGE, spaLink } from "./nav.js";
+import { agentStatus } from "./agents.js";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -499,7 +500,8 @@ function Roster({ participants, me, call, onError }) {
     <div className="avatars" role="list" aria-label="Who's here">
       {groups.map((g, i) => {
         const p = g.primary;
-        const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS);
+        // Logged-out (or revoked) agents are never shown as active.
+        const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(q, now));
         const mine = me && g.all.some((q) => q.id === me.id);
         const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
