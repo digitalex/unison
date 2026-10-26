@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Ellipsis, ListChecks, Reply, X } from "lucide-react";
+import { Check, CircleAlert, Ellipsis, ListChecks, Reply, Undo2, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -12,7 +12,8 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 // error bar. updateMessages updates the shown messages in place (for
 // optimistic reactions). Messages after newAfter are new to you: those that
 // mention you are highlighted. mention (a name) starts the message with
-// "@Name "; onMentioned says it was used.
+// "@Name "; onMentioned says it was used. A message can ask the people it
+// @mentions to act (action_required): it stands out for them, with Done.
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
 // focusing) a message shows its actions: reply, and the reactions.
@@ -33,6 +34,7 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
   const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
   const [replyItem, setReplyItem] = useState(null); // The item of the message replied to.
   const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
+  const [needsAction, setNeedsAction] = useState(false); // Ask the people the message mentions to act.
   const composer = useRef(null);
   const mentionedItem = itemMentioned(text, items) || replyItem;
   const flashed = useShowMessage(shown, messages);
@@ -63,13 +65,23 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
     }
   }
   const roots = messages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
+  // You, on any of your account's devices: actions are per account.
+  const mine = new Set(participants.filter((p) => p.id === me?.id || (me?.user_id && p.user_id === me.user_id)).map((p) => p.id));
+  if (me) mine.add(me.id);
+  const canAsk = /@\S/.test(text);
 
   const send = async (e) => {
     e.preventDefault();
     if (!text.trim()) return;
     try {
-      await call("POST", "/messages", { body: text, parent_id: replyTo?.id, item_id: linked && mentionedItem ? mentionedItem.id : undefined });
+      await call("POST", "/messages", {
+        body: text,
+        parent_id: replyTo?.id,
+        item_id: linked && mentionedItem ? mentionedItem.id : undefined,
+        action_required: needsAction && canAsk ? true : undefined,
+      });
       setText("");
+      setNeedsAction(false);
       cancelReply();
     } catch (err) {
       onError(err.message);
@@ -109,8 +121,22 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
       onError(err.message);
     }
   };
+  // setDone marks a message that asks you to act done (or not), at once;
+  // a failed call puts it back.
+  const setDone = async (m, done) => {
+    const show = (on) => updateMessages((list) => list.map((x) => (x.id === m.id ? { ...x, done_by: withDone(x, mine, on) } : x)));
+    show(done);
+    try {
+      await call(done ? "POST" : "DELETE", `/messages/${m.id}/done`);
+    } catch (err) {
+      show(!done);
+      onError(err.message);
+    }
+  };
   const messageProps = (m, root) => ({
     message: m,
+    mine,
+    onDone: (done) => setDone(m, done),
     isNew: m.id > newAfter,
     participants,
     me,
@@ -175,6 +201,21 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
           ) : (
             <span className="hint">Enter to send · Shift+Enter for a new line</span>
           )}
+          {canAsk && (
+            <button
+              type="button"
+              className={needsAction ? "chip needs-action-toggle on" : "chip needs-action-toggle"}
+              aria-pressed={needsAction}
+              title="Ask the people you @mention to act: it stands out for them until they're done"
+              onClick={() => {
+                setNeedsAction(!needsAction);
+                composer.current?.focus();
+              }}
+            >
+              <CircleAlert aria-hidden="true" />
+              Needs action
+            </button>
+          )}
           <Button variant="primary" type="submit">
             Send
           </Button>
@@ -216,8 +257,10 @@ function useShowMessage(shown, messages) {
   return flashed;
 }
 
-function Message({ message, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
+function Message({ message, mine, onDone, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
   const author = participants.find((p) => p.id === message.author_id);
+  const asksMe = (message.action_for || []).some((id) => mine.has(id));
+  const needsMe = asksMe && (message.action_for || []).some((id) => mine.has(id) && !(message.done_by || []).includes(id));
   const mentioned = isNew && me && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
   const created = new Date(message.created_at);
   const isReply = Boolean(message.parent_id);
@@ -225,7 +268,7 @@ function Message({ message, isNew, participants, me, flashed, onReply, onReact, 
     <div
       id={`msg-${message.id}`}
       tabIndex={-1}
-      className={["msg", mentioned && "mention", flashed === message.id && "msg-flash", actionsOpen && "msg-actions-open"].filter(Boolean).join(" ")}
+      className={["msg", needsMe ? "needs-me" : !asksMe && mentioned && "mention", flashed === message.id && "msg-flash", actionsOpen && "msg-actions-open"].filter(Boolean).join(" ")}
     >
       {!isReply && (
         <span className="avatar" aria-hidden="true">
@@ -246,6 +289,7 @@ function Message({ message, isNew, participants, me, flashed, onReply, onReact, 
             <ListChecks aria-hidden="true" />#{message.item.id} <span className="msg-item-title">{message.item.title}</span>
           </a>
         )}
+        {message.action_required && <ActionLine message={message} participants={participants} asksMe={asksMe} needsMe={needsMe} onDone={onDone} />}
         <Reactions reactions={message.reactions || []} participants={participants} me={me} onReact={onReact} />
         {children}
       </div>
@@ -269,6 +313,46 @@ function Message({ message, isNew, participants, me, flashed, onReply, onReact, 
       </button>
     </div>
   );
+}
+
+// ActionLine says whom a message asks to act (a check for those done) and,
+// when it asks you, lets you mark it done or undo that.
+function ActionLine({ message, participants, asksMe, needsMe, onDone }) {
+  const nameOf = (id) => participants.find((p) => p.id === id)?.name || `participant ${id}`;
+  const done = message.done_by || [];
+  return (
+    <div className="action-line">
+      <span className={needsMe ? "chip action-chip needs" : "chip action-chip"}>
+        <CircleAlert aria-hidden="true" />
+        {needsMe ? "Needs you" : "Needs"}
+        {message.action_for.map((id) => (
+          <span key={id} className={done.includes(id) ? "action-who done" : "action-who"}>
+            @{nameOf(id)}
+            {done.includes(id) && <Check aria-label="done" />}
+          </span>
+        ))}
+      </span>
+      {asksMe &&
+        (needsMe ? (
+          <Button variant="primary" className="action-done" onClick={() => onDone(true)}>
+            <Check aria-hidden="true" />
+            Done
+          </Button>
+        ) : (
+          <Button variant="ghost" className="action-done" title="Mark it not done" onClick={() => onDone(false)}>
+            <Undo2 aria-hidden="true" />
+            Undo
+          </Button>
+        ))}
+    </div>
+  );
+}
+
+// withDone returns message m's done_by with your participants (mine) that
+// it asks to act marked done (on) or not.
+function withDone(m, mine, on) {
+  const done = (m.done_by || []).filter((id) => !mine.has(id));
+  return on ? [...done, ...(m.action_for || []).filter((id) => mine.has(id))] : done;
 }
 
 // withReaction returns reactions with participant id's reaction emoji on or

@@ -1,4 +1,4 @@
-// ScreenHead is the header of a workspace screen (inbox, backlog, chat): its
+// ScreenHead is the header of a workspace screen (backlog, chat): its
 // title, an optional note beside it, then the screen's actions (children).
 // On phones it becomes a large, flat title.
 export default function ScreenHead({ title, note, children }) {

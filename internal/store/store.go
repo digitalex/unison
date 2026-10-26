@@ -106,6 +106,22 @@ type Message struct {
 	Item   *MessageItem `json:"item,omitempty"`
 	// Reactions are the emoji on the message, in ReactionEmoji order.
 	Reactions []Reaction `json:"reactions,omitempty"`
+	// ActionRequired marks a message that asks the participants it
+	// @mentions to act (#49): ActionFor are they, DoneBy those of them
+	// whose account has marked it done (see SetDone).
+	ActionRequired bool    `json:"action_required,omitempty"`
+	ActionFor      []int64 `json:"action_for,omitempty"`
+	DoneBy         []int64 `json:"done_by,omitempty"`
+}
+
+// NewMessage is a chat message to post: a reply in ParentID's thread,
+// about backlog item ItemID, asking the participants it @mentions to act
+// (ActionRequired); all optional but the body.
+type NewMessage struct {
+	Body           string
+	ParentID       *int64
+	ItemID         *int64
+	ActionRequired bool
 }
 
 // MessageItem is the backlog item a message is about, in brief.
@@ -642,10 +658,18 @@ func scanMessages(rows *sql.Rows, err error) ([]Message, error) {
 }
 
 // PostMessage posts a chat message, optionally as a reply to parentID and
-// about backlog item itemID (which must be in the author's workspace).
-// Replies inherit no item: each message says what it is about.
+// about backlog item itemID: Post without asking anyone to act.
 func (s *Store) PostMessage(ctx context.Context, author *Participant, body string, parentID, itemID *int64) (*Message, []Event, error) {
-	body = strings.TrimSpace(body)
+	return s.Post(ctx, author, NewMessage{Body: body, ParentID: parentID, ItemID: itemID})
+}
+
+// Post posts a chat message, optionally as a reply in a thread, about a
+// backlog item (which must be in the author's workspace), or asking the
+// participants it @mentions to act. Replies inherit no item: each message
+// says what it is about. A reply marks its thread's root done for the
+// author's account, if the root asked them to act.
+func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (*Message, []Event, error) {
+	body, parentID, itemID := strings.TrimSpace(msg.Body), msg.ParentID, msg.ItemID
 	if body == "" {
 		return nil, nil, fmt.Errorf("%w: message body is required", ErrInvalid)
 	}
@@ -677,6 +701,16 @@ func (s *Store) PostMessage(ctx context.Context, author *Participant, body strin
 			return err
 		}
 		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: itemID, Item: about}
+		if msg.ActionRequired {
+			if err := addActions(t, m); err != nil {
+				return err
+			}
+		}
+		if parentID != nil {
+			if err := markDoneIfAsked(t, author, *parentID, log.now); err != nil {
+				return err
+			}
+		}
 		return log.add(author.WorkspaceID, "message.created", author.ID, m)
 	})
 	if err != nil {
@@ -690,18 +724,18 @@ func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Mes
 	if limit <= 0 || limit > 1000 {
 		limit = 200
 	}
-	return s.withReactions(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
+	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
 }
 
-// withReactions returns a function that fills in the reactions of the
-// messages it is given (passing errors through).
-func (s *Store) withReactions(ctx context.Context, wsID string) func([]Message, error) ([]Message, error) {
+// withDetails returns a function that fills in the reactions and actions
+// of the messages it is given (passing errors through).
+func (s *Store) withDetails(ctx context.Context, wsID string) func([]Message, error) ([]Message, error) {
 	return func(msgs []Message, err error) ([]Message, error) {
 		if err != nil {
 			return nil, err
 		}
 		query := func(q string, args ...any) (*sql.Rows, error) { return s.db.QueryContext(ctx, q, args...) }
-		return msgs, attachReactions(query, wsID, msgs)
+		return msgs, attachDetails(query, wsID, msgs)
 	}
 }
 
@@ -715,7 +749,7 @@ func (s *Store) ItemMessages(ctx context.Context, wsID string, itemID int64) ([]
 	if n == 0 {
 		return nil, ErrNotFound
 	}
-	return s.withReactions(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID)))
+	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID)))
 }
 
 // ---- Events ----

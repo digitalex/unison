@@ -43,6 +43,8 @@ func (s *Server) joinAsUser(w http.ResponseWriter, r *http.Request, u *store.Use
 type meView struct {
 	*store.Participant
 	User *meUser `json:"user,omitempty"`
+	// OpenActions counts the messages that ask you to act (GET …/actions).
+	OpenActions int `json:"open_actions"`
 }
 
 type meUser struct {
@@ -52,6 +54,11 @@ type meUser struct {
 
 func (s *Server) respondMe(w http.ResponseWriter, r *http.Request, p *store.Participant) {
 	view := meView{Participant: p}
+	var err error
+	if view.OpenActions, err = s.store.CountOpenActions(r.Context(), p); err != nil {
+		storeError(w, err)
+		return
+	}
 	if p.UserID != 0 {
 		u, err := s.store.GetUser(r.Context(), p.UserID)
 		if err != nil {
