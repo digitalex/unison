@@ -5,6 +5,7 @@ import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
+import Inbox from "./Inbox.jsx";
 import { SHOW_MESSAGE, spaLink } from "./nav.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -25,6 +26,8 @@ function collectionFor({ type, data }) {
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
+  // Inbox events say only whose inbox changed; refetching gets ours.
+  if (type.startsWith("inbox.")) return ["inbox"];
   // Members list each member's participants (names, emoji, links).
   if (type.startsWith("participant.")) return ["participants", "members"];
   if (type.startsWith("member.")) return ["members"];
@@ -58,6 +61,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [webhooks, setWebhooks] = useState([]);
   const [members, setMembers] = useState({ members: [], unlinked: [] });
   const [invites, setInvites] = useState([]);
+  const [inbox, setInbox] = useState([]);
   const [live, setLive] = useState(false);
   const [chatOpen, setChatOpen] = useSectionOpen("chat", true);
   const shownMessage = useShownMessage(setChatOpen);
@@ -73,6 +77,8 @@ export default function Workspace({ id, view, navigate, account }) {
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
+    // Members have an inbox; anyone else (403) just has nothing in it.
+    inbox: () => call("GET", "/inbox").then(setInbox, () => setInbox([])),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
     me: () => call("GET", "/me").then(setMe, (e) => (e instanceof ApiError && e.code === "join_first" ? setMe(null) : Promise.reject(e))),
   };
@@ -160,7 +166,10 @@ export default function Workspace({ id, view, navigate, account }) {
               </p>
             )}
             {joined ? (
-              <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
+              <>
+                <Inbox entries={inbox} participants={participants} call={call} onError={setError} />
+                <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} />
+              </>
             ) : (
               <JoinCard workspaceId={id} account={account} onJoined={onJoined} />
             )}
