@@ -35,6 +35,11 @@ func TestChatReact(t *testing.T) {
 	if out := e.ok(agent, "chat", "react", id, "thumbsup"); !strings.Contains(out, "Took back 👍 on message #"+id+".  · 👍 1 ❤️ 1") {
 		t.Errorf("toggle off = %q", out)
 	}
+	// Taking back the last reactions leaves no summary (not a stale one).
+	e.ok(human, "chat", "react", id, "heart")
+	if out := e.ok(human, "chat", "react", id, "+1"); out != "Took back 👍 on message #"+id+".\n" {
+		t.Errorf("last toggle off = %q", out)
+	}
 	if _, errOut, code := e.run(agent, "chat", "react", id, "🎉"); code == 0 || !strings.Contains(errOut, "reactions are") {
 		t.Errorf("🎉: exit %d %q", code, errOut)
 	}

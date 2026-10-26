@@ -957,14 +957,17 @@ func (a *app) chatReact(args []string) error {
 			method = "DELETE"
 		}
 	}
-	if ok, err := a.call(method, fmt.Sprintf("/messages/%d/reactions/%s", id, url.PathEscape(emoji)), nil, &m, true); !ok {
+	// A fresh value: reactions are omitted when none are left, and decoding
+	// into m would keep the stale ones.
+	var updated store.Message
+	if ok, err := a.call(method, fmt.Sprintf("/messages/%d/reactions/%s", id, url.PathEscape(emoji)), nil, &updated, true); !ok {
 		return err
 	}
 	verb := "Reacted " + emoji + " to"
 	if method == "DELETE" {
 		verb = "Took back " + emoji + " on"
 	}
-	a.printf("%s message #%d.%s\n", verb, id, reactionSummary(m))
+	a.printf("%s message #%d.%s\n", verb, id, reactionSummary(updated))
 	return nil
 }
 
