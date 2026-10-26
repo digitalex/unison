@@ -43,7 +43,7 @@ func TestPrivateWorkspaceFlow(t *testing.T) {
 		t.Errorf("second join --account = %q, want the same participant", out)
 	}
 
-	link := regexp.MustCompile(`(?m)^(http\S+/join#invite=ui_\S+)$`).FindStringSubmatch(e.ok(alexDir, "invite", "link", "--expires", "2d"))
+	link := regexp.MustCompile(`(?m)^(http\S+/join#invite=ui_\S+)$`).FindStringSubmatch(e.ok(alexDir, "invite", "link"))
 	if link == nil {
 		t.Fatal("invite link printed no URL")
 	}

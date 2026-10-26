@@ -142,19 +142,17 @@ func (a *app) invites(cmd string, args []string) error {
 		if ok, err := a.wsUserCall("POST", "/invites", map[string]string{"email": args[0]}, &resp); !ok {
 			return err
 		}
-		a.printf("Invited %s (invite %d): they can join once they sign in with that verified email.\n", resp.Invite.Email, resp.Invite.ID)
+		a.printf("Invited %s (invite %d): they can join within 48 hours by signing in with that verified email.\n", resp.Invite.Email, resp.Invite.ID)
 		return nil
 	case "link":
-		fs := flag.NewFlagSet("invite link", flag.ContinueOnError)
-		expires := fs.String("expires", "7d", "how long the link works, e.g. 7d, 12h")
-		if _, err := parseFlags(fs, args); err != nil {
-			return err
+		if len(args) > 0 {
+			return fmt.Errorf("%w: invite link takes no options (every invite works for 48 hours)", errUsage)
 		}
 		var resp struct {
 			Invite store.Invite `json:"invite"`
 			URL    string       `json:"url"`
 		}
-		if ok, err := a.wsUserCall("POST", "/invites", map[string]any{"link": true, "expires_in": *expires}, &resp); !ok {
+		if ok, err := a.wsUserCall("POST", "/invites", map[string]any{"link": true}, &resp); !ok {
 			return err
 		}
 		a.printf("Invite link (invite %d, works until %s; anyone signed in can use it, so share it carefully):\n%s\n",
@@ -175,7 +173,7 @@ func (a *app) invites(cmd string, args []string) error {
 		a.printf("Revoked invite %d.\n", id)
 		return nil
 	}
-	return fmt.Errorf("%w: invite email <address> | invite link [--expires 7d] | invites | invite revoke <id>", errUsage)
+	return fmt.Errorf("%w: invite email <address> | invite link | invites | invite revoke <id>", errUsage)
 }
 
 func (a *app) invitesList() error {
@@ -189,7 +187,10 @@ func (a *app) invitesList() error {
 	for _, i := range list {
 		what := i.Email
 		if i.Kind == store.InviteLink {
-			what = fmt.Sprintf("link, used %d time(s), expires %s", i.Uses, time.UnixMilli(i.ExpiresAt).Format("2006-01-02"))
+			what = fmt.Sprintf("link, used %d time(s)", i.Uses)
+		}
+		if i.ExpiresAt != 0 {
+			what += ", expires " + time.UnixMilli(i.ExpiresAt).Format("2006-01-02 15:04")
 		}
 		a.printf("%-4d %-5s %s (by %s, %s)\n", i.ID, i.Kind, what, firstNonEmpty(i.CreatorName, "a member"), ago(i.CreatedAt))
 	}

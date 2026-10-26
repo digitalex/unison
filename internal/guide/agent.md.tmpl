@@ -12,9 +12,9 @@ people in the workspace see what you do live.
 | Workspace | **{{.Workspace.Name}}** (`{{.Workspace.ID}}`) |
 | Web UI | {{.Origin}}/w/{{.Workspace.ID}} |
 {{- range .Workspace.Repos}}
-| Code repository{{if .Label}} ({{.Label}}){{end}} | {{.URL}} |
+| Code repository | {{.URL}} |
 {{- else}}
-| Code repository | (none set yet — `unison workspace repo add <url> [--label L]`) |
+| Code repository | (none set yet — `unison workspace repo add <url>`) |
 {{- end}}
 | Visual canvas (isocan) | {{if .Workspace.CanvasURL}}{{.Workspace.CanvasURL}}{{else}}(none set yet — `unison workspace set --canvas <url>`){{end}} |
 {{end}}
@@ -185,13 +185,13 @@ or `#3`.
 
 | CLI | HTTP API |
 | --- | --- |
-| `unison workspace create <name> [--repo URL[=label]]... [--canvas URL]` (humans) | `POST /api/workspaces` (account token; you become its first member) |
+| `unison workspace create <name> [--repo URL]... [--canvas URL]` (humans) | `POST /api/workspaces` (account token; you become its first member) |
 | `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
 | `unison workspace set [--name N] [--repo URL] [--canvas URL]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository) |
 | `unison workspace repos` | `GET /api/workspaces/{ws}/repos` |
-| `unison workspace repo add <url> [--label L]` | `POST /api/workspaces/{ws}/repos` |
-| `unison workspace repo edit <id> [--label L] [--url U]` | `PATCH /api/workspaces/{ws}/repos/{id}` |
+| `unison workspace repo add <url>` | `POST /api/workspaces/{ws}/repos` |
+| `unison workspace repo edit <id> --url U` | `PATCH /api/workspaces/{ws}/repos/{id}` |
 | `unison workspace repo remove <id>` | `DELETE /api/workspaces/{ws}/repos/{id}` |
 | `unison whoami` | `GET /api/workspaces/{ws}/me` (includes `user` when linked to an account; `sponsor` and `token_expires_at` for agents) |
 | `unison login` (humans) | `POST /api/auth/device`, then `POST /api/auth/device/token` until approved at `/auth/device` |
@@ -200,8 +200,8 @@ or `#3`.
 | `unison join <url> --pass <pass> [--name N] [--emoji E]` (agents) | `POST /api/workspaces/{ws}/join` with `{"pass", "name", "emoji"}`: a participant acting for the pass's sponsor |
 | `unison pass [--agent]` (members) | `POST /api/workspaces/{ws}/passes` (account token): `{pass, expires_at, invite_prompt}` |
 | `unison join <url> --account [--invite T]` (humans) | `POST /api/workspaces/{ws}/join` with the account token (and `{"invite"}` from an invite link): members, or holders of an invite, join; returns your existing participant if you have one |
-| `unison invite email <address>` (members) | `POST /api/workspaces/{ws}/invites` `{"email"}`: anyone signing in with that verified email may join, once |
-| `unison invite link [--expires 7d]` (members) | `POST /api/workspaces/{ws}/invites` `{"link": true, "expires_in"}`: returns `{token, url}` (multi-use until it expires) |
+| `unison invite email <address>` (members) | `POST /api/workspaces/{ws}/invites` `{"email"}`: anyone signing in with that verified email may join, once, within 48 hours |
+| `unison invite link` (members) | `POST /api/workspaces/{ws}/invites` `{"link": true}`: returns `{token, url}` (multi-use for 48 hours; every invite works for 48 hours) |
 | `unison invites` | `GET /api/workspaces/{ws}/invites` (open invites) |
 | `unison invite revoke <id>` (members) | `DELETE /api/workspaces/{ws}/invites/{id}` |
 | (invite link page) | `POST /api/invites/lookup` `{"token"}` (signed in): which workspace a link is for. Links look like `/w/{ws}/join#invite=ui_…`: the token is in the fragment (and request bodies), never in URLs the server sees |

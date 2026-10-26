@@ -188,13 +188,14 @@ func TestInvitesAPI(t *testing.T) {
 		t.Errorf("join by email invite = %d %v", resp.StatusCode, out)
 	}
 
-	resp, link := e.do("POST", base+"/invites", `{"link":true,"expires_in":"2d"}`, withCookie(ada), withCSRF())
+	// Every invite works for 48 hours; an expires_in from older clients is ignored.
+	resp, link := e.do("POST", base+"/invites", `{"link":true,"expires_in":"90d"}`, withCookie(ada), withCSRF())
 	token, _ := link["token"].(string)
 	if resp.StatusCode != 201 || !strings.HasPrefix(token, store.InviteTokenPrefix) || link["url"] != e.ts.URL+"/w/"+wsID+"/join#invite="+token {
 		t.Fatalf("link invite = %d %v", resp.StatusCode, link)
 	}
-	if resp, _ := e.do("POST", base+"/invites", `{"link":true,"expires_in":"soon"}`, withCookie(ada), withCSRF()); resp.StatusCode != 400 {
-		t.Errorf("bad expiry = %d", resp.StatusCode)
+	if inv := link["invite"].(map[string]any); inv["expires_at"].(float64)-inv["created_at"].(float64) != float64((48 * time.Hour).Milliseconds()) {
+		t.Errorf("link invite lifetime = %v, want 48h", inv)
 	}
 	lookup, lookupBody := "/api/invites/lookup", `{"token":"`+token+`"}`
 	if resp, _ := e.do("POST", lookup, lookupBody); resp.StatusCode != 401 {

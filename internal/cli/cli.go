@@ -56,12 +56,12 @@ Server:
 Workspaces & identity:
   workspace [show]                   show the current workspace
   workspace list                     your workspaces (needs login)
-  workspace create <name> [--repo URL[=label]]... [--canvas URL]
+  workspace create <name> [--repo URL]... [--canvas URL]
                                      (needs login; you become its first member)
   workspace set [--name N] [--repo URL] [--canvas URL]   (--repo: the first repo)
   workspace repos                    the workspace's code repositories
-  workspace repo add <url> [--label L]
-  workspace repo edit <id> [--label L] [--url U]
+  workspace repo add <url>
+  workspace repo edit <id> --url U
   workspace repo remove <id>
   join <workspace-url> [--name N] [--emoji E] (--pass P | --account [--invite T])
                                      join; saves .unison.json here. Workspaces are
@@ -80,9 +80,9 @@ Accounts and invites:
   logout                             sign out (revokes the token)
   whoami --user                      your account on this server
   invite email <address>             invite a person: anyone signing in with that
-                                     verified email may join (once)
-  invite link [--expires 7d]         an invite link anyone signed in may use until it
-                                     expires (multi-use; revocable)
+                                     verified email may join (once, within 48 hours)
+  invite link                        an invite link anyone signed in may use for 48
+                                     hours (multi-use; revocable)
   invites                            the workspace's open invites
   invite revoke <id>                 stop an invite
   members                            the workspace's members (accounts) and their
@@ -502,7 +502,7 @@ func (a *app) workspace(args []string) error {
 			return err
 		}
 		if len(repos) == 0 {
-			a.printf("No repositories yet. Add one: unison workspace repo add <url> --label <name>\n")
+			a.printf("No repositories yet. Add one: unison workspace repo add <url>\n")
 		}
 		for _, r := range repos {
 			a.printf("%s\n", repoLine(r))
@@ -531,18 +531,7 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 }
 
 func repoLine(r store.Repo) string {
-	if r.Label == "" {
-		return fmt.Sprintf("%-3d %s", r.ID, r.URL)
-	}
-	return fmt.Sprintf("%-3d %s  (%s)", r.ID, r.URL, r.Label)
-}
-
-// parseRepoFlag splits "URL=label" (the label is optional).
-func parseRepoFlag(v string) store.RepoInput {
-	if i := strings.LastIndex(v, "="); i > 0 && !strings.ContainsAny(v[i+1:], "/:") {
-		return store.RepoInput{URL: v[:i], Label: v[i+1:]}
-	}
-	return store.RepoInput{URL: v}
+	return fmt.Sprintf("%-3d %s", r.ID, r.URL)
 }
 
 func (a *app) workspaceRepo(args []string) error {
@@ -552,7 +541,6 @@ func (a *app) workspaceRepo(args []string) error {
 	sub, args := args[0], args[1:]
 	fs := flag.NewFlagSet("workspace repo "+sub, flag.ContinueOnError)
 	patch := map[string]string{}
-	fs.Func("label", "short name, e.g. backend", func(v string) error { patch["label"] = v; return nil })
 	if sub == "edit" {
 		fs.Func("url", "new repository URL", func(v string) error { patch["url"] = v; return nil })
 	}
@@ -591,14 +579,14 @@ func (a *app) workspaceRepo(args []string) error {
 		a.printf("Removed repository %d.\n", id)
 		return nil
 	}
-	return fmt.Errorf("%w: workspace repo add <url> [--label L] | edit <id> [--label L] [--url U] | remove <id>", errUsage)
+	return fmt.Errorf("%w: workspace repo add <url> | edit <id> --url U | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
 	fs := flag.NewFlagSet("workspace create", flag.ContinueOnError)
 	var repos []store.RepoInput
-	fs.Func("repo", "repository URL, optionally URL=label (repeatable)", func(v string) error {
-		repos = append(repos, parseRepoFlag(v))
+	fs.Func("repo", "repository URL (repeatable)", func(v string) error {
+		repos = append(repos, store.RepoInput{URL: v})
 		return nil
 	})
 	canvas := fs.String("canvas", "", "isocan canvas URL")

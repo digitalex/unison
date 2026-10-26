@@ -16,8 +16,8 @@ func TestWorkspaceRepos(t *testing.T) {
 		t.Fatalf("created workspace repos = %+v, repo_url %q", ws.Repos, ws.RepoURL)
 	}
 
-	web, evs, err := s.AddRepo(ctx, a, RepoInput{URL: " https://github.com/digitalex/unison-web ", Label: " frontend "})
-	if err != nil || web.Label != "frontend" || web.Position != 2 || len(evs) != 1 || evs[0].Type != "repo.added" {
+	web, evs, err := s.AddRepo(ctx, a, RepoInput{URL: " https://github.com/digitalex/unison-web "})
+	if err != nil || web.URL != "https://github.com/digitalex/unison-web" || web.Position != 2 || len(evs) != 1 || evs[0].Type != "repo.added" {
 		t.Fatalf("AddRepo = %+v, %+v, %v", web, evs, err)
 	}
 	if _, _, err := s.AddRepo(ctx, a, RepoInput{URL: "https://github.com/digitalex/unison-web"}); !errors.Is(err, ErrConflict) {
@@ -30,8 +30,8 @@ func TestWorkspaceRepos(t *testing.T) {
 	}
 
 	backend := ws.Repos[0]
-	got, evs, err := s.EditRepo(ctx, a, backend.ID, RepoPatch{Label: ptr("backend"), URL: ptr("https://github.com/digitalex/unison-api")})
-	if err != nil || got.Label != "backend" || evs[0].Type != "repo.updated" {
+	got, evs, err := s.EditRepo(ctx, a, backend.ID, RepoPatch{URL: ptr("https://github.com/digitalex/unison-api")})
+	if err != nil || got.URL != "https://github.com/digitalex/unison-api" || evs[0].Type != "repo.updated" {
 		t.Fatalf("EditRepo = %+v, %v", got, err)
 	}
 	if ws, _ = s.GetWorkspace(ctx, a.WorkspaceID); ws.RepoURL != "https://github.com/digitalex/unison-api" {
@@ -59,11 +59,11 @@ func TestCreateWorkspaceWithRepos(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
 	ws, _, err := s.CreateWorkspace(ctx, "Multi", "https://github.com/acme/api", "",
-		RepoInput{URL: "https://github.com/acme/web", Label: "frontend"})
+		RepoInput{URL: "https://github.com/acme/web"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ws.Repos) != 2 || ws.Repos[0].URL != "https://github.com/acme/api" || ws.Repos[1].Label != "frontend" || ws.RepoURL != "https://github.com/acme/api" {
+	if len(ws.Repos) != 2 || ws.Repos[0].URL != "https://github.com/acme/api" || ws.Repos[1].URL != "https://github.com/acme/web" || ws.RepoURL != "https://github.com/acme/api" {
 		t.Errorf("workspace = %+v", ws)
 	}
 	if _, _, err := s.CreateWorkspace(ctx, "Bad", "not a url", ""); !errors.Is(err, ErrInvalid) {
@@ -78,9 +78,9 @@ func TestCreateWorkspaceWithRepos(t *testing.T) {
 func TestLegacyRepoURLPatch(t *testing.T) {
 	s, _, a, _ := setup(t)
 	ctx := context.Background()
-	s.AddRepo(ctx, a, RepoInput{URL: "https://github.com/digitalex/unison-web", Label: "frontend"})
+	s.AddRepo(ctx, a, RepoInput{URL: "https://github.com/digitalex/unison-web"})
 	ws, evs, err := s.UpdateWorkspace(ctx, a.WorkspaceID, a.ID, WorkspacePatch{RepoURL: ptr("https://github.com/digitalex/unison-api")})
-	if err != nil || ws.RepoURL != "https://github.com/digitalex/unison-api" || len(ws.Repos) != 2 || ws.Repos[1].Label != "frontend" {
+	if err != nil || ws.RepoURL != "https://github.com/digitalex/unison-api" || len(ws.Repos) != 2 || ws.Repos[1].URL != "https://github.com/digitalex/unison-web" {
 		t.Fatalf("PATCH repo_url = %+v, %v", ws, err)
 	}
 	if len(evs) != 2 || evs[0].Type != "repo.updated" || evs[1].Type != "workspace.updated" {
