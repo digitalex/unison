@@ -67,7 +67,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
-  const unread = useChatUnread(id, messages, me, view === "chat");
+  const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat");
   const [error, setError] = useState("");
   const joined = Boolean(me);
 
@@ -187,6 +187,7 @@ export default function Workspace({ id, view, navigate, account }) {
             <Chat
               messages={messages}
               updateMessages={setMessages}
+              newAfter={newAfter}
               items={backlog}
               participants={participants}
               me={me}
@@ -237,18 +238,25 @@ function useScreens(id, view, navigate) {
 }
 
 // useChatUnread counts the messages from others that arrived since you last
-// had the chat screen open (remembered across reloads).
+// had the chat screen open (remembered across reloads). newAfter is the
+// newest message you had seen when you opened it: later ones are new to you.
 function useChatUnread(workspaceId, messages, me, active) {
   const seenKey = `unison.chat.seen.${workspaceId}`;
   const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
+  const [seenAtOpen, setSeenAtOpen] = useState(null);
   const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
+  // Before the effect below marks everything seen.
+  useEffect(() => setSeenAtOpen(active ? seenId : null), [active]);
   useEffect(() => {
     if (active && latestId > seenId) {
       localStorage.setItem(seenKey, String(latestId));
       setSeenId(latestId);
     }
   }, [active, latestId, seenId, seenKey]);
-  return messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length;
+  return {
+    unread: messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length,
+    newAfter: seenAtOpen ?? seenId,
+  };
 }
 
 // messageFromURL reads a deep link to a chat message: #msg-12 or ?msg=12.
