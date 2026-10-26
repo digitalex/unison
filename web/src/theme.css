@@ -886,6 +886,60 @@ html.dialog-open {
   white-space: nowrap;
 }
 
+/* People: who's here, in the sidebar. A long list scrolls on its own. */
+.people {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+button.nav-link {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-link.person {
+  gap: var(--space-xs);
+  height: 30px;
+  font-weight: var(--weight-ui-regular);
+}
+
+.person .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: var(--size-xs);
+  box-shadow: none;
+}
+
+.person .avatar .dot {
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 var(--border-l) var(--base);
+}
+
+.person-name {
+  flex: none;
+  color: var(--text);
+}
+
+.person-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-invite.nav-link {
+  height: 30px;
+  color: var(--text-muted);
+  font-weight: var(--weight-ui-regular);
+}
+
 .nav-link .nav-ext {
   width: 12px;
   height: 12px;
@@ -982,11 +1036,6 @@ html.dialog-open {
   color: var(--text-muted);
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.screen-head .avatar,
-.screen-head .avatar .dot {
-  box-shadow: 0 0 0 var(--border-l) var(--panel);
 }
 
 .screen-body {
@@ -1201,15 +1250,6 @@ a.ws-mark:hover {
 }
 
 /* ---- Avatars ---- */
-.avatars {
-  display: flex;
-}
-
-.avatars > * {
-  position: relative;
-  display: flex;
-}
-
 .avatar {
   position: relative;
   display: grid;
@@ -1224,14 +1264,6 @@ a.ws-mark:hover {
   box-shadow: 0 0 0 var(--border-l) var(--base);
   font-size: var(--size-s);
   line-height: 1;
-}
-
-button.avatar {
-  cursor: pointer;
-}
-
-.avatars > * + * {
-  margin-left: -6px;
 }
 
 .avatar .dot {
@@ -2716,23 +2748,6 @@ html.reordering * {
   overflow-wrap: anywhere;
 }
 
-.avatar-count {
-  position: absolute;
-  top: -4px;
-  right: -5px;
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  border-radius: var(--radius-full);
-  background: var(--text-secondary);
-  box-shadow: 0 0 0 var(--border-l) var(--base);
-  color: var(--base);
-  font-size: 9px;
-  font-weight: var(--weight-ui-semibold);
-  line-height: 13px;
-  text-align: center;
-}
-
 /* ---- Invite: a person (link) or an agent (pass) ---- */
 .seg.invite-kind {
   display: inline-flex;
@@ -3430,8 +3445,9 @@ html.reordering * {
   }
 
   .screen-note,
-  .screen-head .avatars,
-  .screen-head .head-invite .label {
+  .head-account .label,
+  /* On phones the backlog's status icons say what the group heads would. */
+  h3.group-head {
     display: none;
   }
 

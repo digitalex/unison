@@ -126,10 +126,9 @@ export default function Workspace({ id, view, navigate, account }) {
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
   const counts = { inbox: inbox.length, backlog: backlog.filter((it) => it.status !== "done").length, chat: unread };
-  // The screen header's people and account controls (the roster and Invite
-  // on wide screens; Invite and the account menu on phones).
+  // The screen header's controls on phones: Invite and the account menu.
   const headExtras = (
-    <HeadExtras workspace={workspace} me={me} participants={participants} call={call} onError={setError} account={account} members={members} settingsLink={screens.link("settings")} />
+    <HeadExtras workspace={workspace} call={call} account={account} members={members} settingsLink={screens.link("settings")} />
   );
   const errorBar = error && (
     <p role="alert" className="error-bar">
@@ -142,7 +141,24 @@ export default function Workspace({ id, view, navigate, account }) {
 
   return (
     <div className={joined ? "shell" : "shell shell-unjoined"}>
-      <Sidebar workspace={workspace} view={view} joined={joined} live={live} counts={counts} screens={screens} account={account} navigate={navigate} />
+      <Sidebar
+        workspace={workspace}
+        view={view}
+        joined={joined}
+        live={live}
+        counts={counts}
+        screens={screens}
+        account={account}
+        navigate={navigate}
+        people={
+          joined && (
+            <>
+              <People participants={participants} me={me} call={call} onError={setError} />
+              <InviteButton workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" align="start" />
+            </>
+          )
+        }
+      />
       {view === "settings" && joined ? (
         <main className="shell-main shell-settings">
           <SettingsPage
@@ -276,9 +292,10 @@ function ScreenCount({ screen, counts }) {
 }
 
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
-// its own (it sits on the base): the workspace switcher, the screens, links
-// out (canvas, repositories), then settings and your account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate }) {
+// its own (it sits on the base): the workspace switcher, the screens, who's
+// here (people, with Invite), links out (canvas, repositories), then
+// settings and your account at the bottom.
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, people }) {
   const repos = workspace.repos || [];
   return (
     <nav className="sidebar" aria-label="Workspace">
@@ -312,6 +329,12 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             </li>
           ))}
         </ul>
+      )}
+      {people && (
+        <>
+          <h2 className="nav-heading">People</h2>
+          {people}
+        </>
       )}
       {(workspace.canvas_url || repos.length > 0) && (
         <>
@@ -378,26 +401,32 @@ function ThemeRow() {
   );
 }
 
-// HeadExtras: who's here and Invite, at the right of each screen's header.
-// On phones the roster gives way to the account menu, which also holds
-// settings (there is no sidebar).
-function HeadExtras({ workspace, me, participants, call, onError, account, members, settingsLink }) {
+// InviteButton: Invite a person or an agent, from a popover.
+function InviteButton({ workspace, account, members, call, className, align }) {
+  return (
+    <Popover
+      title="Invite a person or an agent"
+      className={className}
+      align={align}
+      trigger={
+        <>
+          <UserPlus aria-hidden="true" />
+          <span className="label">Invite</span>
+        </>
+      }
+    >
+      {(close) => <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />}
+    </Popover>
+  );
+}
+
+// HeadExtras: on phones (no sidebar), Invite and the account menu at the
+// right of each screen's header; the menu also holds settings.
+function HeadExtras({ workspace, call, account, members, settingsLink }) {
   return (
     <>
-      <Roster participants={participants} me={me} call={call} onError={onError} />
-      <Popover
-        title="Invite a person or an agent"
-        className="button button-ghost head-invite"
-        trigger={
-          <>
-            <UserPlus aria-hidden="true" />
-            <span className="label">Invite</span>
-          </>
-        }
-      >
-        {(close) => <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />}
-      </Popover>
       <span className="head-account">
+        <InviteButton workspace={workspace} account={account} members={members} call={call} className="button button-ghost button-icon" />
         {account.user ? (
           <AccountMenu
             account={account}
@@ -570,10 +599,10 @@ function rosterGroups(participants) {
   return groups;
 }
 
-// Who's here: overlapping emoji avatars with presence dots, one per person
-// (participants linked to the same account are grouped). Your own avatar
+// People: who's here, one row per person (participants linked to the same
+// account are grouped), with a presence dot and their status. Your own row
 // sets your status.
-function Roster({ participants, me, call, onError }) {
+function People({ participants, me, call, onError }) {
   const setStatus = async () => {
     const status = window.prompt("Your status", me?.status || "");
     if (status === null) return;
@@ -584,44 +613,41 @@ function Roster({ participants, me, call, onError }) {
     }
   };
   const now = Date.now();
-  const groups = rosterGroups(participants);
   return (
-    <div className="avatars" role="list" aria-label="Who's here">
-      {groups.map((g, i) => {
+    <ul className="nav-list people" aria-label="Who's here">
+      {rosterGroups(participants).map((g) => {
         const p = g.primary;
         // Logged-out (or revoked) agents are never shown as active.
         const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(q, now));
         const mine = me && g.all.some((q) => q.id === me.id);
         const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-        const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — ${p.status || (active ? "active" : "away")}`;
+        const status = p.status || (active ? "active" : "away");
+        const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — ${status}`;
         const content = (
           <>
-            {p.emoji}
-            <span className="dot" />
-            {g.all.length > 1 && (
-              <span className="avatar-count" aria-hidden="true">
-                {g.all.length}
-              </span>
-            )}
+            <span className={active ? "avatar active" : "avatar"} aria-hidden="true">
+              {p.emoji}
+              <span className="dot" />
+            </span>
+            <span className="person-name">{p.name}</span>
+            {p.status && <span className="person-status">{p.status}</span>}
           </>
         );
-        const cls = active ? "avatar active" : "avatar";
         return (
-          // Earlier avatars stack on top so every presence dot stays visible.
-          <span key={g.key} role="listitem" style={{ zIndex: groups.length - i }}>
+          <li key={g.key}>
             {mine ? (
-              <button type="button" className={cls} title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
+              <button type="button" className="nav-link person" title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
                 {content}
               </button>
             ) : (
-              <span className={cls} title={label} aria-label={label} role="img">
+              <span className="nav-link person" title={label} aria-label={label} role="img">
                 {content}
               </span>
             )}
-          </span>
+          </li>
         );
       })}
-    </div>
+    </ul>
   );
 }
