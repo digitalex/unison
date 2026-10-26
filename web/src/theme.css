@@ -1251,6 +1251,128 @@ button.group-head {
   overflow-wrap: anywhere;
 }
 
+/* A message about a backlog item links to it (Chat.jsx). */
+.msg-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  margin-top: 4px;
+  overflow: hidden;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.msg-item:hover {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.msg-item .lucide,
+.link-item .lucide {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+
+.msg-item-title,
+.link-item-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.msg:focus {
+  outline: none;
+}
+
+.msg.msg-flash {
+  animation: msg-flash 2.5s var(--motion-easing);
+}
+
+@keyframes msg-flash {
+  0%,
+  40% {
+    background: var(--focus-ring);
+    box-shadow: inset 3px 0 0 var(--focus);
+  }
+}
+
+/* The composer's "Link to #12" toggle: ties the message to that item. */
+.link-item {
+  display: inline-flex;
+  justify-self: start;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+  border: 0;
+  font: inherit;
+  font-size: var(--size-xxs);
+  cursor: pointer;
+}
+
+.link-item.linked {
+  background: var(--focus-ring);
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus);
+  color: var(--text);
+}
+
+/* A grid, so a long "Link to #12 …" title can't widen the chat. */
+.composer-foot:has(.link-item) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+/* Item dialog: the chat messages about the item (BacklogItemDialog.jsx). */
+.chat-links {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.chat-links a {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 2px 0;
+  color: var(--text-secondary);
+  text-decoration: none;
+}
+
+.chat-links a:hover .chat-link-text {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.chat-links .lucide {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.chat-links .who {
+  flex: none;
+  font-weight: var(--weight-ui-semibold);
+  color: var(--text);
+}
+
+.chat-links .time {
+  flex: none;
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+}
+
+.chat-link-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .msg-reply {
   position: absolute;
   top: var(--space-xxs);

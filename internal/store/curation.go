@@ -37,7 +37,8 @@ type CommentEvent struct {
 	Item    *Item    `json:"item"`
 }
 
-// attachExtras fills in the PRs and comment counts of items, all from wsID.
+// attachExtras fills in the PRs, comment counts and message counts of items,
+// all from wsID.
 func attachExtras(t *tx, wsID string, items []*Item) error {
 	if len(items) == 0 {
 		return nil
@@ -68,7 +69,16 @@ func attachExtras(t *tx, wsID string, items []*Item) error {
 	if err := rows.Err(); err != nil {
 		return err
 	}
-	rows, err = t.Query(`SELECT item_id, COUNT(*) FROM item_comments WHERE `+filter+` GROUP BY item_id`, args...)
+	if err := countPerItem(t, `item_comments WHERE `+filter, args, func(it *Item, n int) { it.CommentCount = n }, byID); err != nil {
+		return err
+	}
+	return countPerItem(t, `messages WHERE item_id IS NOT NULL AND `+filter, args, func(it *Item, n int) { it.MessageCount = n }, byID)
+}
+
+// countPerItem counts the rows of `from` (a table and WHERE clause) per
+// item_id and hands each item its count.
+func countPerItem(t *tx, from string, args []any, set func(*Item, int), byID map[int64]*Item) error {
+	rows, err := t.Query(`SELECT item_id, COUNT(*) FROM `+from+` GROUP BY item_id`, args...)
 	if err != nil {
 		return err
 	}
@@ -80,7 +90,7 @@ func attachExtras(t *tx, wsID string, items []*Item) error {
 			return err
 		}
 		if it := byID[id]; it != nil {
-			it.CommentCount = n
+			set(it, n)
 		}
 	}
 	return rows.Err()

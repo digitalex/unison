@@ -418,6 +418,9 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 				return err
 			}
 		}
+		if err := unlinkMessages(t, log, actor, id); err != nil {
+			return err
+		}
 		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}
@@ -430,6 +433,26 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 		}
 		return log.add(actor.WorkspaceID, "backlog.deleted", actor.ID, it)
 	})
+}
+
+// unlinkMessages keeps the chat messages about a deleted item, no longer
+// tied to it, recording a message.updated event for each.
+func unlinkMessages(t *tx, log *eventLog, actor *Participant, itemID int64) error {
+	rows, err := t.Query(selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, actor.WorkspaceID, itemID)
+	msgs, err := scanMessages(rows, err)
+	if err != nil || len(msgs) == 0 {
+		return err
+	}
+	if _, err := t.Exec(`UPDATE messages SET item_id = NULL WHERE item_id = ?`, itemID); err != nil {
+		return err
+	}
+	for _, m := range msgs {
+		m.ItemID, m.Item = nil, nil
+		if err := log.add(actor.WorkspaceID, "message.updated", actor.ID, m); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // mutateItem loads an item (after expiring stale leases), applies fn, then

@@ -91,6 +91,17 @@ type Message struct {
 	ParentID    *int64 `json:"parent_id,omitempty"`
 	Body        string `json:"body"`
 	CreatedAt   int64  `json:"created_at"`
+	// ItemID ties the message to a backlog item of the same workspace (a
+	// status update about it, say); Item summarizes that item.
+	ItemID *int64       `json:"item_id,omitempty"`
+	Item   *MessageItem `json:"item,omitempty"`
+}
+
+// MessageItem is the backlog item a message is about, in brief.
+type MessageItem struct {
+	ID     int64  `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
 }
 
 // Backlog item statuses.
@@ -117,9 +128,11 @@ type Item struct {
 	ClosedAt       *int64 `json:"closed_at,omitempty"`
 	CloseNote      string `json:"close_note,omitempty"`
 	// PRs are the pull requests linked to the item (several are allowed);
-	// CommentCount is how many comments it has.
+	// CommentCount is how many comments it has, MessageCount how many chat
+	// messages are about it.
 	PRs          []ItemPR `json:"prs"`
 	CommentCount int      `json:"comment_count"`
+	MessageCount int      `json:"message_count"`
 }
 
 // Event records a change in a workspace. Seq is globally increasing.
@@ -564,12 +577,15 @@ func (s *Store) SetStatus(ctx context.Context, p *Participant, status string) (*
 
 // ---- Chat ----
 
-const messageCols = `id, workspace_id, author_id, parent_id, body, created_at`
+// selectMessages selects messages (alias m) with the item each is about.
+const selectMessages = `SELECT m.id, m.workspace_id, m.author_id, m.parent_id, m.body, m.created_at, m.item_id, i.title, i.status
+	FROM messages m LEFT JOIN items i ON i.id = m.item_id`
 
 func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	var m Message
-	var parent sql.NullInt64
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt); err != nil {
+	var parent, item sql.NullInt64
+	var title, status sql.NullString
+	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt, &item, &title, &status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -578,47 +594,14 @@ func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	if parent.Valid {
 		m.ParentID = &parent.Int64
 	}
+	if item.Valid {
+		m.ItemID = &item.Int64
+		m.Item = &MessageItem{ID: item.Int64, Title: title.String, Status: status.String}
+	}
 	return &m, nil
 }
 
-// PostMessage posts a chat message, optionally as a reply to parentID.
-func (s *Store) PostMessage(ctx context.Context, author *Participant, body string, parentID *int64) (*Message, []Event, error) {
-	body = strings.TrimSpace(body)
-	if body == "" {
-		return nil, nil, fmt.Errorf("%w: message body is required", ErrInvalid)
-	}
-	var m *Message
-	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if parentID != nil {
-			parent, err := scanMessage(t.QueryRow(`SELECT `+messageCols+` FROM messages WHERE id = ? AND workspace_id = ?`, *parentID, author.WorkspaceID))
-			if err != nil {
-				return fmt.Errorf("parent message %d: %w", *parentID, err)
-			}
-			if parent.ParentID != nil {
-				// Threads are one level deep: replying to a reply joins its thread.
-				parentID = parent.ParentID
-			}
-		}
-		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
-			author.WorkspaceID, author.ID, parentID, body, log.now)
-		if err != nil {
-			return err
-		}
-		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now}
-		return log.add(author.WorkspaceID, "message.created", author.ID, m)
-	})
-	if err != nil {
-		return nil, nil, err
-	}
-	return m, evs, nil
-}
-
-// ListMessages returns up to limit of the most recent messages, oldest first.
-func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
-	rows, err := s.db.QueryContext(ctx, `SELECT * FROM (SELECT `+messageCols+` FROM messages WHERE workspace_id = ? ORDER BY id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)
+func scanMessages(rows *sql.Rows, err error) ([]Message, error) {
 	if err != nil {
 		return nil, err
 	}
@@ -632,6 +615,71 @@ func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Mes
 		out = append(out, *m)
 	}
 	return out, rows.Err()
+}
+
+// PostMessage posts a chat message, optionally as a reply to parentID and
+// about backlog item itemID (which must be in the author's workspace).
+// Replies inherit no item: each message says what it is about.
+func (s *Store) PostMessage(ctx context.Context, author *Participant, body string, parentID, itemID *int64) (*Message, []Event, error) {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return nil, nil, fmt.Errorf("%w: message body is required", ErrInvalid)
+	}
+	var m *Message
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		if parentID != nil {
+			parent, err := scanMessage(t.QueryRow(selectMessages+` WHERE m.id = ? AND m.workspace_id = ?`, *parentID, author.WorkspaceID))
+			if err != nil {
+				return fmt.Errorf("parent message %d: %w", *parentID, err)
+			}
+			if parent.ParentID != nil {
+				// Threads are one level deep: replying to a reply joins its thread.
+				parentID = parent.ParentID
+			}
+		}
+		var about *MessageItem
+		if itemID != nil {
+			it, err := getItem(t, author.WorkspaceID, *itemID)
+			if errors.Is(err, ErrNotFound) {
+				return fmt.Errorf("%w: there is no backlog item #%d in this workspace", ErrInvalid, *itemID)
+			} else if err != nil {
+				return err
+			}
+			about = &MessageItem{ID: it.ID, Title: it.Title, Status: it.Status}
+		}
+		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at, item_id) VALUES (?, ?, ?, ?, ?, ?)`, "id",
+			author.WorkspaceID, author.ID, parentID, body, log.now, itemID)
+		if err != nil {
+			return err
+		}
+		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: itemID, Item: about}
+		return log.add(author.WorkspaceID, "message.created", author.ID, m)
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return m, evs, nil
+}
+
+// ListMessages returns up to limit of the most recent messages, oldest first.
+func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	return scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit))
+}
+
+// ItemMessages returns the chat messages about a backlog item, oldest
+// first, or ErrNotFound when the workspace has no such item.
+func (s *Store) ItemMessages(ctx context.Context, wsID string, itemID int64) ([]Message, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE workspace_id = ? AND id = ?`, wsID, itemID).Scan(&n); err != nil {
+		return nil, err
+	}
+	if n == 0 {
+		return nil, ErrNotFound
+	}
+	return scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID))
 }
 
 // ---- Events ----
