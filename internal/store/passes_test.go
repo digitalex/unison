@@ -67,7 +67,7 @@ func TestMintAndExchangePass(t *testing.T) {
 	}
 	// Agents are never members or folded into their sponsor.
 	m, _ := s.ListMembers(ctx, ws.ID)
-	if len(m.Members) != 1 || len(m.Members[0].Participants) != 1 || len(m.Unlinked) != 1 || m.Unlinked[0].Sponsor == nil {
+	if len(m.Members) != 1 || len(m.Members[0].Participants) != 1 {
 		t.Errorf("members = %+v", m)
 	}
 

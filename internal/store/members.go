@@ -22,12 +22,9 @@ type Member struct {
 	Participants []Participant `json:"participants"`
 }
 
-// Members lists a workspace's members, and the participants not linked to
-// any current member (agents, people who never signed in, and participants
-// of removed members, kept for history).
+// Members lists a workspace's members.
 type Members struct {
-	Members  []Member      `json:"members"`
-	Unlinked []Participant `json:"unlinked"`
+	Members []Member `json:"members"`
 }
 
 // memberEvent is the data of member.added and member.removed.
@@ -116,8 +113,8 @@ func joinAsUser(t *tx, log *eventLog, wsID string, userID int64, name, emoji str
 	return p, token, existing, ensureMembership(t, log, wsID, userID, p.ID)
 }
 
-// ListMembers returns the workspace's members (oldest first) and the
-// participants not linked to a current member.
+// ListMembers returns the workspace's members (oldest first), each with
+// the participants linked to it.
 func (s *Store) ListMembers(ctx context.Context, wsID string) (*Members, error) {
 	if _, err := s.GetWorkspace(ctx, wsID); err != nil {
 		return nil, err
@@ -128,7 +125,7 @@ func (s *Store) ListMembers(ctx context.Context, wsID string) (*Members, error) 
 		return nil, err
 	}
 	defer rows.Close()
-	out := &Members{Members: []Member{}, Unlinked: []Participant{}}
+	out := &Members{Members: []Member{}}
 	index := map[int64]int{}
 	for rows.Next() {
 		m := Member{Participants: []Participant{}}
@@ -148,8 +145,6 @@ func (s *Store) ListMembers(ctx context.Context, wsID string) (*Members, error) 
 	for _, p := range participants {
 		if i, ok := index[p.UserID]; ok && p.UserID != 0 {
 			out.Members[i].Participants = append(out.Members[i].Participants, p)
-		} else {
-			out.Unlinked = append(out.Unlinked, p)
 		}
 	}
 	return out, nil

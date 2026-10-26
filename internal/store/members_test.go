@@ -56,7 +56,7 @@ func TestJoinAsUserIsIdempotent(t *testing.T) {
 		t.Fatalf("second JoinAsUser = %+v %q %v %v %v", again, token2, existing, eventTypes(evs), err)
 	}
 	m, _ := s.ListMembers(ctx, ws.ID)
-	if len(m.Members) != 1 || len(m.Members[0].Participants) != 1 || len(m.Unlinked) != 0 {
+	if len(m.Members) != 1 || len(m.Members[0].Participants) != 1 {
 		t.Errorf("members = %+v", m)
 	}
 	if _, _, _, _, err := s.JoinAsUser(ctx, "ws_missing", u.ID, "", ""); !errors.Is(err, ErrNotFound) {
@@ -92,11 +92,14 @@ func TestRemoveMember(t *testing.T) {
 	if ok, _ := s.IsMember(ctx, ws.ID, bob.ID); ok {
 		t.Error("Bob is still a member")
 	}
-	// Bob's participant stays (history), still linked, listed as unlinked
-	// from the membership's point of view.
+	// Bob's participant stays (history), still linked to his account, but
+	// he is no longer listed.
 	m, _ := s.ListMembers(ctx, ws.ID)
-	if len(m.Members) != 1 || len(m.Unlinked) != 1 || m.Unlinked[0].ID != bp.ID || m.Unlinked[0].UserID != bob.ID {
+	if len(m.Members) != 1 || m.Members[0].UserID == bob.ID {
 		t.Errorf("members after removal = %+v", m)
+	}
+	if p, _ := s.GetParticipant(ctx, ws.ID, bp.ID); p == nil || p.UserID != bob.ID {
+		t.Errorf("Bob's participant after removal = %+v", p)
 	}
 	// Any member may remove any member, themselves included.
 	if _, err := s.RemoveMember(ctx, ws.ID, alex.ID, alex.ID); err != nil {
@@ -145,7 +148,7 @@ func TestParticipantUserIDMigration(t *testing.T) {
 			}
 		}
 		if boot == 3 {
-			if m, _ := s.ListMembers(ctx, "ws_legacy"); len(m.Members) != 1 || m.Members[0].Participants[0].Name != "AlexNew" || len(m.Unlinked) != 1 {
+			if m, _ := s.ListMembers(ctx, "ws_legacy"); len(m.Members) != 1 || m.Members[0].Participants[0].Name != "AlexNew" {
 				t.Errorf("boot 3: members = %+v (the membership must survive reboots; the legacy row stays)", m)
 			}
 		}

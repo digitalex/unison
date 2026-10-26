@@ -44,8 +44,8 @@ func TestEveryWorkspaceRouteIsGated(t *testing.T) {
 			code string
 		}{
 			"anonymous":                {nil, 401, codeSignIn},
-			"legacy participant":       {[]reqOpt{withBearer(legacyTok)}, 401, codeLegacy},
-			"legacy via ?token=":       {nil, 401, codeLegacy},
+			"legacy participant":       {[]reqOpt{withBearer(legacyTok)}, 401, codeSignIn},
+			"legacy via ?token=":       {nil, 401, codeSignIn},
 			"bogus token":              {[]reqOpt{withBearer("0123456789abcdef0123456789abcdef")}, 401, codeSignIn},
 			"another workspace's":      {[]reqOpt{withBearer(otherTok)}, 403, codeOther},
 			"signed-in non-member":     {[]reqOpt{withCookie(stranger), withCSRF()}, 403, codeMember},
@@ -61,7 +61,7 @@ func TestEveryWorkspaceRouteIsGated(t *testing.T) {
 			}
 		}
 	}
-	if resp, out := e.do("GET", "/api/workspaces/"+ws.ID, "", withBearer(legacyTok)); out["error"] != legacyMessage {
+	if resp, out := e.do("GET", "/api/workspaces/"+ws.ID, "", withBearer(legacyTok)); out["error"] != badTokenMessage {
 		t.Errorf("legacy message = %d %v", resp.StatusCode, out)
 	}
 }
@@ -124,8 +124,8 @@ func TestProdAccessOnDeploy(t *testing.T) {
 		switch {
 		case keeps && resp.StatusCode != 200:
 			t.Errorf("participant %d lost access: %d %v", id, resp.StatusCode, out)
-		case !keeps && (resp.StatusCode != 401 || out["code"] != codeLegacy):
-			t.Errorf("legacy participant %d = %d %v, want 401 legacy", id, resp.StatusCode, out)
+		case !keeps && (resp.StatusCode != 401 || out["code"] != codeSignIn):
+			t.Errorf("legacy participant %d = %d %v, want 401 sign_in", id, resp.StatusCode, out)
 		}
 	}
 	if resp, _ := e.do("GET", base+"/backlog", "", withCookie(cookie)); resp.StatusCode != 200 {

@@ -72,15 +72,14 @@ func TestMembersAPI(t *testing.T) {
 	ws, _, _ := e.st.CreateWorkspaceFor(ctx, alexID, "W", "", "")
 	base := "/api/workspaces/" + ws.ID
 	_, alexTok, _, _, _ := e.st.JoinAsUser(ctx, ws.ID, alexID, "Alex", "🧑")
-	e.st.Join(ctx, ws.ID, "Quill", "🦉") // From before accounts: kept, unlinked.
+	e.st.Join(ctx, ws.ID, "Quill", "🦉") // Linked to no account: not listed.
 
 	if resp, _ := e.do("GET", base+"/members", ""); resp.StatusCode != 401 {
 		t.Errorf("anonymous members = %d", resp.StatusCode)
 	}
 	resp, m := e.do("GET", base+"/members", "", withBearer(alexTok))
 	members, _ := m["members"].([]any)
-	unlinked, _ := m["unlinked"].([]any)
-	if resp.StatusCode != 200 || len(members) != 1 || len(unlinked) != 1 {
+	if resp.StatusCode != 200 || len(members) != 1 || m["unlinked"] != nil {
 		t.Fatalf("members = %d %v", resp.StatusCode, m)
 	}
 

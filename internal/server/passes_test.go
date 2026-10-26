@@ -109,7 +109,7 @@ func TestAgentCredentialExpiryAPI(t *testing.T) {
 	if resp.StatusCode != 401 || out["code"] != codeIdle || !strings.Contains(out["error"].(string), "ask Ada for a new pass") {
 		t.Errorf("idle agent = %d %v", resp.StatusCode, out)
 	}
-	if resp, out := e.do("GET", me, "", withBearer(legacyTok)); resp.StatusCode != 401 || out["code"] != codeLegacy {
+	if resp, out := e.do("GET", me, "", withBearer(legacyTok)); resp.StatusCode != 401 || out["code"] != codeSignIn {
 		t.Errorf("legacy participant = %d %v (locked out since #17)", resp.StatusCode, out)
 	}
 }
