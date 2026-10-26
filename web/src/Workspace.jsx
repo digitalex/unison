@@ -13,6 +13,7 @@ import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import useSectionOpen from "./useSectionOpen.js";
 import Splitter, { useChatWidth } from "./ui/Splitter.jsx";
+import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
@@ -230,18 +231,10 @@ function TopBar({ workspace, view, me, joined, participants, live, call, onError
           U
         </a>
         <h1 className="ws-name">
-          <a
-            href={`/w/${workspace.id}`}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(`/w/${workspace.id}`);
-            }}
-          >
-            {workspace.name}
-          </a>
+          <WorkspaceSwitcher workspace={workspace} account={account} navigate={navigate} />
         </h1>
+        {view === "settings" && joined && <span className="crumb">/ Settings</span>}
       </div>
-      {joined && <span className="crumb">/ {view === "settings" ? "Settings" : "Backlog"}</span>}
       {workspace.canvas_url && (
         <a
           className="canvas-link"
