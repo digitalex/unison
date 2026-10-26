@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import Button from "../ui/Button.jsx";
+import ScreenHead from "../ui/ScreenHead.jsx";
 import Agents from "./Agents.jsx";
 import General from "./General.jsx";
 import Invites from "./Invites.jsx";
@@ -17,10 +17,12 @@ const SECTIONS = [
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
 ];
 
-// SettingsPage is the full-page workspace settings (/w/{ws}/settings): one
-// card per section, scrolled through (the sidebar or tab bar leads back to
-// the workspace). The data and live updates come from Workspace.
-export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError }) {
+// SettingsPage is the workspace settings screen (/w/{ws}/settings), laid out
+// like the other screens: the screen header, then one section per topic,
+// each with a head like the backlog's groups, scrolled through. head is the
+// header's shared controls, error the workspace's error bar. The data and
+// live updates come from Workspace.
+export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, head }) {
   const scroller = useRef(null);
 
   // A deep link (#invites) pins its section: the page scrolls to it, and
@@ -28,7 +30,7 @@ export default function SettingsPage({ workspace, members, invites, participants
   // scrolls on their own.
   const pinned = useRef(null);
   useEffect(() => {
-    const content = scroller.current.querySelector(".settings-content");
+    const content = scroller.current.firstElementChild;
     const scrollToPinned = () => pinned.current && document.getElementById(pinned.current)?.scrollIntoView({ block: "start" });
     const follow = () => {
       const id = window.location.hash.slice(1);
@@ -61,29 +63,24 @@ export default function SettingsPage({ workspace, members, invites, participants
   };
 
   return (
-    <div className="settings-page" ref={scroller}>
-      <div className="settings-layout">
-        <div className="settings-content">
-          <h2 className="settings-title">Settings</h2>
-          {error && (
-            <p role="alert" className="error-bar settings-error">
-              Error: {error}{" "}
-              <Button variant="ghost" onClick={() => onError("")}>
-                dismiss
-              </Button>
-            </p>
-          )}
+    <section className="screen settings" aria-label="Settings">
+      <ScreenHead title="Settings" note={workspace.name}>
+        {head}
+      </ScreenHead>
+      {error}
+      <div className="screen-body" ref={scroller}>
+        <div className="settings-sections">
           {SECTIONS.map((s) => (
-            <section key={s.id} id={s.id} className="card settings-card" aria-labelledby={`${s.id}-title`}>
-              <header className="settings-card-head">
+            <section key={s.id} id={s.id} className="settings-section" aria-labelledby={`${s.id}-title`}>
+              <header className="settings-head">
                 <h3 id={`${s.id}-title`}>{s.title}</h3>
-                <p className="field-description">{s.description}</p>
+                <p>{s.description}</p>
               </header>
-              <div className="settings-card-body">{body[s.id]}</div>
+              <div className="settings-body">{body[s.id]}</div>
             </section>
           ))}
         </div>
       </div>
-    </div>
+    </section>
   );
 }

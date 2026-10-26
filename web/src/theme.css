@@ -749,14 +749,6 @@ html.dialog-open {
   margin: var(--space-s) var(--space-s) var(--space-s) 0;
 }
 
-.shell-settings {
-  margin: 0;
-}
-
-.shell-settings > .settings-page {
-  flex: 1;
-}
-
 /* The current screen floats above the base. */
 .panel {
   border-radius: var(--radius-panel);
@@ -3008,65 +3000,53 @@ html.reordering * {
   }
 }
 
-/* ---- Workspace settings page (settings/SettingsPage.jsx) ---- */
-.settings-page {
-  min-height: 0;
-  overflow: auto;
-  padding: 0 var(--space-s) var(--space-xl);
+/* ---- Workspace settings (settings/SettingsPage.jsx): a screen like the
+   others. Section heads look like the backlog's group heads; fields sit in
+   a label | control grid. ---- */
+.settings-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 2px var(--space-s);
+  padding: var(--space-s) 20px 10px;
+  border-top: var(--border-s) solid var(--panel-edge);
+  border-bottom: var(--border-s) solid var(--panel-edge);
+  background: var(--panel-head);
 }
 
-.settings-layout {
-  max-width: 720px;
-  margin: 0 auto;
-  padding-top: var(--space-s);
+.settings-section:first-child .settings-head {
+  border-top: 0;
 }
 
-.settings-content {
+.settings-head h3 {
+  margin: 0;
+  font-size: var(--size-s);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.settings-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.settings-body {
   display: flex;
   flex-direction: column;
+  gap: var(--space-s);
+  max-width: 800px;
+  padding: var(--space-m) 20px 20px;
+}
+
+.settings-body .field {
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  align-items: center;
   gap: var(--space-m);
-  min-width: 0;
 }
 
-.settings-title {
-  margin: 0;
-  font-size: var(--size-l);
-  line-height: var(--line-l);
-  letter-spacing: var(--letter-spacing-l);
-  font-weight: var(--weight-ui-semibold);
-}
-
-.settings-error {
-  border-radius: var(--radius-s);
-}
-
-.settings-card {
-  scroll-margin-top: var(--space-s);
-}
-
-.settings-card-head {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  padding: var(--space-m) var(--space-m) 0;
-}
-
-.settings-card-head h3 {
-  margin: 0;
-  font-size: var(--size-m);
-  line-height: var(--line-m);
-  font-weight: var(--weight-ui-semibold);
-}
-
-.settings-card-head .field-description {
-  margin: 0;
-}
-
-.settings-card-body {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-xs);
-  padding: var(--space-m);
+.settings-body .form > .actions-row {
+  padding-left: calc(180px + var(--space-m));
 }
 
 .agent-list {
@@ -3123,8 +3103,23 @@ html.reordering * {
 }
 
 @media (max-width: 640px) {
-  .settings-page {
-    padding: 0 8px var(--space-l);
+  .settings-head {
+    padding: var(--space-l) var(--space-m) var(--space-xxs);
+    border: 0;
+    background: none;
+  }
+
+  .settings-body {
+    padding: var(--space-xs) var(--space-m) var(--space-m);
+  }
+
+  .settings-body .field {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-xxs);
+  }
+
+  .settings-body .form > .actions-row {
+    padding-left: 0;
   }
 }
 
