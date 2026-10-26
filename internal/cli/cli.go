@@ -111,20 +111,19 @@ Accounts and invites:
 
 Chat:
   chat log [--limit N]               recent messages, with threads
-  chat send <text> [--reply-to ID] [--item ID]
+  chat send <text> [--reply-to ID] [--item ID] [--action]
                                      post a message (or reply in a thread);
                                      --item ties it to a backlog item (e.g. a
-                                     status update about the item you work on)
+                                     status update about the item you work on);
+                                     --action asks the people it @mentions to
+                                     act (review a PR, answer, set something up)
   chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 (or +1,
                                      -1, heart, muscle, 100)
 
-Inbox (what a human must act on; status updates go to chat):
-  inbox [--all]                      your inbox (members): open entries, or all
-  inbox send <text> [--to NAME] [--item ID] [--url URL]
-                                     ask a member to act (review a PR, answer a
-                                     question, set something up); an agent's
-                                     default --to is the member it acts for
-  inbox dismiss <id>                 done with an entry (inbox restore <id> undoes)
+Actions (chat messages sent with --action that ask you to act):
+  actions                            what asks you and isn't done yet
+  done <message-id> [--undo]         mark one done (replying in its thread or
+                                     reacting to it does too); --undo reopens it
 
 Backlog (#1 is the highest priority):
   backlog [list] [--status open|assigned|done|all]
@@ -250,8 +249,10 @@ func run(args []string, stdout io.Writer) error {
 		return a.logout(rest)
 	case "invite", "invites":
 		return a.invites(cmd, rest)
-	case "inbox":
-		return a.inbox(rest)
+	case "actions":
+		return a.actions(rest)
+	case "done":
+		return a.done(rest)
 	case "pass":
 		return a.pass(rest)
 	case "sessions":
@@ -917,7 +918,7 @@ func (a *app) printMessage(people map[int64]store.Participant, m store.Message, 
 	}
 	when := time.UnixMilli(m.CreatedAt).Format("15:04")
 	body := strings.ReplaceAll(m.Body, "\n", "\n"+indent+"      ")
-	a.printf("%s[#%d %s] %s%s%s: %s%s\n", indent, m.ID, when, label(people, m.AuthorID), itemMarker(m), thread, body, reactionSummary(m))
+	a.printf("%s[#%d %s] %s%s%s%s: %s%s\n", indent, m.ID, when, label(people, m.AuthorID), itemMarker(m), actionMarker(people, m), thread, body, reactionSummary(m))
 }
 
 // reactionSummary is "  · 👍 2 ❤️ 1" for a message with reactions.
@@ -992,6 +993,7 @@ func (a *app) chatSend(args []string) error {
 	fs := flag.NewFlagSet("chat send", flag.ContinueOnError)
 	replyTo := fs.String("reply-to", "", "message ID to reply to (threads)")
 	item := fs.String("item", "", "backlog item ID the message is about")
+	action := fs.Bool("action", false, "ask the people the message @mentions to act")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -1000,6 +1002,9 @@ func (a *app) chatSend(args []string) error {
 		return fmt.Errorf("%w: chat send <text>", errUsage)
 	}
 	body := map[string]any{"body": strings.Join(pos, " ")}
+	if *action {
+		body["action_required"] = true
+	}
 	for key, v := range map[string]string{"parent_id": *replyTo, "item_id": *item} {
 		if v == "" {
 			continue
@@ -1014,11 +1019,18 @@ func (a *app) chatSend(args []string) error {
 	if ok, err := a.call("POST", "/messages", body, &m, true); !ok {
 		return err
 	}
+	about := ""
 	if m.Item != nil {
-		a.printf("Sent message #%d about #%d %q.\n", m.ID, m.Item.ID, m.Item.Title)
-	} else {
-		a.printf("Sent message #%d.\n", m.ID)
+		about = fmt.Sprintf(" about #%d %q", m.Item.ID, m.Item.Title)
 	}
+	if m.ActionRequired {
+		people, err := a.participants()
+		if err != nil {
+			return err
+		}
+		about += actionMarker(people, m)
+	}
+	a.printf("Sent message #%d%s.\n", m.ID, about)
 	return nil
 }
 
@@ -1772,7 +1784,7 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		if m.Item != nil {
 			where += fmt.Sprintf(" (about item #%d %q)", m.Item.ID, m.Item.Title)
 		}
-		return fmt.Sprintf("💬 [#%d] %s%s: %s", m.ID, who, where, m.Body)
+		return fmt.Sprintf("💬 [#%d] %s%s%s: %s", m.ID, who, actionMarker(people, m), where, m.Body)
 	case strings.HasPrefix(e.Type, "backlog."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)

@@ -48,7 +48,8 @@ func NormalizeReaction(s string) (string, error) {
 // React puts (on) or takes back (off) the actor's emoji reaction on a
 // message of its workspace, and returns the message with its reactions.
 // Repeating either is a no-op without an event; a change records
-// message.reacted with the message.
+// message.reacted with the message. Reacting to a message that asks the
+// actor to act marks it done for the actor's account.
 func (s *Store) React(ctx context.Context, actor *Participant, messageID int64, emoji string, on bool) (*Message, []Event, error) {
 	emoji, err := NormalizeReaction(emoji)
 	if err != nil {
@@ -70,8 +71,13 @@ func (s *Store) React(ctx context.Context, actor *Participant, messageID int64, 
 		if err != nil {
 			return err
 		}
+		if on {
+			if err := markDoneIfAsked(t, actor, messageID, log.now); err != nil {
+				return err
+			}
+		}
 		msgs := []Message{*m}
-		if err := attachReactions(t.Query, actor.WorkspaceID, msgs); err != nil {
+		if err := attachDetails(t.Query, actor.WorkspaceID, msgs); err != nil {
 			return err
 		}
 		m = &msgs[0]
@@ -86,9 +92,10 @@ func (s *Store) React(ctx context.Context, actor *Participant, messageID int64, 
 	return m, evs, nil
 }
 
-// GetMessage returns one message of a workspace, with its reactions.
+// GetMessage returns one message of a workspace, with its reactions and
+// actions.
 func (s *Store) GetMessage(ctx context.Context, wsID string, id int64) (*Message, error) {
-	msgs, err := s.withReactions(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.id = ? AND m.workspace_id = ?`, id, wsID)))
+	msgs, err := s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.id = ? AND m.workspace_id = ?`, id, wsID)))
 	if err != nil {
 		return nil, err
 	}

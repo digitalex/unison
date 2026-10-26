@@ -1,11 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, FolderGit2, Inbox as InboxIcon, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
-import Inbox from "./Inbox.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { agentStatus } from "./agents.js";
 import { repoName } from "./repos.js";
@@ -21,13 +20,12 @@ const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
-  // A message about an item changes the item's message count.
-  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog"] : ["messages"];
+  // A message about an item changes the item's message count; one that asks
+  // you to act (or is done) changes your count of open actions (on /me).
+  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog", "me"] : ["messages", "me"];
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
-  // Inbox events say only whose inbox changed; refetching gets ours.
-  if (type.startsWith("inbox.")) return ["inbox"];
   // Members list each member's participants (names, emoji, links).
   if (type.startsWith("participant.")) return ["participants", "members"];
   if (type.startsWith("member.")) return ["members"];
@@ -45,7 +43,7 @@ function isGateError(e) {
 
 // Workspace is a workspace's page. A sidebar (a tab bar at the bottom on
 // phones) switches between its screens, and the current one fills the main
-// pane: view is "inbox", "backlog", "chat" or "settings". They all share the
+// pane: view is "backlog", "chat" or "settings". They all share the
 // data and live updates.
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
@@ -63,7 +61,6 @@ export default function Workspace({ id, view, navigate, account }) {
   const [webhooks, setWebhooks] = useState([]);
   const [members, setMembers] = useState({ members: [], unlinked: [] });
   const [invites, setInvites] = useState([]);
-  const [inbox, setInbox] = useState([]);
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
@@ -80,8 +77,6 @@ export default function Workspace({ id, view, navigate, account }) {
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
-    // Members have an inbox; anyone else (403) just has nothing in it.
-    inbox: () => call("GET", "/inbox").then(setInbox, () => setInbox([])),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
     me: () => call("GET", "/me").then(setMe, (e) => (e instanceof ApiError && e.code === "join_first" ? setMe(null) : Promise.reject(e))),
   };
@@ -126,7 +121,7 @@ export default function Workspace({ id, view, navigate, account }) {
   if (gate) return <GatePage gate={gate} account={account} workspaceId={id} onJoined={onJoined} />;
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
-  const counts = { inbox: inbox.length, backlog: backlog.filter((it) => it.status !== "done").length, chat: unread };
+  const counts = { backlog: backlog.filter((it) => it.status !== "done").length, chat: unread, actions: me?.open_actions || 0 };
   // The screen header's controls on phones: Invite and the account menu.
   const headExtras = (
     <HeadExtras workspace={workspace} call={call} account={account} members={members} settingsLink={screens.link("settings")} />
@@ -190,8 +185,6 @@ export default function Workspace({ id, view, navigate, account }) {
               {errorBar}
               <JoinCard workspaceId={id} account={account} onJoined={onJoined} />
             </>
-          ) : view === "inbox" ? (
-            <Inbox entries={inbox} participants={participants} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : view === "chat" ? (
             <Chat
               messages={messages}
@@ -220,8 +213,8 @@ export default function Workspace({ id, view, navigate, account }) {
 
 // useScreens moves between the workspace's screens: link(screen) gives an
 // <a>'s props, show(screen, rest) goes there (rest: a query or hash to
-// keep). Links that open a backlog item from another screen (OPEN_ITEM: an
-// inbox entry's or a chat message's chip) go to the backlog, which opens it.
+// keep). Links that open a backlog item from another screen (OPEN_ITEM: a
+// chat message's chip) go to the backlog, which opens it.
 function useScreens(id, view, navigate) {
   const path = (screen) => (screen === "backlog" ? `/w/${id}` : `/w/${id}/${screen}`);
   const current = useRef(view);
@@ -297,18 +290,20 @@ function useShownMessage(show) {
 }
 
 const SCREENS = [
-  { id: "inbox", label: "Inbox", Icon: InboxIcon },
   { id: "backlog", label: "Backlog", Icon: ListTodo },
   { id: "chat", label: "Chat", Icon: MessageCircle },
 ];
 
-// The count beside a screen's name: the inbox's entries and the open backlog
-// as numbers, chat's unread messages as a dot.
+// The count beside a screen's name: the open backlog as a number; for chat,
+// the messages that need you (strong), else new messages as a dot.
 function ScreenCount({ screen, counts }) {
-  const n = counts[screen];
-  if (!n) return null;
-  if (screen === "chat") return <span className="nav-unread" aria-label={`${n} new message${n === 1 ? "" : "s"}`} />;
-  return <span className={screen === "inbox" ? "nav-count nav-count-strong" : "nav-count"}>{n}</span>;
+  if (screen === "chat") {
+    const { actions, chat } = counts;
+    if (actions) return <span className="nav-count nav-count-strong" aria-label={`${actions} need${actions === 1 ? "s" : ""} you`}>{actions}</span>;
+    if (chat) return <span className="nav-unread" aria-label={`${chat} new message${chat === 1 ? "" : "s"}`} />;
+    return null;
+  }
+  return counts[screen] ? <span className="nav-count">{counts[screen]}</span> : null;
 }
 
 // Sidebar: the workspace's navigation on wide screens. It has no panel of

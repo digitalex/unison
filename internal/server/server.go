@@ -107,13 +107,12 @@ func (s *Server) routes() {
 	h("GET "+ws+"/participants", s.listParticipants)
 	h("GET "+ws+"/messages", s.listMessages)
 	h("POST "+ws+"/messages", s.auth(s.postMessage))
-	h("GET "+ws+"/inbox", s.listInbox)
-	h("POST "+ws+"/inbox", s.auth(s.sendInbox))
-	h("POST "+ws+"/inbox/{id}/dismiss", s.dismissInbox(true))
-	h("POST "+ws+"/inbox/{id}/restore", s.dismissInbox(false))
+	h("GET "+ws+"/actions", s.auth(s.listActions))
 	h("GET "+ws+"/messages/{id}", s.getMessage)
 	h("PUT "+ws+"/messages/{id}/reactions/{emoji}", s.auth(s.react(true)))
 	h("DELETE "+ws+"/messages/{id}/reactions/{emoji}", s.auth(s.react(false)))
+	h("POST "+ws+"/messages/{id}/done", s.auth(s.markDone(true)))
+	h("DELETE "+ws+"/messages/{id}/done", s.auth(s.markDone(false)))
 	h("GET "+ws+"/backlog", s.listBacklog)
 	h("POST "+ws+"/backlog", s.auth(s.addItem))
 	h("POST "+ws+"/backlog/claim", s.auth(s.claimNext))
@@ -440,15 +439,36 @@ func (s *Server) react(on bool) http.HandlerFunc {
 
 func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Body     string `json:"body"`
-		ParentID *int64 `json:"parent_id"`
-		ItemID   *int64 `json:"item_id"`
+		Body           string `json:"body"`
+		ParentID       *int64 `json:"parent_id"`
+		ItemID         *int64 `json:"item_id"`
+		ActionRequired bool   `json:"action_required"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	m, evs, err := s.store.PostMessage(r.Context(), actor(r), req.Body, req.ParentID, req.ItemID)
+	m, evs, err := s.store.Post(r.Context(), actor(r), store.NewMessage{Body: req.Body, ParentID: req.ParentID, ItemID: req.ItemID, ActionRequired: req.ActionRequired})
 	s.respond(w, http.StatusCreated, m, evs, err)
+}
+
+// markDone marks message {id}, which asks you to act, done (or not done)
+// for your account, responding with the message.
+func (s *Server) markDone(done bool) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		id, ok := pathID(w, r)
+		if !ok {
+			return
+		}
+		m, evs, err := s.store.SetDone(r.Context(), actor(r), id, done)
+		s.respond(w, http.StatusOK, m, evs, err)
+	}
+}
+
+// listActions lists the messages that ask you (your account) to act and
+// that you haven't marked done, newest first.
+func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.OpenActions(r.Context(), actor(r))
+	s.respond(w, http.StatusOK, list, nil, err)
 }
 
 // ---- Backlog ----
