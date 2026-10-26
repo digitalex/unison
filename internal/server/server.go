@@ -26,6 +26,9 @@ type Server struct {
 	store *store.Store
 	web   fs.FS
 	mux   *http.ServeMux
+	// ws holds the workspace routes; it is reachable only through gate.
+	ws       *http.ServeMux
+	wsRoutes []string // their patterns (the route-walk test checks each)
 
 	// notify is closed and replaced whenever new events are recorded; it
 	// wakes long-polls (`unison wait`) and SSE streams. The broadcast is
@@ -40,7 +43,7 @@ type Server struct {
 // New returns a Server backed by st. web holds the built UI (index.html at
 // its root) and may be nil.
 func New(st *store.Store, web fs.FS) *Server {
-	s := &Server{store: st, web: web, mux: http.NewServeMux(), notify: make(chan struct{})}
+	s := &Server{store: st, web: web, mux: http.NewServeMux(), ws: http.NewServeMux(), notify: make(chan struct{})}
 	s.SetAuth(AuthConfig{})
 	s.routes()
 	return s
@@ -74,56 +77,69 @@ func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/workspaces", s.listWorkspaces)
 	m.HandleFunc("POST /api/workspaces", s.createWorkspace)
-	m.HandleFunc("GET "+ws, s.getWorkspace)
-	m.HandleFunc("PATCH "+ws, s.auth(s.updateWorkspace))
+	// Everything under a workspace goes through the gate (gate.go)...
+	m.Handle(ws, s.gate(s.ws))
+	m.Handle(ws+"/", s.gate(s.ws))
+	// ...except joining, which is how you get in, and the doorway.
 	m.HandleFunc("POST "+ws+"/join", s.join)
-	m.HandleFunc("GET "+ws+"/repos", s.listRepos)
-	m.HandleFunc("POST "+ws+"/repos", s.auth(s.addRepo))
-	m.HandleFunc("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
-	m.HandleFunc("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
-	m.HandleFunc("GET "+ws+"/me", s.auth(s.me))
-	m.HandleFunc("PATCH "+ws+"/me", s.auth(s.updateMe))
-	m.HandleFunc("POST "+ws+"/claim", s.requireUser(s.claim))
-	m.HandleFunc("POST "+ws+"/passes", s.requireUser(s.mintPass))
-	m.HandleFunc("GET "+ws+"/members", s.listMembers)
-	m.HandleFunc("DELETE "+ws+"/members/{user}", s.requireUser(s.removeMember))
-	m.HandleFunc("GET "+ws+"/participants", s.listParticipants)
-	m.HandleFunc("GET "+ws+"/messages", s.listMessages)
-	m.HandleFunc("POST "+ws+"/messages", s.auth(s.postMessage))
-	m.HandleFunc("GET "+ws+"/backlog", s.listBacklog)
-	m.HandleFunc("POST "+ws+"/backlog", s.auth(s.addItem))
-	m.HandleFunc("POST "+ws+"/backlog/claim", s.auth(s.claimNext))
-	m.HandleFunc("GET "+ws+"/backlog/{id}", s.getItem)
-	m.HandleFunc("PATCH "+ws+"/backlog/{id}", s.auth(s.updateItem))
-	m.HandleFunc("DELETE "+ws+"/backlog/{id}", s.auth(s.deleteItem))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/move", s.auth(s.moveItem))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/assign", s.auth(s.assignItem))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
-	m.HandleFunc("GET "+ws+"/backlog/{id}/comments", s.listComments)
-	m.HandleFunc("POST "+ws+"/backlog/{id}/comments", s.auth(s.addComment))
-	m.HandleFunc("DELETE "+ws+"/backlog/{id}/comments/{cid}", s.auth(s.deleteComment))
-	m.HandleFunc("POST "+ws+"/backlog/{id}/prs", s.auth(s.linkPR))
-	m.HandleFunc("DELETE "+ws+"/backlog/{id}/prs", s.auth(s.unlinkPR))
-	m.HandleFunc("GET "+ws+"/webhooks", s.listWebhooks)
-	m.HandleFunc("POST "+ws+"/webhooks", s.auth(s.addWebhook))
-	m.HandleFunc("GET "+ws+"/webhooks/{id}", s.getWebhook)
-	m.HandleFunc("PATCH "+ws+"/webhooks/{id}", s.auth(s.editWebhook))
-	m.HandleFunc("DELETE "+ws+"/webhooks/{id}", s.auth(s.deleteWebhook))
-	m.HandleFunc("POST "+ws+"/webhooks/{id}/rotate", s.auth(s.rotateWebhook))
-	m.HandleFunc("GET "+ws+"/webhooks/{id}/secret", s.auth(s.webhookSecret))
-	m.HandleFunc("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
-	// Payloads can carry data meant for the workspace only: auth required.
-	m.HandleFunc("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
-	m.HandleFunc("POST /hooks/{token}", s.receiveHook)
-	m.HandleFunc("GET "+ws+"/events", s.events)
-	m.HandleFunc("GET "+ws+"/stream", s.stream)
 	m.HandleFunc("GET /agent.md", s.doorway)
 	m.HandleFunc("GET /w/{ws}/agent.md", s.doorway)
+	m.HandleFunc("POST /hooks/{token}", s.receiveHook)
 	m.HandleFunc("GET /download/unison", s.download)
 	s.authRoutes()
 	m.HandleFunc("/", s.serveWeb)
+
+	h := s.handleWS
+	h("GET "+ws, s.getWorkspace)
+	h("PATCH "+ws, s.auth(s.updateWorkspace))
+	h("GET "+ws+"/repos", s.listRepos)
+	h("POST "+ws+"/repos", s.auth(s.addRepo))
+	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
+	h("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
+	h("GET "+ws+"/me", s.auth(s.me))
+	h("PATCH "+ws+"/me", s.auth(s.updateMe))
+	h("POST "+ws+"/passes", s.requireUser(s.mintPass))
+	h("GET "+ws+"/members", s.listMembers)
+	h("DELETE "+ws+"/members/{user}", s.requireUser(s.removeMember))
+	h("GET "+ws+"/invites", s.listInvites)
+	h("POST "+ws+"/invites", s.requireUser(s.createInvite))
+	h("DELETE "+ws+"/invites/{id}", s.requireUser(s.revokeInvite))
+	h("GET "+ws+"/participants", s.listParticipants)
+	h("GET "+ws+"/messages", s.listMessages)
+	h("POST "+ws+"/messages", s.auth(s.postMessage))
+	h("GET "+ws+"/backlog", s.listBacklog)
+	h("POST "+ws+"/backlog", s.auth(s.addItem))
+	h("POST "+ws+"/backlog/claim", s.auth(s.claimNext))
+	h("GET "+ws+"/backlog/{id}", s.getItem)
+	h("PATCH "+ws+"/backlog/{id}", s.auth(s.updateItem))
+	h("DELETE "+ws+"/backlog/{id}", s.auth(s.deleteItem))
+	h("POST "+ws+"/backlog/{id}/move", s.auth(s.moveItem))
+	h("POST "+ws+"/backlog/{id}/assign", s.auth(s.assignItem))
+	h("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
+	h("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
+	h("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
+	h("GET "+ws+"/backlog/{id}/comments", s.listComments)
+	h("POST "+ws+"/backlog/{id}/comments", s.auth(s.addComment))
+	h("DELETE "+ws+"/backlog/{id}/comments/{cid}", s.auth(s.deleteComment))
+	h("POST "+ws+"/backlog/{id}/prs", s.auth(s.linkPR))
+	h("DELETE "+ws+"/backlog/{id}/prs", s.auth(s.unlinkPR))
+	h("GET "+ws+"/webhooks", s.listWebhooks)
+	h("POST "+ws+"/webhooks", s.auth(s.addWebhook))
+	h("GET "+ws+"/webhooks/{id}", s.getWebhook)
+	h("PATCH "+ws+"/webhooks/{id}", s.auth(s.editWebhook))
+	h("DELETE "+ws+"/webhooks/{id}", s.auth(s.deleteWebhook))
+	h("POST "+ws+"/webhooks/{id}/rotate", s.auth(s.rotateWebhook))
+	h("GET "+ws+"/webhooks/{id}/secret", s.auth(s.webhookSecret))
+	h("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
+	h("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
+	h("GET "+ws+"/events", s.events)
+	h("GET "+ws+"/stream", s.stream)
+}
+
+// handleWS registers a workspace route behind the gate.
+func (s *Server) handleWS(pattern string, h http.HandlerFunc) {
+	s.ws.HandleFunc(pattern, h)
+	s.wsRoutes = append(s.wsRoutes, pattern)
 }
 
 // ---- Plumbing ----
@@ -152,27 +168,6 @@ func token(r *http.Request) string {
 		return strings.TrimPrefix(h, "Bearer ")
 	}
 	return r.URL.Query().Get("token")
-}
-
-// auth requires a session token belonging to the workspace in the path.
-func (s *Server) auth(h http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		p, err := s.store.Authenticate(r.Context(), token(r))
-		if errors.Is(err, store.ErrRevoked) {
-			writeError(w, http.StatusUnauthorized, err.Error())
-			return
-		}
-		if err != nil {
-			writeError(w, http.StatusUnauthorized, "missing or invalid session token; join the workspace first (POST /api/workspaces/{ws}/join)")
-			return
-		}
-		if p.WorkspaceID != r.PathValue("ws") {
-			writeError(w, http.StatusForbidden, "this session token belongs to workspace "+p.WorkspaceID)
-			return
-		}
-		s.touch(r.Context(), p)
-		h(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, p)))
-	}
 }
 
 // touch records activity, at most every few seconds per participant.
@@ -249,8 +244,19 @@ func pathInt(w http.ResponseWriter, r *http.Request, name string) (int64, bool) 
 
 // ---- Workspaces ----
 
+// listWorkspaces lists the caller's workspaces (all of them in open mode).
 func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
-	list, err := s.store.ListWorkspaces(r.Context())
+	if s.authCfg.Open {
+		list, err := s.store.ListWorkspaces(r.Context())
+		s.respond(w, http.StatusOK, list, nil, err)
+		return
+	}
+	a, err := s.currentUser(r)
+	if err != nil {
+		writeErrorCode(w, http.StatusUnauthorized, codeSignIn, "sign in to see your workspaces")
+		return
+	}
+	list, err := s.store.ListWorkspacesFor(r.Context(), a.user.ID)
 	s.respond(w, http.StatusOK, list, nil, err)
 }
 
@@ -261,10 +267,18 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 		Repos     []store.RepoInput `json:"repos"`
 		CanvasURL string            `json:"canvas_url"`
 	}
-	if !s.mayCreateWorkspace(w, r) || !decode(w, r, &req) {
+	creator, ok := s.mayCreateWorkspace(w, r)
+	if !ok || !decode(w, r, &req) {
 		return
 	}
-	ws, evs, err := s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
+	var ws *store.Workspace
+	var evs []store.Event
+	var err error
+	if creator != nil {
+		ws, evs, err = s.store.CreateWorkspaceFor(r.Context(), creator.ID, req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
+	} else {
+		ws, evs, err = s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
+	}
 	s.respond(w, http.StatusCreated, ws, evs, err)
 }
 
@@ -321,20 +335,28 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name  string `json:"name"`
-		Emoji string `json:"emoji"`
-		Pass  string `json:"pass"`
+		Name   string `json:"name"`
+		Emoji  string `json:"emoji"`
+		Pass   string `json:"pass"`
+		Invite string `json:"invite"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
+	// Agents join with a pass.
 	if req.Pass != "" {
 		p, tok, evs, err := s.store.JoinWithPass(r.Context(), r.PathValue("ws"), req.Pass, req.Name, req.Emoji)
 		s.respond(w, http.StatusCreated, map[string]any{"participant": p, "token": tok}, evs, err)
 		return
 	}
+	// Humans join signed in: as a member, or with an invite.
 	if u := s.joiningUser(r); u != nil {
-		s.joinAsUser(w, r, u, req.Name, req.Emoji)
+		s.joinAsUser(w, r, u, req.Name, req.Emoji, req.Invite)
+		return
+	}
+	if !s.authCfg.Open {
+		writeErrorCode(w, http.StatusUnauthorized, codeSignIn,
+			"joining needs an invite: agents join with the pass from their invite (--pass); humans sign in (`unison login`, then `unison join <url> --account`)")
 		return
 	}
 	p, tok, evs, err := s.store.Join(r.Context(), r.PathValue("ws"), req.Name, req.Emoji)
@@ -683,15 +705,23 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 func (s *Server) doorway(w http.ResponseWriter, r *http.Request) {
 	origin := requestOrigin(r)
 	var ws *store.Workspace
+	var pass string
 	if id := r.PathValue("ws"); id != "" {
 		var err error
 		if ws, err = s.store.GetWorkspace(r.Context(), id); err != nil {
-			storeError(w, err)
+			// Unknown and private look alike to outsiders.
+			if _, ok := s.doorwayAccess(w, r, &store.Workspace{ID: id}); ok {
+				storeError(w, err)
+			}
+			return
+		}
+		var ok bool
+		if pass, ok = s.doorwayAccess(w, r, ws); !ok {
 			return
 		}
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	fmt.Fprint(w, guide.Doorway(origin, ws))
+	fmt.Fprint(w, guide.Doorway(origin, ws, pass))
 }
 
 // download serves this server's own binary, which is also the CLI. It only

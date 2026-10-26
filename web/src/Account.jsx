@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { Check, Link2, LogIn, LogOut, SquareTerminal, UserRound, X } from "lucide-react";
+import { Check, LogIn, LogOut, SquareTerminal, UserRound, X } from "lucide-react";
 import { api } from "./api.js";
 import { spaLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
@@ -8,8 +8,8 @@ import { Input } from "./ui/Input.jsx";
 import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
-// Accounts (optional): sign in with GitHub or Google. Nothing in a
-// workspace needs it yet; participants still join with a name.
+// Accounts: sign in with GitHub or Google. Workspaces are private to their
+// members, so people sign in to open theirs or to accept an invite.
 
 // useAccount loads the configured providers and the signed-in user.
 export function useAccount() {
@@ -87,7 +87,7 @@ export function AccountMenu({ account }) {
         {() => (
           <>
             <div className="popover-title">Sign in to Unison</div>
-            <p className="muted account-note">Optional for now: workspaces still work by joining with a name.</p>
+            <p className="muted account-note">Workspaces are private: sign in to open yours or to accept an invite.</p>
             <SignInOptions providers={providers} />
           </>
         )}
@@ -246,44 +246,5 @@ function DeviceResult({ result }) {
     <p className="device-result">
       <X aria-hidden="true" /> Denied. The terminal was not signed in.
     </p>
-  );
-}
-
-// ClaimPrompt offers to link this browser's participant to the signed-in
-// account ("This is you?"). Links are per browser: each device's
-// participant is linked by signing in on it. Dismissal is remembered here.
-export function ClaimPrompt({ me, account, workspaceId, call, onClaimed, onError }) {
-  const key = `unison.claimDismissed.${workspaceId}.${me.id}`;
-  const [dismissed, setDismissed] = useState(() => localStorage.getItem(key) === "1");
-  if (!account.user || me.user_id || dismissed) return null;
-  const link = async () => {
-    try {
-      const p = await call("POST", "/claim");
-      onClaimed({ ...me, user_id: p.user_id, user: { id: account.user.id, display_name: account.user.display_name } });
-    } catch (e) {
-      onError(e.message);
-    }
-  };
-  const dismiss = () => {
-    localStorage.setItem(key, "1");
-    setDismissed(true);
-  };
-  return (
-    <div className="claim-prompt" role="status">
-      <Link2 aria-hidden="true" />
-      <span className="claim-text">
-        This is you? Link{" "}
-        <strong>
-          {me.emoji} {me.name}
-        </strong>{" "}
-        to your account.
-      </span>
-      <Button variant="primary" onClick={link}>
-        Link
-      </Button>
-      <Button variant="ghost" iconOnly aria-label="Dismiss" title="Dismiss" onClick={dismiss}>
-        <X aria-hidden="true" />
-      </Button>
-    </div>
   );
 }

@@ -35,7 +35,7 @@ func (s *Store) MintPass(ctx context.Context, wsID string, userID int64) (string
 			if err != nil {
 				return err
 			}
-			return fmt.Errorf("%w: only members can invite agents (join this workspace while signed in, or `unison claim`)", ErrForbidden)
+			return fmt.Errorf("%w: only members can invite agents (join this workspace while signed in: `unison join <url> --account`)", ErrForbidden)
 		}
 		// Expired passes are useless: prune them as we go.
 		if _, err := t.Exec(`DELETE FROM agent_passes WHERE expires_at <= ? AND used_at IS NULL`, log.now-time.Hour.Milliseconds()); err != nil {

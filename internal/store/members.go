@@ -88,19 +88,13 @@ func usersParticipant(t *tx, wsID string, userID int64) (*Participant, string, e
 // existing token instead of creating a duplicate (existing = true);
 // otherwise a new participant is created linked to the user. Either way the
 // user is (or becomes) a member.
+//
+// JoinAsUser does no authorization: it is the open-mode join (UNISON_AUTH=off)
+// and a test helper. Enforced joins use JoinWorkspace.
 func (s *Store) JoinAsUser(ctx context.Context, wsID string, userID int64, name, emoji string) (p *Participant, token string, existing bool, evs []Event, err error) {
 	evs, err = s.tx(ctx, func(t *tx, log *eventLog) error {
-		p, token, err = usersParticipant(t, wsID, userID)
-		existing = err == nil
-		if err != nil && !errors.Is(err, ErrNotFound) {
-			return err
-		}
-		if !existing {
-			if p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{UserID: userID}); err != nil {
-				return err
-			}
-		}
-		return ensureMembership(t, log, wsID, userID, p.ID)
+		p, token, existing, err = joinAsUser(t, log, wsID, userID, name, emoji)
+		return err
 	})
 	if err != nil {
 		return nil, "", false, nil, err
@@ -108,46 +102,18 @@ func (s *Store) JoinAsUser(ctx context.Context, wsID string, userID int64, name,
 	return p, token, existing, evs, nil
 }
 
-// Claim links the participant holding participantToken (proof of
-// possession) to the user and makes the user a member. Claiming several
-// participants into one user is fine; each keeps its own name in history.
-// Claiming a participant already linked to the user is a no-op; one linked
-// to someone else is ErrConflict.
-func (s *Store) Claim(ctx context.Context, wsID string, userID int64, participantToken string) (*Participant, []Event, error) {
-	var p *Participant
-	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		var err error
-		p, err = scanParticipant(t.QueryRow(`SELECT `+participantCols+` FROM participants WHERE token = ?`, participantToken))
-		if participantToken == "" || errors.Is(err, ErrNotFound) || (err == nil && p.WorkspaceID != wsID) {
-			return fmt.Errorf("%w: that participant token is not valid in this workspace (run claim where you joined)", ErrForbidden)
-		}
-		if err != nil {
-			return err
-		}
-		switch p.UserID {
-		case userID:
-			return ensureMembership(t, log, wsID, userID, p.ID)
-		case 0:
-		default:
-			return fmt.Errorf("%w: %s is already linked to another account", ErrConflict, p.Name)
-		}
-		name, err := displayName(t, userID)
-		if err != nil {
-			return err
-		}
-		if _, err := t.Exec(`UPDATE participants SET user_id = ? WHERE id = ?`, userID, p.ID); err != nil {
-			return err
-		}
-		p.UserID = userID
-		if err := log.add(wsID, "participant.claimed", p.ID, map[string]any{"participant": p, "user_id": userID, "display_name": name}); err != nil {
-			return err
-		}
-		return ensureMembership(t, log, wsID, userID, p.ID)
-	})
-	if err != nil {
-		return nil, nil, err
+func joinAsUser(t *tx, log *eventLog, wsID string, userID int64, name, emoji string) (p *Participant, token string, existing bool, err error) {
+	p, token, err = usersParticipant(t, wsID, userID)
+	existing = err == nil
+	if err != nil && !errors.Is(err, ErrNotFound) {
+		return nil, "", false, err
 	}
-	return p, evs, nil
+	if !existing {
+		if p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{UserID: userID}); err != nil {
+			return nil, "", false, err
+		}
+	}
+	return p, token, existing, ensureMembership(t, log, wsID, userID, p.ID)
 }
 
 // ListMembers returns the workspace's members (oldest first) and the
@@ -225,4 +191,11 @@ func (s *Store) RemoveMember(ctx context.Context, wsID string, byUserID, userID 
 		}
 		return log.add(wsID, "member.removed", actor, memberEvent{UserID: userID, DisplayName: name})
 	})
+}
+
+// UserParticipant returns the user's most recently active participant in the
+// workspace (the one their account acts as there), or ErrNotFound.
+func (s *Store) UserParticipant(ctx context.Context, wsID string, userID int64) (*Participant, error) {
+	return scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants
+		WHERE workspace_id = ? AND user_id = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1`, wsID, userID))
 }

@@ -35,9 +35,10 @@ func TestProfileCommands(t *testing.T) {
 	if _, errOut, code := e.run(human, "sessions"); code == 0 || !strings.Contains(errOut, "unison login") {
 		t.Errorf("sessions before login: exit %d %q", code, errOut)
 	}
-	ws, _, _ := st.CreateWorkspace(t.Context(), "Unison", "", "")
+	owner, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "owner", Name: "Owner"})
+	ws, _, _ := st.CreateWorkspaceFor(t.Context(), owner.ID, "Unison", "", "")
 	invite := ts.URL + "/w/" + ws.ID
-	alex, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "1", Name: "Alex"})
+	alex, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "1", Name: "Alex", Email: "alex@example.com", EmailVerified: true})
 	browser, _, _ := st.CreateSession(t.Context(), alex.ID, store.SessionBrowser, "Chrome on Linux")
 	deviceLogin(t, ts.URL, browser)
 
@@ -49,6 +50,10 @@ func TestProfileCommands(t *testing.T) {
 		t.Errorf("agents before any = %q", out)
 	}
 
+	if _, _, _, _, err := st.JoinWorkspace(t.Context(), ws.ID, alex.ID, "", "", ""); err == nil {
+		t.Fatal("joined a workspace without an invite")
+	}
+	st.CreateEmailInvite(t.Context(), ws.ID, owner.ID, "alex@example.com")
 	e.ok(human, "join", invite, "--name", "Alex", "--account")
 	m := regexp.MustCompile(`--pass (up_\S+)`).FindStringSubmatch(e.ok(human, "pass"))
 	if m == nil {

@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net/http"
 	"strings"
 	"testing"
 	"time"
@@ -17,7 +18,7 @@ func TestPassesAPI(t *testing.T) {
 	_, legacyTok, _, _ := e.st.Join(ctx, ws.ID, "Old", "")
 	ada, _ := e.login("github", "/", adaGitHub, adaGitHubEmails)
 	bob, _ := e.login("google", "/", bobGoogle, nil)
-	e.do("POST", base+"/join", `{"name":"Ada"}`, withCookie(ada), withCSRF())
+	e.memberJoins(ada, ws.ID, "Ada")
 
 	for name, tc := range map[string]struct {
 		opts []reqOpt
@@ -39,7 +40,8 @@ func TestPassesAPI(t *testing.T) {
 		prompt, _ := out["invite_prompt"].(string)
 		if resp.StatusCode != 201 || !strings.HasPrefix(pass, store.AgentPassPrefix) || out["expires_at"] == nil ||
 			!strings.Contains(prompt, "unison join "+e.ts.URL+"/w/"+ws.ID+" --pass "+pass) ||
-			!strings.Contains(prompt, "expires in 15 minutes") || !strings.Contains(prompt, "agent of Ada Lovelace") {
+			!strings.Contains(prompt, "expires in 15 minutes") || !strings.Contains(prompt, "agent of Ada Lovelace") ||
+			!strings.Contains(prompt, e.ts.URL+"/w/"+ws.ID+"/agent.md?pass="+pass) {
 			t.Fatalf("mint = %d %v", resp.StatusCode, out)
 		}
 		return pass
@@ -76,7 +78,7 @@ func TestPassesAPI(t *testing.T) {
 
 	// Bob becomes a member and removes Ada: her agents stop working, with
 	// a clear message; everyone else is unaffected.
-	e.do("POST", base+"/join", `{"name":"Bob"}`, withCookie(bob), withCSRF())
+	bobTok := e.memberJoins(bob, ws.ID, "Bob")
 	_, adaUser := e.do("GET", "/api/me/user", "", withCookie(ada))
 	if resp, _ := e.do("DELETE", base+"/members/"+jsonID(adaUser["id"]), "", withCookie(bob), withCSRF()); resp.StatusCode != 200 {
 		t.Fatalf("remove sponsor = %d", resp.StatusCode)
@@ -85,8 +87,8 @@ func TestPassesAPI(t *testing.T) {
 	if resp.StatusCode != 401 || !strings.Contains(out["error"].(string), "Ada Lovelace, who invited this agent, is no longer a member") {
 		t.Errorf("agent of a removed sponsor = %d %v", resp.StatusCode, out)
 	}
-	if resp, _ := e.do("POST", base+"/messages", `{"body":"hi"}`, withBearer(legacyTok)); resp.StatusCode != 201 {
-		t.Errorf("legacy participant after removal = %d", resp.StatusCode)
+	if resp, _ := e.do("POST", base+"/messages", `{"body":"hi"}`, withBearer(bobTok)); resp.StatusCode != 201 {
+		t.Errorf("a member after another member's removal = %d", resp.StatusCode)
 	}
 }
 
@@ -106,7 +108,19 @@ func TestAgentCredentialExpiryAPI(t *testing.T) {
 	if resp.StatusCode != 401 || !strings.Contains(out["error"].(string), "ask your human for a new invite") {
 		t.Errorf("idle agent = %d %v", resp.StatusCode, out)
 	}
-	if resp, _ := e.do("GET", me, "", withBearer(legacyTok)); resp.StatusCode != 200 {
-		t.Errorf("legacy participant = %d (never expires)", resp.StatusCode)
+	if resp, out := e.do("GET", me, "", withBearer(legacyTok)); resp.StatusCode != 401 || out["code"] != codeLegacy {
+		t.Errorf("legacy participant = %d %v (locked out since #17)", resp.StatusCode, out)
 	}
+}
+
+// memberJoins makes the user signed in with cookie c a member of wsID (as an
+// invite would) and returns their participant token.
+func (e *authEnv) memberJoins(c *http.Cookie, wsID, name string) string {
+	e.t.Helper()
+	_, me := e.do("GET", "/api/me/user", "", withCookie(c))
+	_, tok, _, _, err := e.st.JoinAsUser(e.t.Context(), wsID, int64(me["id"].(float64)), name, "")
+	if err != nil {
+		e.t.Fatal(err)
+	}
+	return tok
 }

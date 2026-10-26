@@ -5,17 +5,21 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/digitalex/unison/internal/store"
 )
 
 func TestReposAPI(t *testing.T) {
 	ts, st := newServer(t)
-	status, ws := call(t, "POST", ts.URL+"/api/workspaces", "",
+	u, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "ada", Name: "Ada"})
+	userTok, _, _ := st.CreateSession(t.Context(), u.ID, store.SessionCLI, "")
+	status, ws := call(t, "POST", ts.URL+"/api/workspaces", userTok,
 		`{"name":"Multi","repo_url":"https://github.com/acme/api","repos":[{"url":"https://github.com/acme/web","label":"frontend"}]}`)
 	if repos, _ := ws["repos"].([]any); status != http.StatusCreated || len(repos) != 2 || ws["repo_url"] != "https://github.com/acme/api" {
 		t.Fatalf("create = %d %v", status, ws)
 	}
 	wsID := ws["id"].(string)
-	_, token, _, _ := st.Join(t.Context(), wsID, "Ada", "")
+	_, token, _, _, _ := st.JoinAsUser(t.Context(), wsID, u.ID, "Ada", "") // The creator is a member.
 	base := ts.URL + "/api/workspaces/" + wsID + "/repos"
 
 	if status, _ := call(t, "POST", base, "", `{"url":"https://github.com/acme/docs"}`); status != http.StatusUnauthorized {
@@ -41,7 +45,7 @@ func TestReposAPI(t *testing.T) {
 	if status, _ := call(t, "DELETE", docsURL, token, ""); status != http.StatusNotFound {
 		t.Errorf("remove twice = %d, want 404", status)
 	}
-	if _, body := get(t, base); !strings.Contains(body, `"label":"frontend"`) || strings.Contains(body, "handbook") {
+	if _, body := getAs(t, base, token); !strings.Contains(body, `"label":"frontend"`) || strings.Contains(body, "handbook") {
 		t.Errorf("list = %s", body)
 	}
 	// The legacy repo_url PATCH edits the first repo.

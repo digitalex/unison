@@ -69,62 +69,6 @@ func TestJoinAsUserIsIdempotent(t *testing.T) {
 	}
 }
 
-func TestClaim(t *testing.T) {
-	s, now := newStore(t)
-	ctx := context.Background()
-	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
-	other, _, _ := s.CreateWorkspace(ctx, "Other", "", "")
-	alex, alexTok, _, _ := s.Join(ctx, ws.ID, "Alex", "🧑")
-	*now = now.Add(time.Second)
-	mobile, mobileTok, _, _ := s.Join(ctx, ws.ID, "Alexmobile", "📱")
-	_, agentTok, _, _ := s.Join(ctx, ws.ID, "Quill", "🦉")
-	_, otherTok, _, _ := s.Join(ctx, other.ID, "Alex", "")
-	u, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex L."})
-	bob, _ := s.LoginWithProvider(ctx, "google", Profile{Subject: "2", Name: "Bob"})
-
-	for name, tok := range map[string]string{"empty": "", "wrong": "0123456789abcdef0123456789abcdef", "other workspace": otherTok, "user token": "us_x"} {
-		if _, _, err := s.Claim(ctx, ws.ID, u.ID, tok); !errors.Is(err, ErrForbidden) {
-			t.Errorf("claim with %s token err = %v, want ErrForbidden", name, err)
-		}
-	}
-	p, evs, err := s.Claim(ctx, ws.ID, u.ID, alexTok)
-	if err != nil || p.ID != alex.ID || p.UserID != u.ID || !sameTypes(evs, "participant.claimed", "member.added") {
-		t.Fatalf("claim Alex = %+v %v %v", p, eventTypes(evs), err)
-	}
-	if p, evs, err = s.Claim(ctx, ws.ID, u.ID, mobileTok); err != nil || p.ID != mobile.ID || !sameTypes(evs, "participant.claimed") {
-		t.Fatalf("claim Alexmobile = %+v %v %v", p, eventTypes(evs), err)
-	}
-	if _, evs, err = s.Claim(ctx, ws.ID, u.ID, alexTok); err != nil || len(evs) != 0 {
-		t.Errorf("re-claim = %v %v, want a no-op", eventTypes(evs), err)
-	}
-	if _, _, err := s.Claim(ctx, ws.ID, bob.ID, alexTok); !errors.Is(err, ErrConflict) {
-		t.Errorf("claiming someone else's participant err = %v", err)
-	}
-
-	m, err := s.ListMembers(ctx, ws.ID)
-	if err != nil || len(m.Members) != 1 {
-		t.Fatalf("members = %+v %v", m, err)
-	}
-	got := m.Members[0]
-	if got.UserID != u.ID || got.DisplayName != "Alex L." || len(got.Participants) != 2 || got.Participants[0].ID != mobile.ID {
-		t.Errorf("member = %+v (want both participants, most recently active first)", got)
-	}
-	if len(m.Unlinked) != 1 || m.Unlinked[0].Name != "Quill" {
-		t.Errorf("unlinked = %+v", m.Unlinked)
-	}
-	// The claimed participants keep working with their own tokens and names.
-	if a, _ := s.Authenticate(ctx, mobileTok); a.Name != "Alexmobile" || a.UserID != u.ID {
-		t.Errorf("Alexmobile after claim = %+v", a)
-	}
-	if a, _ := s.Authenticate(ctx, agentTok); a.UserID != 0 {
-		t.Errorf("agent got linked: %+v", a)
-	}
-	// Joining while signed in now finds the claimed participant.
-	if p, tok, existing, _, _ := s.JoinAsUser(ctx, ws.ID, u.ID, "", ""); !existing || p.ID != mobile.ID || tok != mobileTok {
-		t.Errorf("JoinAsUser after claims = %+v existing=%v", p, existing)
-	}
-}
-
 func TestRemoveMember(t *testing.T) {
 	s, _ := newStore(t)
 	ctx := context.Background()
@@ -191,18 +135,18 @@ func TestParticipantUserIDMigration(t *testing.T) {
 			t.Fatalf("boot %d: %v", boot, err)
 		}
 		p, err := s.Authenticate(ctx, "legacytoken")
-		if err != nil || p.Name != "Alex" || (boot == 1 && p.UserID != 0) {
+		if err != nil || p.Name != "Alex" || p.UserID != 0 {
 			t.Fatalf("boot %d: legacy participant = %+v %v", boot, p, err)
 		}
 		if boot == 2 {
 			u, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex"})
-			if _, _, err := s.Claim(ctx, "ws_legacy", u.ID, "legacytoken"); err != nil {
-				t.Fatalf("claiming a legacy participant: %v", err)
+			if _, _, _, _, err := s.JoinAsUser(ctx, "ws_legacy", u.ID, "AlexNew", ""); err != nil {
+				t.Fatalf("joining as a user after migration: %v", err)
 			}
 		}
 		if boot == 3 {
-			if m, _ := s.ListMembers(ctx, "ws_legacy"); len(m.Members) != 1 || m.Members[0].Participants[0].Name != "Alex" {
-				t.Errorf("boot 3: members = %+v (the claim must survive reboots)", m)
+			if m, _ := s.ListMembers(ctx, "ws_legacy"); len(m.Members) != 1 || m.Members[0].Participants[0].Name != "AlexNew" || len(m.Unlinked) != 1 {
+				t.Errorf("boot 3: members = %+v (the membership must survive reboots; the legacy row stays)", m)
 			}
 		}
 		s.Close()

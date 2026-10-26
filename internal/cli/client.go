@@ -144,6 +144,16 @@ func newClient(server, token string) *client {
 	return &client{server: server, token: token, http: &http.Client{Timeout: 10 * time.Minute}}
 }
 
+// inviteToken returns the invite token in an invite link
+// (…/w/ws_123/join?invite=ui_…), or "".
+func inviteToken(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Query().Get("invite")
+}
+
 // parseInvite splits a workspace URL like http://host:4600/w/ws_123 into the
 // server origin and workspace ID.
 func parseInvite(raw string) (server, workspace string, err error) {

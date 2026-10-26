@@ -3,17 +3,16 @@ package server
 import (
 	"net/http"
 	"strconv"
-	"strings"
 
 	"github.com/digitalex/unison/internal/store"
 )
 
-// Membership endpoints. Nothing here gates access yet: they record who
-// belongs to a workspace and which participants are whose.
+// Membership endpoints: who belongs to a workspace (the gate in gate.go
+// admits only members and their agents) and which participants are whose.
 
-// joiningUser returns the signed-in user joining a workspace, or nil for an
-// anonymous join (agents, or a cookie without the CSRF header, which is
-// ignored rather than refused so plain joins behave exactly as before).
+// joiningUser returns the signed-in user joining a workspace, or nil when
+// nobody is signed in (agents with a pass; a cookie without the CSRF header
+// is ignored, so such a join is refused as signed out).
 func (s *Server) joiningUser(r *http.Request) *store.User {
 	a, err := s.currentUser(r)
 	if err != nil || !csrfOK(r, a) {
@@ -22,8 +21,17 @@ func (s *Server) joiningUser(r *http.Request) *store.User {
 	return a.user
 }
 
-func (s *Server) joinAsUser(w http.ResponseWriter, r *http.Request, u *store.User, name, emoji string) {
-	p, tok, existing, evs, err := s.store.JoinAsUser(r.Context(), r.PathValue("ws"), u.ID, name, emoji)
+func (s *Server) joinAsUser(w http.ResponseWriter, r *http.Request, u *store.User, name, emoji, invite string) {
+	var p *store.Participant
+	var tok string
+	var existing bool
+	var evs []store.Event
+	var err error
+	if s.authCfg.Open {
+		p, tok, existing, evs, err = s.store.JoinAsUser(r.Context(), r.PathValue("ws"), u.ID, name, emoji)
+	} else {
+		p, tok, existing, evs, err = s.store.JoinWorkspace(r.Context(), r.PathValue("ws"), u.ID, name, emoji, invite)
+	}
 	status := http.StatusCreated
 	if existing {
 		status = http.StatusOK
@@ -53,24 +61,6 @@ func (s *Server) respondMe(w http.ResponseWriter, r *http.Request, p *store.Part
 		view.User = &meUser{ID: u.ID, DisplayName: u.DisplayName}
 	}
 	writeJSON(w, http.StatusOK, view)
-}
-
-// claim links a participant to the signed-in user. Proof of possession: the
-// participant's token, in the body (`participant_token`) or as the bearer
-// token when the user is authenticated by the session cookie.
-func (s *Server) claim(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		ParticipantToken string `json:"participant_token"`
-	}
-	if !decode(w, r, &req) {
-		return
-	}
-	tok := req.ParticipantToken
-	if h := r.Header.Get("Authorization"); tok == "" && strings.HasPrefix(h, "Bearer ") && !strings.HasPrefix(h, "Bearer "+store.UserTokenPrefix) {
-		tok = strings.TrimPrefix(h, "Bearer ")
-	}
-	p, evs, err := s.store.Claim(r.Context(), r.PathValue("ws"), signedIn(r).user.ID, tok)
-	s.respond(w, http.StatusOK, p, evs, err)
 }
 
 func (s *Server) listMembers(w http.ResponseWriter, r *http.Request) {

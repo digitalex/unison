@@ -13,9 +13,12 @@ export function setToken(ws, token) {
 }
 
 export class ApiError extends Error {
-  constructor(status, message) {
+  // code is the server's machine-readable reason, when it gives one (e.g.
+  // "sign_in", "legacy", "not_member", "join_first").
+  constructor(status, message, code = "") {
     super(message);
     this.status = status;
+    this.code = code;
   }
 }
 
@@ -32,12 +35,12 @@ export async function api(method, path, { body, token } = {}) {
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const data = await resp.json().catch(() => ({}));
-  if (!resp.ok) throw new ApiError(resp.status, data.error || resp.statusText);
+  if (!resp.ok) throw new ApiError(resp.status, data.error || resp.statusText, data.code);
   return data;
 }
 
-// Returns a function that calls the API for one workspace with its token.
-export function workspaceApi(ws) {
-  return (method, suffix = "", body) =>
-    api(method, `/api/workspaces/${ws}${suffix}`, { body, token: getToken(ws) });
+// Returns a function that calls the API for one workspace: with a
+// participant token, or (token "") with the session cookie.
+export function workspaceApi(ws, token) {
+  return (method, suffix = "", body) => api(method, `/api/workspaces/${ws}${suffix}`, { body, token });
 }

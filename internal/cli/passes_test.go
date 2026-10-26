@@ -33,18 +33,21 @@ func TestAgentPass(t *testing.T) {
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
 	human, agent := t.TempDir(), t.TempDir()
 
-	ws, _, _ := st.CreateWorkspace(t.Context(), "Unison", "", "")
+	owner, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "owner", Name: "Owner"})
+	ws, _, _ := st.CreateWorkspaceFor(t.Context(), owner.ID, "Unison", "", "")
 	invite := ts.URL + "/w/" + ws.ID
+	_, link, _, _ := st.CreateLinkInvite(t.Context(), ws.ID, owner.ID, 0)
 	alex, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "1", Name: "Alex"})
 	browser, _, _ := st.CreateSession(t.Context(), alex.ID, store.SessionBrowser, "test")
 	if _, errOut, code := e.run(human, "--workspace", ws.ID, "pass"); code == 0 || !strings.Contains(errOut, "unison login") {
 		t.Errorf("pass before login: exit %d %q", code, errOut)
 	}
 	deviceLogin(t, ts.URL, browser)
-	if _, errOut, code := e.run(human, "--workspace", ws.ID, "pass", "--agent"); code == 0 || !strings.Contains(errOut, "only members") {
+	if _, errOut, code := e.run(human, "--workspace", ws.ID, "pass", "--agent"); code == 0 || !strings.Contains(errOut, "not a member") {
 		t.Errorf("pass before joining: exit %d %q", code, errOut)
 	}
-	e.ok(human, "join", invite, "--name", "Alex", "--account")
+	// Alex joins with the owner's invite link (implies --account).
+	e.ok(human, "join", invite+"/join?invite="+link, "--name", "Alex")
 
 	out := e.ok(human, "pass", "--agent")
 	m := regexp.MustCompile(`unison join (\S+) --pass (up_\S+)`).FindStringSubmatch(out)
@@ -77,6 +80,8 @@ func TestAgentPass(t *testing.T) {
 	if _, errOut, code := e.run(agent, "chat", "send", "anyone?"); code == 0 || !strings.Contains(errOut, "Alex, who invited this agent, is no longer a member") {
 		t.Errorf("agent after its sponsor left: exit %d %q", code, errOut)
 	}
-	// The human's own participant keeps working (nothing else is enforced).
-	e.ok(human, "chat", "send", "still here")
+	// So does Alex's own participant: workspaces are private to members.
+	if _, errOut, code := e.run(human, "chat", "send", "still here"); code == 0 || !strings.Contains(errOut, "no longer a member") {
+		t.Errorf("removed member: exit %d %q", code, errOut)
+	}
 }

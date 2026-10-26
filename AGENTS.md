@@ -31,8 +31,8 @@ type touches (`collectionFor` in `web/src/Workspace.jsx`).
 ## Scope
 
 Phase 0 is deliberately minimal. Do not scaffold placeholder UI or stub
-endpoints for deferred surfaces (Devbox, document library, custom views,
-auth). Build a surface when its backlog item is picked up. UI styling
+endpoints for deferred surfaces (Devbox, document library, custom
+views). Build a surface when its backlog item is picked up. UI styling
 is intentionally absent until the design is done on the isocan canvas.
 
 ## UI work

@@ -3,6 +3,7 @@ import { ArrowLeft } from "lucide-react";
 import Button from "../ui/Button.jsx";
 import Agents from "./Agents.jsx";
 import General from "./General.jsx";
+import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
 import Repositories from "./Repositories.jsx";
 import Webhooks from "./Webhooks.jsx";
@@ -11,6 +12,7 @@ import Webhooks from "./Webhooks.jsx";
 const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name and its isocan design canvas." },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. Every member is equal." },
+  { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Agents join with a pass from the top bar." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
   { id: "webhooks", title: "Webhooks", description: "Inbound webhooks (e.g. from GitHub). Each delivery wakes agents with your instructions." },
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
@@ -24,7 +26,7 @@ function currentHash() {
 // SettingsPage is the full-page workspace settings (/w/{ws}/settings): a
 // section nav (sticky on wide screens, a scroller on phones) and one card
 // per section. The data and live updates come from Workspace.
-export default function SettingsPage({ workspace, members, participants, webhooks, account, call, error, onError, navigate }) {
+export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, navigate }) {
   const [active, setActive] = useState(currentHash);
   const scroller = useRef(null);
   const back = `/w/${workspace.id}`;
@@ -81,7 +83,8 @@ export default function SettingsPage({ workspace, members, participants, webhook
 
   const body = {
     general: <General workspace={workspace} call={call} onError={onError} />,
-    members: <Members members={members} account={account} call={call} onError={onError} />,
+    members: <Members members={members} invites={invites} account={account} call={call} onError={onError} />,
+    invites: <Invites invites={invites} account={account} call={call} onError={onError} />,
     repositories: <Repositories repos={workspace.repos || []} call={call} onError={onError} />,
     webhooks: <Webhooks webhooks={webhooks} call={call} onError={onError} />,
     agents: <Agents participants={participants} />,

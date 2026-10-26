@@ -83,6 +83,10 @@ type AuthConfig struct {
 	DeviceInterval time.Duration
 	// HTTPClient calls the providers (default: 10s timeout).
 	HTTPClient *http.Client
+	// Open turns off workspace privacy (UNISON_AUTH=off): reads are public
+	// and anyone may join or create, as before accounts. For local
+	// development without OAuth only.
+	Open bool
 }
 
 // AuthConfigFromEnv reads UNISON_GITHUB_CLIENT_ID/SECRET,
@@ -95,6 +99,7 @@ func AuthConfigFromEnv() AuthConfig {
 	if id, secret := os.Getenv("UNISON_GOOGLE_CLIENT_ID"), os.Getenv("UNISON_GOOGLE_CLIENT_SECRET"); id != "" && secret != "" {
 		cfg.Providers = append(cfg.Providers, GoogleProvider(id, secret))
 	}
+	cfg.Open = os.Getenv("UNISON_AUTH") == "off"
 	for _, e := range strings.Split(os.Getenv("UNISON_CREATORS"), ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
 			cfg.Creators = append(cfg.Creators, e)
@@ -127,6 +132,7 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("POST /api/auth/device/token", s.deviceToken)
 	m.HandleFunc("GET /api/auth/device/lookup", s.requireUser(s.deviceLookup))
 	m.HandleFunc("POST /api/auth/device/approve", s.requireUser(s.deviceApprove))
+	m.HandleFunc("GET /api/invites/lookup", s.requireUser(s.lookupInvite))
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
 	m.HandleFunc("GET /api/me/sessions", s.requireUser(s.listSessions))
 	m.HandleFunc("DELETE /api/me/sessions/{id}", s.requireUser(s.revokeSession))
@@ -211,23 +217,31 @@ func (s *Server) userOrError(w http.ResponseWriter, r *http.Request) (*userAuth,
 
 func signedIn(r *http.Request) *userAuth { return r.Context().Value(userCtxKey{}).(*userAuth) }
 
-// mayCreateWorkspace enforces UNISON_CREATORS (when set) on workspace
-// creation. It writes the error and returns false when not allowed.
-func (s *Server) mayCreateWorkspace(w http.ResponseWriter, r *http.Request) bool {
-	if len(s.authCfg.Creators) == 0 {
-		return true
+// mayCreateWorkspace decides who may create a workspace: any signed-in
+// user (who becomes its first member), narrowed by UNISON_CREATORS when set.
+// In open mode (UNISON_AUTH=off) anyone may, as before. It returns the
+// creator (nil when anonymous in open mode), or writes the error.
+func (s *Server) mayCreateWorkspace(w http.ResponseWriter, r *http.Request) (*store.User, bool) {
+	if s.authCfg.Open && len(s.authCfg.Creators) == 0 {
+		if a, err := s.currentUser(r); err == nil && csrfOK(r, a) {
+			return a.user, true
+		}
+		return nil, true
 	}
 	a, ok := s.userOrError(w, r)
 	if !ok {
-		return false
+		return nil, false
+	}
+	if len(s.authCfg.Creators) == 0 {
+		return a.user, true
 	}
 	for _, e := range a.user.VerifiedEmails() {
 		if slices.Contains(s.authCfg.Creators, e) {
-			return true
+			return a.user, true
 		}
 	}
 	writeError(w, http.StatusForbidden, "creating workspaces is limited to approved accounts on this server")
-	return false
+	return nil, false
 }
 
 // ---- Cookies ----

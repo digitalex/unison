@@ -72,7 +72,7 @@ func TestLoginLogout(t *testing.T) {
 	if err := json.Unmarshal([]byte(e.ok(dir, "workspace", "create", "Mine", "--json")), &ws); err != nil {
 		t.Fatal(err)
 	}
-	e.ok(dir, "join", ts.URL+"/w/"+ws.ID, "--name", "Ada")
+	e.ok(dir, "join", ts.URL+"/w/"+ws.ID, "--name", "Ada", "--account")
 	if out := e.ok(dir, "whoami"); !strings.Contains(out, "Ada (participant") {
 		t.Errorf("whoami = %q", out)
 	}

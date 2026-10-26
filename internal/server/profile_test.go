@@ -139,7 +139,7 @@ func TestProfileAPI(t *testing.T) {
 	if resp.StatusCode != 401 || !strings.Contains(out["error"].(string), "Ada Lovelace revoked this agent credential") {
 		t.Errorf("revoked agent = %d %v", resp.StatusCode, out)
 	}
-	_, evs := e.do("GET", "/api/workspaces/"+ws.ID+"/events?after=0", "")
+	_, evs := e.do("GET", "/api/workspaces/"+ws.ID+"/events?after=0", "", withCookie(ada))
 	found := false
 	for _, ev := range evs["events"].([]any) {
 		found = found || ev.(map[string]any)["type"] == "participant.revoked"
