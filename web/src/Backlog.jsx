@@ -4,16 +4,16 @@ import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { meta, name, prLabel } from "./backlogFormat.js";
 import { OPEN_ITEM } from "./nav.js";
 import Button from "./ui/Button.jsx";
-import SectionToggle from "./ui/SectionToggle.jsx";
-import useSectionOpen from "./useSectionOpen.js";
+import ScreenHead from "./ui/ScreenHead.jsx";
 
 // The prioritized backlog, grouped into In progress (assigned), Open and Done.
 // Queued items (open + assigned) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
-// dialog (also deep-linkable as ?item=12), and dragging reorders.
-export default function Backlog({ items, participants, me, workspace, call, onError }) {
+// dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
+// the workspace's main pane: head is the header's shared controls (who's
+// here, Invite), error the workspace's error bar.
+export default function Backlog({ items, participants, me, workspace, call, onError, head, error }) {
   const [showDone, setShowDone] = useState(false);
-  const [expanded, setExpanded] = useSectionOpen("backlog", true);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
   const [notice, setNotice] = useState("");
@@ -45,58 +45,50 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
     ));
   const onCreated = (item) => {
     setCreating(false);
-    setExpanded(true);
     setCreated(item.id);
   };
 
   return (
-    <section aria-label="Backlog">
-      <div className="toolbar">
-        <h2>
-          <SectionToggle open={expanded} onToggle={setExpanded}>
-            Backlog
-          </SectionToggle>
-        </h2>
-        <span className="muted">{queued.length}</span>
-        <span className="spacer" />
+    <section className="screen" aria-label="Backlog">
+      <ScreenHead title="Backlog" note="top is most important">
+        {head}
         <Button variant="primary" onClick={() => setCreating(true)} aria-haspopup="dialog">
           <Plus aria-hidden="true" />
-          New item
+          <span className="label">New item</span>
         </Button>
-      </div>
-      {notice && (
-        <p role="status" className="error-bar notice-bar">
-          {notice}{" "}
-          <Button variant="ghost" onClick={() => setNotice("")}>
-            dismiss
-          </Button>
+      </ScreenHead>
+      {error}
+      <div className="screen-body">
+        {notice && (
+          <p role="status" className="error-bar notice-bar">
+            {notice}{" "}
+            <Button variant="ghost" onClick={() => setNotice("")}>
+              dismiss
+            </Button>
+          </p>
+        )}
+        <p id={hintId} className="sr-only">
+          Reorder: press Space or Enter to pick the item up, the arrow keys to move it, Space or Enter to drop it, Escape to cancel.
         </p>
-      )}
-      <p id={hintId} className="sr-only">
-        Reorder: press Space or Enter to pick the item up, the arrow keys to move it, Space or Enter to drop it, Escape to cancel.
-      </p>
-      <p className="sr-only" role="status" aria-live="assertive">
-        {reorder.announcement}
-      </p>
+        <p className="sr-only" role="status" aria-live="assertive">
+          {reorder.announcement}
+        </p>
 
-      {expanded && (
-        <>
-          <GroupHead status="assigned" label="In progress" count={groups.assigned.length} />
-          {rows("assigned", groups.assigned)}
+        <GroupHead status="assigned" label="In progress" count={groups.assigned.length} />
+        {rows("assigned", groups.assigned)}
 
-          <GroupHead status="open" label="Open" count={groups.open.length} />
-          {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
-          {rows("open", groups.open)}
+        <GroupHead status="open" label="Open" count={groups.open.length} />
+        {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
+        {rows("open", groups.open)}
 
-          <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
-            {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-            <span className="status done" />
-            Done
-            <span className="count">{done.length}</span>
-          </button>
-          {showDone && rows("done", done)}
-        </>
-      )}
+        <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+          {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+          <span className="status done" />
+          Done
+          <span className="count">{done.length}</span>
+        </button>
+        {showDone && rows("done", done)}
+      </div>
 
       {creating && <NewItemDialog run={run} onClose={() => setCreating(false)} onCreated={onCreated} />}
       {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
@@ -367,7 +359,7 @@ function useReorder(groups, moveTo) {
   };
 
   const trackPointer = (down, item, touch) => {
-    const scroller = down.currentTarget.closest(".app-main");
+    const scroller = down.currentTarget.closest(".screen-body");
     const start = { x: down.clientX, y: down.clientY, id: down.pointerId };
     let started = false;
     const timer = touch

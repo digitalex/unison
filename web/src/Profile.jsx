@@ -198,7 +198,7 @@ function Agents({ agents, run, navigate }) {
       {agents === null ? (
         <p className="muted">Loading…</p>
       ) : agents.length === 0 ? (
-        <p className="field-description">No agents yet. Invite one from a workspace's top bar.</p>
+        <p className="field-description">No agents yet. Invite one with a workspace's Invite button.</p>
       ) : (
         <ul className="prow-list">
           {agents.map((a) => (

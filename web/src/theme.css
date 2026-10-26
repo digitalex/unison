@@ -729,23 +729,35 @@ html.dialog-open {
   white-space: nowrap;
 }
 
-/* ---- Workspace shell ---- */
-.app {
+/* ---- Workspace shell (Workspace.jsx) ----
+   A sidebar on the base (no panel of its own: it reads as part of the
+   background) and one screen (inbox, backlog, chat or settings) filling the
+   rest. Phones swap the sidebar for a tab bar at the bottom and go flat. */
+.shell {
   display: grid;
-  grid-template-rows: 52px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   height: 100vh;
+  height: 100dvh;
   overflow: hidden;
 }
 
-.app-body {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 360px;
-  gap: var(--space-s);
+.shell-main {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
   min-height: 0;
-  padding: 0 var(--space-s) var(--space-s);
+  margin: var(--space-s) var(--space-s) var(--space-s) 0;
 }
 
-/* Backlog and chat float above the base. */
+.shell-settings {
+  margin: 0;
+}
+
+.shell-settings > .settings-page {
+  flex: 1;
+}
+
+/* The current screen floats above the base. */
 .panel {
   border-radius: var(--radius-panel);
   background: var(--panel);
@@ -753,53 +765,299 @@ html.dialog-open {
   overflow: hidden;
 }
 
-/* Wide screens: a draggable divider between backlog and chat sets the chat
-   width (--chat-width, set inline). The divider's column replaces the gap. */
-.app-body-resizable {
-  grid-template-columns: minmax(0, 1fr) var(--space-s) var(--chat-width, 360px);
-  column-gap: 0;
-}
-
-.splitter {
-  position: relative;
-  cursor: col-resize;
-  touch-action: none;
-  outline: none;
-}
-
-.splitter::after {
-  content: "";
-  position: absolute;
-  top: var(--space-m);
-  bottom: var(--space-m);
-  left: 50%;
-  width: 2px;
-  margin-left: -1px;
-  border-radius: var(--radius-full);
-  background: transparent;
-  transition: background var(--motion-duration) var(--motion-easing);
-}
-
-.splitter:hover::after,
-.splitter.dragging::after {
-  background: var(--border-strong);
-}
-
-.splitter:focus-visible::after {
-  background: var(--focus);
-}
-
-body:has(.splitter.dragging) {
-  cursor: col-resize;
-  user-select: none;
-}
-
-.app-body-single {
-  grid-template-columns: minmax(0, 1fr);
-}
-
-.app-main {
+/* ---- Sidebar ---- */
+.sidebar {
+  display: flex;
+  flex-direction: column;
   min-height: 0;
+  padding: var(--space-s) var(--space-xs) var(--space-s) var(--space-s);
+}
+
+.sidebar-ws {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  min-width: 0;
+  height: 36px;
+  margin-bottom: var(--space-s);
+  padding-left: var(--space-xs);
+}
+
+.sidebar-ws .ws-name {
+  flex: 1;
+}
+
+.sidebar .switcher-trigger.button {
+  max-width: 100%;
+}
+
+.nav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.nav-link {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  height: 32px;
+  padding: 0 10px;
+  border-radius: var(--radius-s);
+  color: var(--text-secondary);
+  font-weight: var(--weight-ui-medium);
+  transition-property: background-color, color;
+  transition-duration: var(--motion-duration);
+  transition-timing-function: var(--motion-easing);
+}
+
+.nav-link:hover {
+  background: var(--panel-edge);
+  color: var(--text);
+  text-decoration: none;
+}
+
+.nav-link[aria-current="page"] {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
+}
+
+.nav-link .lucide {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+.nav-link[aria-current="page"] .lucide {
+  color: var(--accent);
+}
+
+.nav-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-medium);
+  line-height: 18px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.nav-count-strong {
+  background: var(--accent);
+  color: var(--accent-text);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.nav-unread {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  margin: 0 7px 0 auto;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.nav-heading {
+  margin: var(--space-l) 10px var(--space-xxs);
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+
+.nav-list-small .nav-link {
+  height: 28px;
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-regular);
+}
+
+.nav-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* People: who's here, in the sidebar. A long list scrolls on its own. */
+.people {
+  max-height: 40vh;
+  overflow-y: auto;
+}
+
+button.nav-link {
+  width: 100%;
+  border: 0;
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.nav-link.person {
+  gap: var(--space-xs);
+  height: 30px;
+  font-weight: var(--weight-ui-regular);
+}
+
+.person .avatar {
+  width: 20px;
+  height: 20px;
+  font-size: var(--size-xs);
+  box-shadow: none;
+}
+
+.person .avatar .dot {
+  width: 7px;
+  height: 7px;
+  box-shadow: 0 0 0 var(--border-l) var(--base);
+}
+
+.person-name {
+  flex: none;
+  color: var(--text);
+}
+
+.person-status {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.nav-invite.nav-link {
+  height: 30px;
+  color: var(--text-muted);
+  font-weight: var(--weight-ui-regular);
+}
+
+.nav-link .nav-ext {
+  width: 12px;
+  height: 12px;
+  margin-left: auto;
+  color: var(--text-muted);
+}
+
+.sidebar-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-top: var(--space-xs);
+}
+
+.sidebar-foot > .seg {
+  align-self: flex-start;
+  margin: var(--space-xxs) 10px;
+}
+
+.sidebar-foot .popover-anchor {
+  display: flex;
+}
+
+/* The account menu opens upwards from the bottom of the sidebar. */
+.sidebar-foot .popover {
+  top: auto;
+  bottom: calc(100% + var(--space-xxs));
+  left: 0;
+  right: auto;
+}
+
+.account-trigger-named.button {
+  flex: 1;
+  justify-content: flex-start;
+  gap: 10px;
+  min-width: 0;
+  height: 40px;
+  padding: 0 var(--space-xs);
+  color: var(--text);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.account-trigger-named.button:hover:not(:disabled) {
+  background: var(--panel-edge);
+}
+
+.account-trigger-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.account-theme {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-s);
+  padding-top: var(--space-s);
+  border-top: var(--border-s) solid var(--panel-edge);
+}
+
+/* ---- A screen: its header, then what scrolls (ui/ScreenHead.jsx) ---- */
+.screen {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+}
+
+.screen-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-s);
+  min-width: 0;
+  height: 56px;
+  padding: 0 var(--space-m) 0 20px;
+  border-bottom: var(--border-s) solid var(--panel-edge);
+}
+
+.screen-title {
+  margin: 0;
+  font-size: 20px;
+  font-weight: var(--weight-ui-semibold);
+  line-height: 28px;
+  letter-spacing: var(--tracking-s);
+  white-space: nowrap;
+}
+
+.screen-note {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.screen-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+/* Phones only: the account menu (and settings) in the screen header. */
+.head-account {
+  display: none;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+/* Phones only. */
+.tabbar {
+  display: none;
+}
+
+.shell-unjoined .shell-main {
   overflow: auto;
 }
 
@@ -817,19 +1075,6 @@ body:has(.splitter.dragging) {
   max-width: 360px;
   margin: var(--space-xl) auto;
   padding: var(--space-l);
-}
-
-/* ---- Top bar ---- */
-.topbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-s);
-  min-width: 0;
-  padding: 0 20px;
-}
-
-.topbar .button-ghost:hover:not(:disabled) {
-  background: var(--panel-edge);
 }
 
 .ws {
@@ -987,78 +1232,24 @@ a.ws-mark:hover {
   text-decoration: none;
 }
 
-.crumb {
-  color: var(--text-muted);
-  white-space: nowrap;
-}
-
-.canvas-link {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  height: 26px;
-  margin-left: var(--space-xs);
-  padding: 0 10px;
-  border-radius: var(--radius-full);
-  background: var(--accent-soft);
-  color: var(--accent);
-  box-shadow: inset 0 0 0 var(--border-s) var(--accent);
-  font-size: var(--size-xs);
-  font-weight: var(--weight-ui-semibold);
-  white-space: nowrap;
-}
-
-.canvas-link:hover {
-  background: var(--accent);
-  color: var(--accent-text);
-  text-decoration: none;
-}
-
-.canvas-link .lucide-arrow-up-right {
-  width: 12px;
-  height: 12px;
-}
-
-.icon-link {
-  display: inline-flex;
-  color: var(--text-secondary);
-}
-
 .spacer {
   flex: 1;
 }
 
 .live {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  color: var(--text-muted);
-  font-size: var(--size-xs);
-  white-space: nowrap;
-}
-
-.live::before {
-  content: "";
+  flex: none;
   width: 6px;
   height: 6px;
+  margin-right: var(--space-xxs);
   border-radius: var(--radius-full);
   background: var(--presence-away);
 }
 
-.live-on::before {
+.live-on {
   background: var(--presence-active);
 }
 
 /* ---- Avatars ---- */
-.avatars {
-  display: flex;
-}
-
-.avatars > * {
-  position: relative;
-  display: flex;
-}
-
 .avatar {
   position: relative;
   display: grid;
@@ -1073,14 +1264,6 @@ a.ws-mark:hover {
   box-shadow: 0 0 0 var(--border-l) var(--base);
   font-size: var(--size-s);
   line-height: 1;
-}
-
-button.avatar {
-  cursor: pointer;
-}
-
-.avatars > * + * {
-  margin-left: -6px;
 }
 
 .avatar .dot {
@@ -1147,43 +1330,10 @@ button.avatar {
   white-space: nowrap;
 }
 
-/* ---- Needs your attention (Inbox.jsx): above the backlog ---- */
-.inbox {
-  border-bottom: var(--border-s) solid var(--panel-edge);
-  background: color-mix(in srgb, var(--mention) 55%, var(--panel));
-}
-
-.inbox-title {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  height: 40px;
-  margin: 0;
-  padding: 0 var(--space-m);
-  font-size: var(--size-s);
-  font-weight: var(--weight-ui-semibold);
-}
-
-.inbox-title .lucide {
-  width: 15px;
-  height: 15px;
-  color: var(--mention-edge);
-}
-
-.inbox-title .count {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  background: var(--mention-edge);
-  color: var(--panel);
-  font-size: var(--size-xxs);
-  line-height: 18px;
-  text-align: center;
-}
-
+/* ---- Inbox (Inbox.jsx): a screen of its own ---- */
 .inbox-list {
   margin: 0;
-  padding: 0 0 var(--space-xs);
+  padding: var(--space-xs) 0;
   list-style: none;
 }
 
@@ -1265,12 +1415,6 @@ button.avatar {
   height: 28px;
 }
 
-.inbox-more.button {
-  height: 26px;
-  margin: 0 0 var(--space-xs) calc(var(--space-m) + 24px + var(--space-xs));
-  font-size: var(--size-xs);
-}
-
 .inbox-undo {
   display: flex;
   align-items: center;
@@ -1281,6 +1425,23 @@ button.avatar {
   font-size: var(--size-xs);
 }
 
+.inbox-empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--space-xs);
+  max-width: 320px;
+  margin: var(--space-xxl) auto;
+  padding: 0 var(--space-m);
+  color: var(--text-muted);
+  text-align: center;
+}
+
+.inbox-empty .lucide {
+  width: 24px;
+  height: 24px;
+}
+
 @media (max-width: 640px) {
   .inbox-dismiss .label {
     display: none;
@@ -1288,15 +1449,6 @@ button.avatar {
 }
 
 /* ---- Backlog ---- */
-.toolbar {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  height: 40px;
-  padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--panel-edge);
-}
-
 .group-head {
   display: flex;
   align-items: center;
@@ -1315,7 +1467,7 @@ button.avatar {
   text-align: left;
 }
 
-.toolbar + .group-head {
+.screen-body > .group-head:first-of-type {
   border-top: 0;
 }
 
@@ -1402,67 +1554,11 @@ button.group-head {
   color: var(--text-muted);
 }
 
-/* ---- Chat sidebar ---- */
-.chat {
-  display: grid;
-  grid-template-rows: 40px minmax(0, 1fr) auto;
-  min-height: 0;
-}
-
-.chat-head {
-  display: flex;
-  align-items: center;
-  padding: 0 var(--space-m);
-  border-bottom: var(--border-s) solid var(--panel-edge);
-  font-weight: var(--weight-ui-semibold);
-}
-
-/* Minimized chat: the backlog takes the width back; chat becomes a slim rail. */
-.app-body-chat-minimized {
-  grid-template-columns: minmax(0, 1fr) 44px;
-}
-
-.chat-minimized {
-  display: block;
-}
-
-.chat-rail {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--space-xs);
-  width: 100%;
-  height: 100%;
-  padding: var(--space-s) 0;
-  border: 0;
-  background: none;
-  color: var(--text-secondary);
-  font: inherit;
-  font-weight: var(--weight-ui-semibold);
-  cursor: pointer;
-}
-
-.chat-rail:hover {
-  background: var(--surface-hover);
-  color: var(--text);
-}
-
-.chat-rail-label {
-  writing-mode: vertical-rl;
-}
-
-.chat-unread {
-  min-width: 18px;
-  padding: 0 5px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--accent-text);
-  font-size: var(--size-xxs);
-  line-height: 18px;
-  text-align: center;
-}
+/* ---- Chat (Chat.jsx): a screen, aligned with the backlog and inbox ---- */
 
 .chat-log {
+  flex: 1;
+  min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
   padding: var(--space-xs) 0;
@@ -1502,7 +1598,9 @@ button.group-head {
   font-size: var(--size-xxs);
 }
 
+/* Long lines stay readable on wide screens. */
 .msg .text {
+  max-width: 80ch;
   color: var(--text-secondary);
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1831,25 +1929,6 @@ button.group-head {
   font-size: var(--size-xs);
 }
 
-/* ---- Collapsible section headers (ui/SectionToggle.jsx) ---- */
-.section-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--space-xxs);
-  margin-left: calc(-1 * var(--space-xxs));
-  padding: var(--space-xxs);
-  border: 0;
-  border-radius: var(--radius-s);
-  background: none;
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-}
-
-.section-toggle:hover {
-  background: var(--surface-hover);
-}
-
 /* ---- Backlog curation: drag-and-drop, PR links, comments ---- */
 .item {
   position: relative;
@@ -2166,53 +2245,10 @@ html.reordering * {
   overflow-wrap: anywhere;
 }
 
-/* ---- Repositories (top-bar list, settings) ---- */
+/* ---- Repositories (settings) ---- */
 .popover-start {
   left: 0;
   right: auto;
-}
-
-.repo-trigger {
-  gap: 2px;
-}
-
-.repo-count {
-  font-size: var(--size-xs);
-  font-variant-numeric: tabular-nums;
-}
-
-.repo-list {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.repo-list a {
-  display: flex;
-  flex-direction: column;
-  padding: 6px var(--space-xs);
-  border-radius: var(--radius-s);
-  color: var(--text);
-}
-
-.repo-list a:hover {
-  background: var(--surface-hover);
-  text-decoration: none;
-}
-
-.repo-label {
-  font-weight: var(--weight-ui-medium);
-}
-
-.repo-url {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: var(--text-muted);
-  font-size: var(--size-xs);
 }
 
 .repo-form {
@@ -2509,57 +2545,6 @@ html.reordering * {
   font-weight: var(--weight-ui-medium);
 }
 
-/* Narrow screens: chat stacks below the backlog instead of disappearing. */
-@media (max-width: 860px) {
-  .app {
-    height: auto;
-    min-height: 100vh;
-    overflow: visible;
-  }
-
-  .app-body {
-    grid-template-columns: minmax(0, 1fr);
-    align-content: start;
-  }
-
-  .app-body-resizable {
-    grid-template-columns: minmax(0, 1fr);
-    column-gap: var(--space-s);
-  }
-
-  .splitter {
-    display: none;
-  }
-
-  .chat {
-    height: 70vh;
-  }
-
-  .app-body-chat-minimized {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .chat.chat-minimized {
-    height: auto;
-  }
-
-  .chat-rail {
-    flex-direction: row;
-    justify-content: flex-start;
-    height: 40px;
-    padding: 0 var(--space-m);
-  }
-
-  .chat-rail-label {
-    writing-mode: horizontal-tb;
-  }
-
-  .crumb,
-  .live {
-    display: none;
-  }
-}
-
 /* Phones use a single cycling theme button instead of the segmented switch. */
 .theme-cycle {
   display: none;
@@ -2572,38 +2557,11 @@ html.reordering * {
   height: 14px;
 }
 
-/* Phones: everything fits the viewport width (no horizontal scroll). The top
-   bar keeps every control but drops text labels, and secondary text in the
-   backlog gives way to the item titles. */
+/* Phones: everything fits the viewport width (no horizontal scroll), and
+   secondary text in the backlog gives way to the item titles. */
 @media (max-width: 640px) {
-  .topbar {
-    gap: var(--space-xs);
-    padding: 0 12px;
-  }
-
-  .topbar > * {
-    flex-shrink: 0;
-  }
-
-  .topbar > .ws {
-    flex-shrink: 1;
-    min-width: 22px;
-  }
-
-  /* The switcher keeps a few letters of the name, truncated. */
-  .switcher-trigger.button {
-    min-width: 56px;
-    max-width: 140px;
-  }
-
-  .topbar .label,
-  .canvas-link .lucide-arrow-up-right,
   .row .meta {
     display: none;
-  }
-
-  .canvas-link {
-    padding: 0 8px;
   }
 
   .seg .lucide {
@@ -2626,22 +2584,8 @@ html.reordering * {
     padding: 4px 8px;
   }
 
-  .app-body {
-    padding: 0 8px 8px;
-    gap: 8px;
-  }
-
   .pr-chip {
     display: none;
-  }
-
-  .popover-start {
-    position: fixed;
-    top: 52px;
-    left: 8px;
-    right: 8px;
-    width: auto;
-    max-width: none;
   }
 
   .pr-count {
@@ -2649,17 +2593,8 @@ html.reordering * {
   }
 }
 
-/* The smallest phones (320px): the repository link moves out of the top bar
-   (it is still in workspace settings). */
+/* The smallest phones (320px). */
 @media (max-width: 380px) {
-  .topbar {
-    gap: 6px;
-  }
-
-  .topbar .icon-link {
-    display: none;
-  }
-
   .seg button {
     padding: 4px 6px;
   }
@@ -2812,37 +2747,7 @@ html.reordering * {
   overflow-wrap: anywhere;
 }
 
-.avatar-count {
-  position: absolute;
-  top: -4px;
-  right: -5px;
-  min-width: 13px;
-  height: 13px;
-  padding: 0 3px;
-  border-radius: var(--radius-full);
-  background: var(--text-secondary);
-  box-shadow: 0 0 0 var(--border-l) var(--base);
-  color: var(--base);
-  font-size: 9px;
-  font-weight: var(--weight-ui-semibold);
-  line-height: 13px;
-  text-align: center;
-}
-
-/* Phones: top-bar panels span the viewport (the account control sits right
-   of Settings, so end-aligned panels could otherwise overflow on the left). */
-@media (max-width: 640px) {
-  .topbar .popover {
-    position: fixed;
-    top: 52px;
-    left: 8px;
-    right: 8px;
-    width: auto;
-    max-width: none;
-  }
-}
-
-/* ---- Top-bar Invite: a person (link) or an agent (pass) ---- */
+/* ---- Invite: a person (link) or an agent (pass) ---- */
 .seg.invite-kind {
   display: inline-flex;
   align-self: flex-start;
@@ -3349,14 +3254,6 @@ html.reordering * {
 }
 
 @media (max-width: 640px) {
-  /* A crowded top bar (canvas, repos, a big roster, account) scrolls
-     sideways instead of widening the page. Its panels are position: fixed
-     on phones, so they are not clipped. */
-  .topbar {
-    overflow-x: auto;
-    scrollbar-width: none;
-  }
-
   .settings-page {
     padding: 0 8px var(--space-l);
   }
@@ -3364,6 +3261,7 @@ html.reordering * {
   .settings-nav {
     margin: 0 -8px;
     padding: var(--space-xs) 8px;
+    background: var(--panel);
   }
 }
 
@@ -3505,5 +3403,195 @@ html.reordering * {
 
   .prow > .button {
     margin-left: 40px;
+  }
+}
+
+/* Phones: flat and full-bleed. No base, no floating panel: a large title,
+   edge-to-edge rows and a tab bar with the screens. */
+@media (max-width: 640px) {
+  .shell {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    background: var(--panel);
+  }
+
+  .sidebar {
+    display: none;
+  }
+
+  .shell-main {
+    margin: 0;
+  }
+
+  .shell-main.panel {
+    border-radius: 0;
+    box-shadow: none;
+  }
+
+  .screen-head {
+    height: auto;
+    min-height: 60px;
+    gap: var(--space-xs);
+    padding: var(--space-s) var(--space-s) var(--space-xxs) var(--space-m);
+    border-bottom: 0;
+  }
+
+  .screen-title {
+    font-size: 28px;
+    font-weight: var(--weight-ui-heavy);
+    line-height: 34px;
+    letter-spacing: var(--tracking-xs);
+  }
+
+  .screen-note,
+  .head-account .label,
+  /* On phones the backlog's status icons say what the group heads would. */
+  h3.group-head {
+    display: none;
+  }
+
+  .screen-head .button-primary {
+    border-radius: var(--radius-full);
+  }
+
+  .head-account {
+    display: inline-flex;
+    order: 1;
+  }
+
+  .screen-head .popover {
+    position: fixed;
+    top: 60px;
+    left: 8px;
+    right: 8px;
+    width: auto;
+    max-width: none;
+  }
+
+  .account-menu .seg {
+    display: inline-flex;
+  }
+
+  .account-menu .theme-cycle {
+    display: none;
+  }
+
+  /* Edge-to-edge rows with hairlines, group heads as quiet labels. */
+  .group-head {
+    height: 36px;
+    padding-top: var(--space-xs);
+    border: 0;
+    background: none;
+    color: var(--text-muted);
+  }
+
+  .row,
+  .inbox-entry,
+  .msg {
+    margin: 0;
+    border-radius: 0;
+  }
+
+  .row {
+    height: 48px;
+    padding: 0 var(--space-m);
+    border-bottom: var(--border-s) solid var(--panel-edge);
+  }
+
+  .inbox-entry {
+    padding: var(--space-s) var(--space-m);
+    border-bottom: var(--border-s) solid var(--panel-edge);
+  }
+
+  .msg {
+    padding: var(--space-xs) var(--space-m);
+  }
+
+  .composer {
+    padding: var(--space-xs) var(--space-s);
+  }
+
+  .composer textarea.control {
+    field-sizing: content;
+    min-height: 44px;
+    max-height: 120px;
+    border-radius: 22px;
+  }
+
+  .composer .hint {
+    display: none;
+  }
+
+  .composer-foot {
+    justify-content: flex-end;
+  }
+
+  .tabbar {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    padding: 6px var(--space-xs) calc(6px + env(safe-area-inset-bottom));
+    border-top: var(--border-s) solid var(--panel-edge);
+    background: var(--panel);
+  }
+
+  .tab {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 2px;
+    padding: var(--space-xxs) 0;
+    color: var(--text-muted);
+    font-size: 10px;
+    font-weight: var(--weight-ui-medium);
+    line-height: 14px;
+  }
+
+  .tab:hover {
+    text-decoration: none;
+  }
+
+  .tab[aria-current="page"] {
+    color: var(--accent);
+  }
+
+  .tab-icon {
+    position: relative;
+    display: grid;
+  }
+
+  .tab-icon .lucide {
+    width: 24px;
+    height: 24px;
+  }
+
+  .tab[aria-current="page"] .tab-icon .lucide {
+    stroke-width: 2.25;
+  }
+
+  .tab .nav-count {
+    display: none;
+  }
+
+  .tab .nav-count-strong {
+    position: absolute;
+    top: -4px;
+    left: 15px;
+    display: block;
+    min-width: 18px;
+    margin: 0;
+    padding: 0 5px;
+    font-size: 10px;
+    font-weight: var(--weight-ui-heavy);
+    box-shadow: 0 0 0 2px var(--panel);
+  }
+
+  .tab .nav-unread {
+    position: absolute;
+    top: -1px;
+    right: -3px;
+    width: 8px;
+    height: 8px;
+    margin: 0;
+    box-shadow: 0 0 0 2px var(--panel);
   }
 }

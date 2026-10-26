@@ -10,7 +10,8 @@ import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
 // Pages: "/" is Home (the landing page, or the workspace list when signed
-// in); "/w/:id" is a workspace, "/w/:id/settings" its settings,
+// in); "/w/:id" is a workspace's backlog, "/w/:id/inbox" and "/w/:id/chat"
+// its other screens, "/w/:id/settings" its settings,
 // "/w/:id/join?invite=…" where an invite link lands; "/me" is your profile;
 // "/auth/device" approves a `unison login`.
 export default function App() {
@@ -23,13 +24,13 @@ export default function App() {
   }, []);
   const navigate = (to) => {
     window.history.pushState(null, "", to);
-    setPath(to);
+    setPath(window.location.pathname);
   };
-  const match = path.match(/^\/w\/([^/]+)(\/settings|\/join)?/);
-  if (match && match[2] === "/join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
+  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|inbox|chat))?/);
+  if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live
   // stream and dialogs start fresh for the new one.
-  if (match) return <Workspace key={match[1]} id={match[1]} view={match[2] ? "settings" : "board"} navigate={navigate} account={account} />;
+  if (match) return <Workspace key={match[1]} id={match[1]} view={match[2] || "backlog"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
   if (path === "/me") return <Profile account={account} navigate={navigate} />;
   return <Home navigate={navigate} account={account} />;

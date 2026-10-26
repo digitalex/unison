@@ -73,10 +73,11 @@ export function Avatar({ user, size = 24 }) {
   );
 }
 
-// AccountMenu is the top-bar control: "Sign in" (a popover with the
+// AccountMenu is the account control: "Sign in" (a popover with the
 // providers) or the signed-in person's avatar menu. Hidden when the server
-// has no providers configured.
-export function AccountMenu({ account }) {
+// has no providers configured. showName puts your name beside the avatar
+// (the workspace sidebar); menuExtra(close) adds to the bottom of the menu.
+export function AccountMenu({ account, showName = false, menuExtra }) {
   const { ready, providers, user } = account;
   if (!ready || (!user && providers.length === 0)) return null;
   if (!user) {
@@ -103,7 +104,16 @@ export function AccountMenu({ account }) {
   const email = primaryEmail(user);
   const via = [...new Set(user.identities.map((i) => PROVIDER_LABELS[i.provider] || i.provider))].join(" · ");
   return (
-    <Popover title={`Account: ${user.display_name || email}`} className="button button-ghost button-icon account-trigger" trigger={<Avatar user={user} />}>
+    <Popover
+      title={`Account: ${user.display_name || email}`}
+      className={showName ? "button button-ghost account-trigger account-trigger-named" : "button button-ghost button-icon account-trigger"}
+      trigger={
+        <>
+          <Avatar user={user} />
+          {showName && <span className="account-trigger-name">{user.display_name || email}</span>}
+        </>
+      }
+    >
       {(close) => (
         <div className="account-menu">
           <div className="account-who">
@@ -130,6 +140,7 @@ export function AccountMenu({ account }) {
               Sign out
             </Button>
           </div>
+          {menuExtra?.(close)}
         </div>
       )}
     </Popover>

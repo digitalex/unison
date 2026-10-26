@@ -4,21 +4,17 @@ import { ago } from "./backlogFormat.js";
 import Markdown from "./Markdown.jsx";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
+import ScreenHead from "./ui/ScreenHead.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Textarea } from "./ui/Input.jsx";
 
-// Inbox is "Needs your attention": what someone (usually one of your
-// agents) needs you to act on, at the top of the board. Only your entries
-// (your account's, on any device). It isn't there when there's nothing to
-// do; dismissing is one click, with a moment to undo. Past a few entries
-// the rest fold away, so the backlog stays in view (on phones too).
-const FOLDED = 3;
-
-export default function Inbox({ entries, participants, call, onError }) {
+// Inbox is a workspace screen: what someone (usually one of your agents)
+// needs you to act on. Only your entries (your account's, on any device);
+// dismissing is one click, with a moment to undo. head is the header's
+// shared controls (who's here, Invite), error the workspace's error bar.
+export default function Inbox({ entries, participants, call, onError, head, error }) {
   const [undo, setUndo] = useState(null); // The entry just dismissed.
-  const [showAll, setShowAll] = useState(false);
-  const shown = showAll ? entries : entries.slice(0, FOLDED);
   useEffect(() => {
     if (!undo) return;
     const t = setTimeout(() => setUndo(null), 6000);
@@ -32,34 +28,35 @@ export default function Inbox({ entries, participants, call, onError }) {
       onError(err.message);
     }
   };
-  if (entries.length === 0 && !undo) return null;
   return (
-    <section className="inbox" aria-labelledby="inbox-title">
-      <h2 id="inbox-title" className="inbox-title">
-        <BellRing aria-hidden="true" />
-        Needs your attention
-        <span className="count">{entries.length}</span>
-      </h2>
-      {entries.length > 0 && (
-        <ul className="inbox-list">
-          {shown.map((e) => (
-            <InboxEntry key={e.id} entry={e} sender={participants.find((p) => p.id === e.sender_id)} onDismiss={() => act(e, "dismiss")} />
-          ))}
-        </ul>
-      )}
-      {entries.length > FOLDED && (
-        <Button variant="ghost" className="inbox-more" aria-expanded={showAll} onClick={() => setShowAll(!showAll)}>
-          {showAll ? "Show fewer" : `Show all ${entries.length}`}
-        </Button>
-      )}
-      {undo && (
-        <p className="inbox-undo" role="status">
-          Dismissed “{firstLine(undo.body)}”.{" "}
-          <Button variant="ghost" onClick={() => act(undo, "restore")}>
-            Undo
-          </Button>
-        </p>
-      )}
+    <section className="screen inbox" aria-label="Inbox">
+      <ScreenHead title="Inbox" note="what needs you">
+        {head}
+      </ScreenHead>
+      {error}
+      <div className="screen-body">
+        {entries.length > 0 && (
+          <ul className="inbox-list">
+            {entries.map((e) => (
+              <InboxEntry key={e.id} entry={e} sender={participants.find((p) => p.id === e.sender_id)} onDismiss={() => act(e, "dismiss")} />
+            ))}
+          </ul>
+        )}
+        {undo && (
+          <p className="inbox-undo" role="status">
+            Dismissed “{firstLine(undo.body)}”.{" "}
+            <Button variant="ghost" onClick={() => act(undo, "restore")}>
+              Undo
+            </Button>
+          </p>
+        )}
+        {entries.length === 0 && (
+          <p className="inbox-empty">
+            <BellRing aria-hidden="true" />
+            Nothing needs you right now. When an agent needs a review, an answer or a hand, it lands here.
+          </p>
+        )}
+      </div>
     </section>
   );
 }
