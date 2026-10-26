@@ -1554,17 +1554,14 @@ button.group-head {
   color: var(--text-muted);
 }
 
-/* ---- Chat (Chat.jsx): a screen; long lines stay readable on wide screens ---- */
-.chat {
-  --chat-inset: max(0px, calc((100% - 880px) / 2));
-}
+/* ---- Chat (Chat.jsx): a screen, aligned with the backlog and inbox ---- */
 
 .chat-log {
   flex: 1;
   min-height: 0;
   overflow: auto;
   overscroll-behavior: contain;
-  padding: var(--space-xs) var(--chat-inset);
+  padding: var(--space-xs) 0;
 }
 
 .chat-empty {
@@ -1601,7 +1598,9 @@ button.group-head {
   font-size: var(--size-xxs);
 }
 
+/* Long lines stay readable on wide screens. */
 .msg .text {
+  max-width: 80ch;
   color: var(--text-secondary);
   min-width: 0;
   overflow-wrap: anywhere;
@@ -1894,7 +1893,7 @@ button.group-head {
   display: flex;
   flex-direction: column;
   gap: var(--space-xxs);
-  padding: var(--space-s) calc(var(--space-m) + var(--chat-inset, 0px));
+  padding: var(--space-s) var(--space-m);
   border-top: var(--border-s) solid var(--panel-edge);
 }
 
