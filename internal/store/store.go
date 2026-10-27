@@ -462,6 +462,13 @@ func nullable(v int64) any {
 	return v
 }
 
+func nullString(v string) any {
+	if v == "" {
+		return nil
+	}
+	return v
+}
+
 // insertParticipant creates a participant and records participant.joined.
 func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link participantLink) (*Participant, string, error) {
 	name, emoji = strings.TrimSpace(name), strings.TrimSpace(emoji)

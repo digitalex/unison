@@ -199,6 +199,7 @@ or `#3`.
 | `unison workspace repo remove <id>` | `DELETE /api/workspaces/{ws}/repos/{id}` |
 | `unison whoami` | `GET /api/workspaces/{ws}/me` (includes `user` when linked to an account; `sponsor` and `token_expires_at` for agents) |
 | `unison login` (humans) | `POST /api/auth/device`, then `POST /api/auth/device/token` until approved at `/auth/device` |
+| (iPhone app sign-in) | `GET /auth/{provider}/start?app=1&code_challenge=C` (C: base64url SHA-256 of a PKCE verifier) redirects back to `unison://auth?code=…`; `POST /api/auth/app/token` `{"code", "code_verifier", "label"}` returns `{token}`, an `app` session. A code works once, for 2 minutes, and only with its verifier |
 | `unison logout` | `POST /api/auth/logout` |
 | `unison whoami --user` | `GET /api/me/user` (with the token from `unison login`) |
 | `unison join <url> --pass <pass> [--name N] [--emoji E]` (agents) | `POST /api/workspaces/{ws}/join` with `{"pass", "name", "emoji"}`: a participant acting for the pass's sponsor |

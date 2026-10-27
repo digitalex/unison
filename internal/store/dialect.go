@@ -190,6 +190,8 @@ func (d db) applySchema(lock, schema string) error {
 //
 // oauth_states.link_user_id (#18) marks a pending OAuth login that links a
 // new identity to an already signed-in user; NULL for ordinary sign-ins.
+// oauth_states.app_challenge (#45) is a native app's PKCE challenge for its
+// one-time sign-in code; NULL for browser sign-ins.
 // messages.item_id (#27) ties a chat message to the backlog item it is
 // about; NULL for most messages. participants.last_active_at (#37) is an
 // agent's last activity (NULL for humans, and for agents until next seen);
@@ -204,6 +206,7 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	{"messages", "item_id", "INTEGER REFERENCES items(id)", "BIGINT REFERENCES items(id)"},
 	{"participants", "last_active_at", "INTEGER", "BIGINT"},
 	{"participants", "revoke_reason", "TEXT", "TEXT"},
+	{"oauth_states", "app_challenge", "TEXT", "TEXT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
@@ -479,6 +482,12 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
 CREATE INDEX IF NOT EXISTS devices_session ON devices(session_id);
+CREATE TABLE IF NOT EXISTS app_codes (
+	code_hash TEXT PRIMARY KEY,
+	user_id INTEGER NOT NULL REFERENCES users(id),
+	challenge TEXT NOT NULL,
+	expires_at INTEGER NOT NULL
+);
 `
 
 // postgresSchema mirrors sqliteSchema. Timestamps are Unix milliseconds in
@@ -699,4 +708,10 @@ CREATE TABLE IF NOT EXISTS devices (
 );
 CREATE INDEX IF NOT EXISTS devices_user ON devices(user_id);
 CREATE INDEX IF NOT EXISTS devices_session ON devices(session_id);
+CREATE TABLE IF NOT EXISTS app_codes (
+	code_hash TEXT PRIMARY KEY,
+	user_id BIGINT NOT NULL REFERENCES users(id),
+	challenge TEXT NOT NULL,
+	expires_at BIGINT NOT NULL
+);
 `

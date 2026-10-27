@@ -516,3 +516,75 @@ func TestCreatorsAllowlist(t *testing.T) {
 		t.Errorf("unverified listed email: create = %d, want 403", resp.StatusCode)
 	}
 }
+
+// appLogin runs a native app's sign-in up to the redirect back to the app
+// and returns the code it carries.
+func (e *authEnv) appLogin(challenge string, user map[string]any, emails []map[string]any) string {
+	e.t.Helper()
+	resp, body := e.do("GET", "/auth/github/start?app=1&code_challenge="+challenge, "")
+	if resp.StatusCode != http.StatusFound {
+		e.t.Fatalf("app start = %d %v", resp.StatusCode, body)
+	}
+	stateCookie := cookieNamed(resp, oauthCookie)
+	code, state, _ := e.fake.authorize(resp.Header.Get("Location"), user, emails)
+	resp, body = e.do("GET", "/auth/github/callback?code="+code+"&state="+state, "", withCookie(stateCookie))
+	loc := resp.Header.Get("Location")
+	if resp.StatusCode != http.StatusFound || !strings.HasPrefix(loc, "unison://auth?code=ac_") {
+		e.t.Fatalf("app callback = %d %q %v", resp.StatusCode, loc, body)
+	}
+	if cookieNamed(resp, sessionCookie) != nil {
+		e.t.Error("app callback set a browser session cookie")
+	}
+	u, _ := url.Parse(loc)
+	return u.Query().Get("code")
+}
+
+func TestAppSignIn(t *testing.T) {
+	e := newAuthEnv(t)
+	verifier := randomString(48)
+	sum := sha256.Sum256([]byte(verifier))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	for _, bad := range []string{"", "short", strings.Repeat("A", 44)} {
+		if resp, _ := e.do("GET", "/auth/github/start?app=1&code_challenge="+bad, ""); resp.StatusCode != http.StatusBadRequest {
+			t.Errorf("app start with challenge %q = %d, want 400", bad, resp.StatusCode)
+		}
+	}
+
+	// A wrong verifier spends the code.
+	code := e.appLogin(challenge, adaGitHub, adaGitHubEmails)
+	redeem := func(code, verifier string) (*http.Response, map[string]any) {
+		return e.do("POST", "/api/auth/app/token", `{"code":"`+code+`","code_verifier":"`+verifier+`","label":"iPhone"}`)
+	}
+	if resp, out := redeem(code, "wrong-"+verifier); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("wrong verifier = %d %v, want 400", resp.StatusCode, out)
+	}
+	if resp, _ := redeem(code, verifier); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("code after a wrong verifier = %d, want 400 (spent)", resp.StatusCode)
+	}
+
+	// The right verifier gets a working app session, once.
+	code = e.appLogin(challenge, adaGitHub, adaGitHubEmails)
+	resp, out := redeem(code, verifier)
+	token, _ := out["token"].(string)
+	if resp.StatusCode != http.StatusOK || !strings.HasPrefix(token, store.UserTokenPrefix) {
+		t.Fatalf("redeem = %d %v", resp.StatusCode, out)
+	}
+	if resp, _ := redeem(code, verifier); resp.StatusCode != http.StatusBadRequest {
+		t.Errorf("second redeem = %d, want 400", resp.StatusCode)
+	}
+	if resp, u := e.do("GET", "/api/me/user", "", withBearer(token)); resp.StatusCode != 200 || u["display_name"] != "Ada Lovelace" {
+		t.Errorf("me with app token = %d %v", resp.StatusCode, u)
+	}
+	resp, sessions := e.doList("GET", "/api/me/sessions", withBearer(token))
+	if resp.StatusCode != 200 || len(sessions) != 1 || sessions[0]["kind"] != store.SessionApp || sessions[0]["label"] != "iPhone" {
+		t.Errorf("sessions = %d %v", resp.StatusCode, sessions)
+	}
+
+	// link=1 never applies to an app sign-in.
+	browser, _ := e.login("github", "/", adaGitHub, adaGitHubEmails)
+	resp, _ = e.do("GET", "/auth/github/start?app=1&link=1&code_challenge="+challenge, "", withCookie(browser))
+	if resp.StatusCode != http.StatusFound {
+		t.Errorf("app start while signed in = %d", resp.StatusCode)
+	}
+}
