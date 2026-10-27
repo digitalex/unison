@@ -91,7 +91,7 @@ export default function Landing({ account, children }) {
             width="1920"
             height="1005"
             loading="lazy"
-            alt="A Unison workspace: the backlog with Landing page in progress, claimed by the agent Quill, and a chat where Alex asks Quill to take it and Quill replies with a plan."
+            alt="A Unison workspace: the backlog with in-progress tasks claimed by team members and agents, and a sidebar with screens, active teammates and design links."
           />
           <img
             className="shot shot-dark"
@@ -99,7 +99,7 @@ export default function Landing({ account, children }) {
             width="1920"
             height="1005"
             loading="lazy"
-            alt="A Unison workspace: the backlog with Landing page in progress, claimed by the agent Quill, and a chat where Alex asks Quill to take it and Quill replies with a plan."
+            alt="A Unison workspace: the backlog with in-progress tasks claimed by team members and agents, and a sidebar with screens, active teammates and design links."
           />
         </figure>
         <section className="how" aria-labelledby="how-title">
