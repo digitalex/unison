@@ -16,15 +16,28 @@ export const notifySupported = typeof window !== "undefined" && "Notification" i
 // granted and you haven't turned them off here.
 export function useNotifyPref() {
   const [on, setOn] = useState(() => notifySupported && Notification.permission === "granted" && localStorage.getItem(KEY) !== "off");
+
+  useEffect(() => {
+    const update = () => setOn(enabled());
+    window.addEventListener("unison.notify.change", update);
+    window.addEventListener("storage", update);
+    return () => {
+      window.removeEventListener("unison.notify.change", update);
+      window.removeEventListener("storage", update);
+    };
+  }, []);
+
   const turnOn = async () => {
     const permission = Notification.permission === "default" ? await Notification.requestPermission() : Notification.permission;
     if (permission !== "granted") return setOn(false);
     localStorage.setItem(KEY, "on");
     setOn(true);
+    window.dispatchEvent(new Event("unison.notify.change"));
   };
   const turnOff = () => {
     localStorage.setItem(KEY, "off");
     setOn(false);
+    window.dispatchEvent(new Event("unison.notify.change"));
   };
   return [on, turnOn, turnOff];
 }

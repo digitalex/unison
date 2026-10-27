@@ -3,6 +3,7 @@ import { Github, LogIn, Monitor, SquareTerminal } from "lucide-react";
 import { Avatar, PROVIDER_LABELS, SignInOptions, primaryEmail } from "./Account.jsx";
 import { api } from "./api.js";
 import { SiteHeader } from "./Landing.jsx";
+import Notifications from "./settings/Notifications.jsx";
 import Button from "./ui/Button.jsx";
 
 // The providers Unison knows; the server says which are configured.
@@ -71,6 +72,9 @@ export default function Profile({ account, navigate }) {
           <>
             {error && <p role="alert" className="error-bar profile-error">Error: {error}</p>}
             <ProfileCard user={user} />
+            <Card id="notifications" title="Desktop notifications" description="Browser notifications on this device.">
+              <Notifications />
+            </Card>
             <Logins user={user} providers={account.providers} />
             <Sessions sessions={sessions} run={run} onSignedOut={account.reload} />
             <Agents agents={agents} run={run} navigate={navigate} />
