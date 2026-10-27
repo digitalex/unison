@@ -363,13 +363,11 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
 
   const [userPeopleOpen, setUserPeopleOpen] = useState(null);
   const [userLinksOpen, setUserLinksOpen] = useState(null);
-  const [userScreensOpen, setUserScreensOpen] = useState(null);
 
   // If the user hasn't explicitly toggled, collapse some sections by default:
   // low height collapses people first; very low height collapses links too.
   const peopleOpen = userPeopleOpen !== null ? userPeopleOpen : !isLowHeight;
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
-  const screensOpen = userScreensOpen !== null ? userScreensOpen : true;
 
   const peopleCount = participants ? rosterGroups(participants).length : null;
   const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
@@ -396,28 +394,17 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
       </div>
       <div className="sidebar-content">
         {joined && (
-          <section className="sidebar-section" aria-label="Screens">
-            <SectionHeading
-              title="Screens"
-              count={SCREENS.length}
-              open={screensOpen}
-              onToggle={() => setUserScreensOpen(!screensOpen)}
-              ariaControls="sidebar-screens"
-            />
-            {screensOpen && (
-              <ul id="sidebar-screens" className="nav-list">
-                {SCREENS.map(({ id, label, Icon }) => (
-                  <li key={id}>
-                    <a className="nav-link" {...screens.link(id)}>
-                      <Icon aria-hidden="true" />
-                      {label}
-                      <ScreenCount screen={id} counts={counts} />
-                    </a>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </section>
+          <ul className="nav-list" aria-label="Screens">
+            {SCREENS.map(({ id, label, Icon }) => (
+              <li key={id}>
+                <a className="nav-link" {...screens.link(id)}>
+                  <Icon aria-hidden="true" />
+                  {label}
+                  <ScreenCount screen={id} counts={counts} />
+                </a>
+              </li>
+            ))}
+          </ul>
         )}
         {people && (
           <section className="sidebar-section" aria-label="People">
