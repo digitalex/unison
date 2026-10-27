@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 )
 
@@ -59,7 +60,10 @@ func isMember(t *tx, wsID string, userID int64) (bool, error) {
 }
 
 // JoinWithPass exchanges a pass for a new agent participant in wsID acting
-// for the pass's sponsor. The pass is consumed in the same transaction, so
+// for the pass's sponsor. If an agent with the given name already exists in
+// the workspace, it is reactivated with the pass: its credential is refreshed,
+// its unrevoked state is restored, and its participant ID is kept.
+// The pass is consumed in the same transaction, so
 // it works exactly once. Failures are ErrForbidden with a reason: unknown,
 // expired, already used, for another workspace, or sponsor no longer a
 // member.
@@ -90,11 +94,63 @@ func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string
 			}
 			return fmt.Errorf("%w: the member who made this pass is no longer in the workspace; ask a member for a new invite", ErrForbidden)
 		}
-		p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{
-			SponsorUserID: sponsor, TokenExpiresAt: log.now + AgentCredentialTTL.Milliseconds(),
-		})
-		if err != nil {
-			return err
+
+		name = strings.TrimSpace(name)
+		emoji = strings.TrimSpace(emoji)
+		if strings.ContainsAny(name, " \t\n@") {
+			return fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+		}
+
+		var existing *Participant
+		if name != "" {
+			existing, err = scanParticipant(t.QueryRow(`SELECT `+participantCols+` FROM participants WHERE workspace_id = ? AND lower(name) = lower(?)`, wsID, name))
+			if err != nil && !errors.Is(err, ErrNotFound) {
+				return err
+			}
+		}
+
+		if existing != nil {
+			if existing.Sponsor == nil {
+				return fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
+			}
+			sponsorName, err := displayName(t, sponsor)
+			if err != nil {
+				return err
+			}
+			if emoji == "" {
+				emoji = existing.Emoji
+			}
+			token = randomHex(16)
+			now := log.now
+			tokenExpiresAt := now + AgentCredentialTTL.Milliseconds()
+			_, err = t.Exec(`UPDATE participants SET name = ?, emoji = ?, token = ?, sponsor_user_id = ?, token_expires_at = ?, revoked_at = NULL, revoke_reason = NULL, last_seen_at = ?, last_active_at = ? WHERE id = ?`,
+				name, emoji, token, sponsor, tokenExpiresAt, now, now, existing.ID)
+			if err != nil {
+				return err
+			}
+			p = &Participant{
+				ID:             existing.ID,
+				WorkspaceID:    wsID,
+				Name:           name,
+				Emoji:          emoji,
+				Status:         existing.Status,
+				CreatedAt:      existing.CreatedAt,
+				LastSeenAt:     now,
+				UserID:         existing.UserID,
+				Sponsor:        &Sponsor{UserID: sponsor, DisplayName: sponsorName},
+				TokenExpiresAt: tokenExpiresAt,
+				LastActiveAt:   now,
+			}
+			if err := log.add(wsID, "participant.joined", existing.ID, p); err != nil {
+				return err
+			}
+		} else {
+			p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{
+				SponsorUserID: sponsor, TokenExpiresAt: log.now + AgentCredentialTTL.Milliseconds(),
+			})
+			if err != nil {
+				return err
+			}
 		}
 		res, err := t.Exec(`UPDATE agent_passes SET used_at = ?, participant_id = ? WHERE id = ? AND used_at IS NULL`, log.now, p.ID, id)
 		if err != nil {
