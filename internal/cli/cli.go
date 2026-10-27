@@ -24,6 +24,7 @@ import (
 	"time"
 
 	"github.com/digitalex/unison/internal/guide"
+	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/server"
 	"github.com/digitalex/unison/internal/store"
 	"github.com/digitalex/unison/internal/webui"
@@ -108,6 +109,8 @@ Accounts and invites:
   sessions revoke <id>|--others      sign out one session, or all but this one
   agents                             the agents you invited, across workspaces
   agents revoke <participant-id>     stop one of your agents for good
+  devices                            your iOS devices getting push notifications
+  devices remove <id>                stop pushes to one of them
 
 Chat:
   chat log [--limit N]               recent messages, with threads
@@ -259,6 +262,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.sessions(rest)
 	case "agents":
 		return a.agents(rest)
+	case "devices", "device":
+		return a.devices(rest)
 	case "members", "member":
 		return a.members(rest)
 	case "status":
@@ -419,6 +424,9 @@ func serve(args []string) error {
 	srv := server.New(st, webui.FS())
 	auth := server.AuthConfigFromEnv()
 	srv.SetAuth(auth)
+	if err := setupPush(srv); err != nil {
+		return err
+	}
 	switch {
 	case auth.Open:
 		log.Printf("WARNING: UNISON_AUTH=off: workspaces are OPEN (public reads and creation, anonymous API joins, pre-account participants work). For local development only.")
@@ -1840,4 +1848,20 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
+}
+
+// setupPush enables push notifications when APNS_* is configured.
+func setupPush(srv *server.Server) error {
+	cfg, ok := push.ConfigFromEnv(os.Getenv)
+	if !ok {
+		log.Printf("Push notifications are off (set APNS_KEY, APNS_KEY_ID, APNS_TEAM_ID and APNS_TOPIC to enable).")
+		return nil
+	}
+	c, err := push.NewClient(cfg)
+	if err != nil {
+		return err
+	}
+	srv.SetPusher(c)
+	log.Printf("Push notifications are on (APNs %s, topic %s).", c.BaseURL, cfg.Topic)
+	return nil
 }

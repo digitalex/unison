@@ -117,3 +117,41 @@ func (a *app) agents(args []string) error {
 	}
 	return nil
 }
+
+// devices lists the iOS devices registered for push notifications, or
+// removes one. (The app registers them; there is no `devices add`.)
+func (a *app) devices(args []string) error {
+	if len(args) > 0 && args[0] == "remove" {
+		if len(args) != 2 {
+			return fmt.Errorf("%w: devices remove <id>", errUsage)
+		}
+		id, err := strconv.ParseInt(strings.TrimPrefix(args[1], "#"), 10, 64)
+		if err != nil {
+			return fmt.Errorf("%w: device id must be a number (see `unison devices`)", errUsage)
+		}
+		var out map[string]any
+		if ok, err := a.userCall("DELETE", fmt.Sprintf("/api/me/devices/%d", id), nil, &out); !ok {
+			return err
+		}
+		a.printf("Removed device %d: it gets no more push notifications.\n", id)
+		return nil
+	}
+	if len(args) > 0 {
+		return fmt.Errorf("%w: devices [remove <id>]", errUsage)
+	}
+	var list []store.Device
+	if ok, err := a.userCall("GET", "/api/me/devices", nil, &list); !ok {
+		return err
+	}
+	if len(list) == 0 {
+		a.printf("No devices. The Unison iOS app registers one when you allow notifications.\n")
+	}
+	for _, d := range list {
+		used := "never notified"
+		if d.LastUsedAt != 0 {
+			used = "last notified " + ago(d.LastUsedAt)
+		}
+		a.printf("%-4d %s — registered %s, %s\n", d.ID, firstNonEmpty(d.Label, "(no label)"), ago(d.CreatedAt), used)
+	}
+	return nil
+}

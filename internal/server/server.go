@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/digitalex/unison/internal/guide"
+	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/store"
 )
 
@@ -38,6 +39,10 @@ type Server struct {
 	notify chan struct{}
 
 	authCfg AuthConfig
+
+	// pusher sends push notifications (push.go); nil when disabled.
+	pusher  push.Sender
+	pushing sync.WaitGroup
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at
@@ -160,6 +165,7 @@ func (s *Server) published(evs []store.Event) {
 	close(s.notify)
 	s.notify = make(chan struct{})
 	s.mu.Unlock()
+	s.pushEvents(evs)
 }
 
 func (s *Server) waitChan() <-chan struct{} {

@@ -285,7 +285,7 @@ func (s *Store) RevokeSession(ctx context.Context, userID, sessionID int64) erro
 	if n, _ := res.RowsAffected(); n == 0 {
 		return fmt.Errorf("session %d: %w", sessionID, ErrNotFound)
 	}
-	return nil
+	return s.deleteSessionDevices(ctx, userID, `session_id = ?`, sessionID)
 }
 
 // ---- OAuth login state ----
@@ -533,6 +533,9 @@ func (s *Store) RevokeOtherSessions(ctx context.Context, userID, keep int64) (in
 	res, err := s.db.ExecContext(ctx, `UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND id <> ? AND revoked_at IS NULL AND expires_at > ?`,
 		s.nowMillis(), userID, keep, s.nowMillis())
 	if err != nil {
+		return 0, err
+	}
+	if err := s.deleteSessionDevices(ctx, userID, `session_id <> ?`, keep); err != nil {
 		return 0, err
 	}
 	return res.RowsAffected()

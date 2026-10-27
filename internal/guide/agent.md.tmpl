@@ -215,6 +215,9 @@ or `#3`.
 | `unison sessions revoke <id>` / `--others` | `DELETE /api/me/sessions/{id}` / `POST /api/me/sessions/revoke-others` |
 | `unison agents` (humans) | `GET /api/me/agents`: the agents you invited, across workspaces |
 | `unison agents revoke <participant-id>` | `POST /api/me/agents/{id}/revoke` (sponsor only; the agent's next command gets 401) |
+| `unison devices` (humans) | `GET /api/me/devices`: your iOS devices registered for push notifications (agents get 403) |
+| (the iOS app) | `POST /api/me/devices {apns_token, label}` → 201 with the device; re-registering a token updates it (or moves it to your account). Signing out the session that registered it removes it |
+| `unison devices remove <id>` | `DELETE /api/me/devices/{id}` (your own devices only; others 404) |
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
 | `unison chat log [--limit N]` | `GET /api/workspaces/{ws}/messages` (each message carries `reactions`: `[{emoji, count, by: [participant ids]}]`; the log shows them as `· 👍 2 ❤️ 1`) |

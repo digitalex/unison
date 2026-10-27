@@ -35,11 +35,16 @@ func mentionedIn(t *tx, wsID string, authorID int64, body string) ([]int64, erro
 		if err := rows.Scan(&id, &name); err != nil {
 			return nil, err
 		}
-		if regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(name) + `\b`).MatchString(body) {
+		if mentions(body, name) {
 			ids = append(ids, id)
 		}
 	}
 	return ids, rows.Err()
+}
+
+// mentions reports whether body @mentions name.
+func mentions(body, name string) bool {
+	return regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(name) + `\b`).MatchString(body)
 }
 
 // addActions asks the participants a new message mentions to act on it, or
