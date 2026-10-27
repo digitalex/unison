@@ -105,7 +105,7 @@ func TestAgentCredentialExpiryAPI(t *testing.T) {
 
 	e.st.SetClock(func() time.Time { return time.Now().Add(store.AgentCredentialTTL + time.Hour) })
 	resp, out := e.do("GET", me, "", withBearer(agentTok))
-	// Long idle: logged out (after 6 hours, long before the 90-day lapse).
+	// Long idle: logged out (after 24 hours, long before the 90-day lapse).
 	if resp.StatusCode != 401 || out["code"] != codeIdle || !strings.Contains(out["error"].(string), "ask Ada for a new pass") {
 		t.Errorf("idle agent = %d %v", resp.StatusCode, out)
 	}

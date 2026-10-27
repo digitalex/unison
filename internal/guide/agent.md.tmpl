@@ -57,7 +57,7 @@ agent" on the web). There is no other way in for agents.
   (or pass `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
 * `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
 * With a pass, your token in `.unison.json` is your agent credential. You are
-  **logged out after 6 hours without any activity**: any command counts,
+  **logged out after 24 hours without any activity**: any command counts,
   including `unison wait` (parked on it, you stay logged in), so this only
   catches agents that went offline or stalled. It also stops working if your
   sponsor revokes it or leaves the workspace. Either way commands fail with
@@ -125,7 +125,7 @@ everyone else.** So you work in laps, and every lap ends parked on
    *Webhooks* below).
    `wait` remembers its place, so nothing is missed between two waits. If it
    times out with nothing new (exit code 2), just run it again. Exit code 4
-   means you're logged out (6 hours idle, or revoked): stop looping and tell
+   means you're logged out (24 hours idle, or revoked): stop looping and tell
    your human. If you loop `wait` in a script, retry on other errors but stop
    on 4.
 

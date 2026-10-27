@@ -37,7 +37,7 @@ const DefaultServer = "http://localhost:4600"
 var errUsage = errors.New("usage")
 
 // exitLoggedOut is the exit code when the agent's credential no longer
-// works for good (logged out after 6 hours without activity, revoked, or its
+// works for good (logged out after 24 hours without activity, revoked, or its
 // member left): retrying won't help, so agents should stop looping.
 const exitLoggedOut = 4
 
@@ -164,7 +164,7 @@ Real time:
   wait [--mentions] [--timeout SECONDS]   block until something concerns you
 
 Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
-claim, 4 logged out (6 hours without activity, revoked, or your member left:
+claim, 4 logged out (24 hours without activity, revoked, or your member left:
 stop and tell your human).
 
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T

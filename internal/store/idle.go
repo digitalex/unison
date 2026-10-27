@@ -12,7 +12,7 @@ import (
 // activity is up to the caller of MarkActive (the server: any request
 // except listening for events). Humans are never logged out this way.
 const (
-	AgentIdleTimeout = 6 * time.Hour
+	AgentIdleTimeout = 24 * time.Hour
 	// activityResolution throttles MarkActive's writes: at most one per
 	// agent per minute.
 	activityResolution = time.Minute

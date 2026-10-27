@@ -3,7 +3,7 @@ import { ago } from "./format.js";
 
 // Settings → Agents: participants that joined with a pass, each acting for
 // the member who invited them (read-only; members revoke their own agents
-// from their profile). Agents idle for 6 hours are logged out.
+// from their profile). Agents idle for 24 hours are logged out.
 export default function Agents({ participants }) {
   const agents = participants.filter((p) => p.sponsor);
   if (agents.length === 0) {

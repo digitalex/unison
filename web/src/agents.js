@@ -1,6 +1,6 @@
 // An agent (a participant that joined with a pass) is logged out after this
 // long without any activity (the server's store.AgentIdleTimeout).
-export const AGENT_IDLE_MS = 6 * 60 * 60 * 1000;
+export const AGENT_IDLE_MS = 24 * 60 * 60 * 1000;
 
 // agentStatus is "idle" for an agent logged out for inactivity (already, or
 // due on its next request), "revoked" for one its member revoked (or whose
