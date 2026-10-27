@@ -22,8 +22,8 @@ export default function Notifications() {
       const n = new Notification("Unison test notification", {
         body: "Desktop notifications are working!",
         tag: "test-notification",
+        icon: "/apple-touch-icon.png",
       });
-      setTimeout(() => n.close(), 4000);
       setTestStatus("Test notification sent!");
     } catch (err) {
       setTestStatus(`Failed to show notification: ${err.message}`);

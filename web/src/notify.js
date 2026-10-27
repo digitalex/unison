@@ -33,6 +33,15 @@ export function useNotifyPref() {
     localStorage.setItem(KEY, "on");
     setOn(true);
     window.dispatchEvent(new Event("unison.notify.change"));
+    try {
+      new Notification("Desktop notifications enabled", {
+        body: "You'll be notified of @mentions, actions, and when people join.",
+        tag: "unison-enabled",
+        icon: "/apple-touch-icon.png",
+      });
+    } catch {
+      // Ignore if browser restricts immediate notification.
+    }
   };
   const turnOff = () => {
     localStorage.setItem(KEY, "off");
@@ -53,6 +62,14 @@ function mentions(body, name) {
   return new RegExp(`@(${escaped}|all|everyone)\\b`, "i").test(body);
 }
 
+function mentionsAny(body, names) {
+  for (const name of names) {
+    if (!name) continue;
+    if (mentions(body, name)) return true;
+  }
+  return false;
+}
+
 function preview(text) {
   const t = text.replace(/\s+/g, " ").trim();
   return t.length > 200 ? `${t.slice(0, 197)}…` : t;
@@ -69,7 +86,10 @@ export function notification(event, me, mine, participants) {
   if (event.type === "message.created") {
     const asksMe = d.action_required && (d.action_for || []).some((id) => mine.has(id));
     if (asksMe) return { title: `${name} needs you`, body: preview(d.body), tag: `msg-${d.id}`, message: d.id };
-    if (mentions(d.body, me.name)) return { title: `${name} mentioned you`, body: preview(d.body), tag: `msg-${d.id}`, message: d.id };
+    const myNames = new Set(participants.filter((p) => mine.has(p.id)).map((p) => p.name));
+    if (me?.name) myNames.add(me.name);
+    if (me?.user?.display_name) myNames.add(me.user.display_name);
+    if (mentionsAny(d.body, myNames)) return { title: `${name} mentioned you`, body: preview(d.body), tag: `msg-${d.id}`, message: d.id };
     return null;
   }
   if (event.type === "participant.joined") {
@@ -82,28 +102,41 @@ export function notification(event, me, mine, participants) {
 // useNotifier returns a function to call with each workspace event: it
 // shows the event's notification when they are on and the tab is in the
 // background. Clicking one brings the tab forward (and opens the message).
-export function useNotifier(me, participants) {
-  const latest = useRef({ me, participants });
+export function useNotifier(me, participants, view) {
+  const latest = useRef({ me, participants, view });
   // People who joined since the list was last fetched: their first message
   // can arrive before the refetch does.
   const joined = useRef([]);
   useEffect(() => {
-    latest.current = { me, participants };
+    latest.current = { me, participants, view };
   });
   return (event) => {
     if (event.type === "participant.joined" && event.data) joined.current.push(event.data);
-    if (!enabled() || (document.visibilityState === "visible" && document.hasFocus())) return;
-    const { me } = latest.current;
+    if (!enabled()) return;
+    const { me, view } = latest.current;
+    // Suppress chat message notification only when the window has user focus,
+    // is visible, and the user is currently on the chat screen viewing messages.
+    // In other screens (backlog, canvas, settings) or when tab is in background,
+    // the user should be notified.
+    const isChatOnScreen = document.visibilityState === "visible" && document.hasFocus() && view === "chat";
+    if (isChatOnScreen && event.type === "message.created") return;
+    if (document.visibilityState === "visible" && document.hasFocus() && event.type === "participant.joined") return;
+
     const participants = [...latest.current.participants, ...joined.current];
-    const mine = new Set(participants.filter((p) => p.id === me?.id || (me?.user_id && p.user_id === me.user_id)).map((p) => p.id));
-    if (me) mine.add(me.id);
+    const myUserId = me?.user_id || me?.user?.id;
+    const mine = new Set(participants.filter((p) => p.id === me?.id || (myUserId && p.user_id === myUserId)).map((p) => p.id));
+    if (me?.id) mine.add(me.id);
     const n = notification(event, me, mine, participants);
     if (!n) return;
-    const shown = new Notification(n.title, { body: n.body, tag: n.tag });
-    shown.onclick = () => {
-      window.focus();
-      if (n.message) window.dispatchEvent(new CustomEvent(SHOW_MESSAGE, { detail: n.message }));
-      shown.close();
-    };
+    try {
+      const shown = new Notification(n.title, { body: n.body, tag: n.tag, icon: "/apple-touch-icon.png" });
+      shown.onclick = () => {
+        window.focus();
+        if (n.message) window.dispatchEvent(new CustomEvent(SHOW_MESSAGE, { detail: n.message }));
+        shown.close();
+      };
+    } catch (err) {
+      console.warn("Failed to show notification:", err);
+    }
   };
 }
