@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
@@ -149,6 +149,7 @@ export default function Workspace({ id, view, navigate, account }) {
         screens={screens}
         account={account}
         navigate={navigate}
+        participants={participants}
         people={
           joined && (
             <>
@@ -310,12 +311,64 @@ function ScreenCount({ screen, counts }) {
   return counts[screen] ? <span className="nav-count">{counts[screen]}</span> : null;
 }
 
+// Thresholds for auto-collapsing sidebar sections on low-height screens
+const LOW_HEIGHT_THRESHOLD = 720;
+const VERY_LOW_HEIGHT_THRESHOLD = 560;
+
+function useWindowHeight() {
+  const [height, setHeight] = useState(() => (typeof window !== "undefined" ? window.innerHeight : 900));
+  useEffect(() => {
+    const onResize = () => setHeight(window.innerHeight);
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+  return height;
+}
+
+function SectionHeading({ title, count, open, onToggle, ariaControls }) {
+  return (
+    <button
+      type="button"
+      className="nav-heading nav-heading-button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-controls={ariaControls}
+      title={open ? `Collapse ${title}` : `Expand ${title}`}
+    >
+      <span className="nav-heading-title">{title}</span>
+      {count != null && <span className="nav-heading-count">({count})</span>}
+      <span className="nav-heading-spacer" />
+      <ChevronDown
+        aria-hidden="true"
+        className={open ? "nav-heading-chevron" : "nav-heading-chevron nav-heading-chevron-closed"}
+      />
+    </button>
+  );
+}
+
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
 // here (people, with Invite), links out (canvas, repositories), then
 // settings and your account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, people }) {
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people }) {
   const repos = workspace.repos || [];
+  const height = useWindowHeight();
+  const isLowHeight = height < LOW_HEIGHT_THRESHOLD;
+  const isVeryLowHeight = height < VERY_LOW_HEIGHT_THRESHOLD;
+
+  const [userPeopleOpen, setUserPeopleOpen] = useState(null);
+  const [userLinksOpen, setUserLinksOpen] = useState(null);
+  const [userScreensOpen, setUserScreensOpen] = useState(null);
+
+  // If the user hasn't explicitly toggled, collapse some sections by default:
+  // low height collapses people first; very low height collapses links too.
+  const peopleOpen = userPeopleOpen !== null ? userPeopleOpen : !isLowHeight;
+  const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
+  const screensOpen = userScreensOpen !== null ? userScreensOpen : true;
+
+  const peopleCount = participants ? rosterGroups(participants).length : null;
+  const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
+
   return (
     <nav className="sidebar" aria-label="Workspace">
       <div className="sidebar-ws">
@@ -336,51 +389,78 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
         </h1>
         <span className={live ? "live live-on" : "live"} title={live ? "Live" : "Reconnecting…"} aria-label={live ? "Live" : "Reconnecting…"} />
       </div>
-      {joined && (
-        <ul className="nav-list">
-          {SCREENS.map(({ id, label, Icon }) => (
-            <li key={id}>
-              <a className="nav-link" {...screens.link(id)}>
-                <Icon aria-hidden="true" />
-                {label}
-                <ScreenCount screen={id} counts={counts} />
-              </a>
-            </li>
-          ))}
-        </ul>
-      )}
-      {people && (
-        <>
-          <h2 className="nav-heading">People</h2>
-          {people}
-        </>
-      )}
-      {(workspace.canvas_url || repos.length > 0) && (
-        <>
-          <h2 className="nav-heading">Links</h2>
-          <ul className="nav-list nav-list-small">
-            {workspace.canvas_url && (
-              <li>
-                <a className="nav-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">
-                  <LayoutGrid aria-hidden="true" />
-                  Canvas
-                  <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
-                </a>
-              </li>
+      <div className="sidebar-content">
+        {joined && (
+          <section className="sidebar-section" aria-label="Screens">
+            <SectionHeading
+              title="Screens"
+              count={SCREENS.length}
+              open={screensOpen}
+              onToggle={() => setUserScreensOpen(!screensOpen)}
+              ariaControls="sidebar-screens"
+            />
+            {screensOpen && (
+              <ul id="sidebar-screens" className="nav-list">
+                {SCREENS.map(({ id, label, Icon }) => (
+                  <li key={id}>
+                    <a className="nav-link" {...screens.link(id)}>
+                      <Icon aria-hidden="true" />
+                      {label}
+                      <ScreenCount screen={id} counts={counts} />
+                    </a>
+                  </li>
+                ))}
+              </ul>
             )}
-            {repos.map((r) => (
-              <li key={r.id}>
-                <a className="nav-link" href={r.url} target="_blank" rel="noreferrer" title={`Repository: ${r.url}`}>
-                  <FolderGit2 aria-hidden="true" />
-                  <span className="nav-text">{repoName(r.url)}</span>
-                  <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
-                </a>
-              </li>
-            ))}
-          </ul>
-        </>
-      )}
-      <span className="spacer" />
+          </section>
+        )}
+        {people && (
+          <section className="sidebar-section" aria-label="People">
+            <SectionHeading
+              title="People"
+              count={peopleCount}
+              open={peopleOpen}
+              onToggle={() => setUserPeopleOpen(!peopleOpen)}
+              ariaControls="sidebar-people"
+            />
+            {peopleOpen && <div id="sidebar-people">{people}</div>}
+          </section>
+        )}
+        {(workspace.canvas_url || repos.length > 0) && (
+          <section className="sidebar-section" aria-label="Links">
+            <SectionHeading
+              title="Links"
+              count={linksCount}
+              open={linksOpen}
+              onToggle={() => setUserLinksOpen(!linksOpen)}
+              ariaControls="sidebar-links"
+            />
+            {linksOpen && (
+              <ul id="sidebar-links" className="nav-list nav-list-small">
+                {workspace.canvas_url && (
+                  <li>
+                    <a className="nav-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">
+                      <LayoutGrid aria-hidden="true" />
+                      Canvas
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                  </li>
+                )}
+                {repos.map((r) => (
+                  <li key={r.id}>
+                    <a className="nav-link" href={r.url} target="_blank" rel="noreferrer" title={`Repository: ${r.url}`}>
+                      <FolderGit2 aria-hidden="true" />
+                      <span className="nav-text">{repoName(r.url)}</span>
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </section>
+        )}
+        <span className="spacer" />
+      </div>
       <div className="sidebar-foot">
         {joined && (
           <a className="nav-link" {...screens.link("settings")} title="Workspace settings">
