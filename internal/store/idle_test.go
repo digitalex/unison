@@ -34,21 +34,21 @@ func TestAgentIdleLogout(t *testing.T) {
 	if agent.LastActiveAt != now.UnixMilli() {
 		t.Fatalf("a new agent's last_active_at = %d, want now", agent.LastActiveAt)
 	}
-	// 5h59m later it still works; activity resets the clock.
-	*now = now.Add(5*time.Hour + 59*time.Minute)
+	// 23h59m later it still works; activity resets the clock.
+	*now = now.Add(23*time.Hour + 59*time.Minute)
 	p, err := s.Authenticate(ctx, tok)
 	if err != nil {
-		t.Fatalf("at 5h59m: %v", err)
+		t.Fatalf("at 23h59m: %v", err)
 	}
 	s.MarkActive(ctx, p)
-	*now = now.Add(5*time.Hour + 59*time.Minute)
+	*now = now.Add(23*time.Hour + 59*time.Minute)
 	if _, err := s.Authenticate(ctx, tok); err != nil {
-		t.Fatalf("5h59m after the last activity: %v", err)
+		t.Fatalf("23h59m after the last activity: %v", err)
 	}
-	// 6h01m without activity: logged out.
+	// 24h01m without activity: logged out.
 	*now = now.Add(2 * time.Minute)
 	if _, err := s.Authenticate(ctx, tok); !errors.Is(err, ErrIdle) || !errors.Is(err, ErrRevoked) {
-		t.Fatalf("at 6h01m idle: err = %v, want ErrIdle (and ErrRevoked)", err)
+		t.Fatalf("at 24h01m idle: err = %v, want ErrIdle (and ErrRevoked)", err)
 	}
 	got, _ := s.GetParticipant(ctx, agent.WorkspaceID, agent.ID)
 	if got.RevokedAt != now.UnixMilli() || got.RevokeReason != "idle" || got.Name != "Wren" {
@@ -122,8 +122,8 @@ func TestIdleUntrackedAgent(t *testing.T) {
 	if got, _ := s.GetParticipant(ctx, agent.WorkspaceID, agent.ID); got.LastActiveAt != now.UnixMilli() {
 		t.Errorf("clock not started: %d", got.LastActiveAt)
 	}
-	*now = now.Add(6*time.Hour + time.Minute)
+	*now = now.Add(24*time.Hour + time.Minute)
 	if _, err := s.Authenticate(ctx, tok); !errors.Is(err, ErrIdle) {
-		t.Errorf("6h01m after first sight: err = %v", err)
+		t.Errorf("24h01m after first sight: err = %v", err)
 	}
 }
