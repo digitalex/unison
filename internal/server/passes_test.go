@@ -76,6 +76,26 @@ func TestPassesAPI(t *testing.T) {
 		t.Errorf("agent /me = %v", me)
 	}
 
+	// Rejoining with an existing agent name reactivates the agent with the same ID.
+	rejoinResp, rejoined := e.do("POST", base+"/join", `{"pass":"`+mint()+`","name":"Quill","emoji":"🖋️"}`)
+	rejoinedAgent, _ := rejoined["participant"].(map[string]any)
+	if rejoinResp.StatusCode != 201 || rejoinedAgent["id"] != agent["id"] || rejoinedAgent["emoji"] != "🖋️" {
+		t.Errorf("agent rejoin = %d %v, want ID %v", rejoinResp.StatusCode, rejoined, agent["id"])
+	}
+	rejoinedTok := rejoined["token"].(string)
+	if resp, _ := e.do("POST", base+"/messages", `{"body":"rejoined"}`, withBearer(rejoinedTok)); resp.StatusCode != 201 {
+		t.Errorf("rejoined agent message = %d", resp.StatusCode)
+	}
+	// Old token no longer works.
+	if resp, _ := e.do("POST", base+"/messages", `{"body":"old"}`, withBearer(agentTok)); resp.StatusCode != 401 {
+		t.Errorf("old agent token after rejoin = %d, want 401", resp.StatusCode)
+	}
+
+	// Joining with a pass using a human member's name fails with conflict.
+	if resp, out := e.do("POST", base+"/join", `{"pass":"`+mint()+`","name":"Ada"}`); resp.StatusCode != 409 || !strings.Contains(out["error"].(string), "already taken") {
+		t.Errorf("join with human member's name = %d %v, want 409 conflict", resp.StatusCode, out)
+	}
+
 	// Bob becomes a member and removes Ada: her agents stop working, with
 	// a clear message; everyone else is unaffected.
 	bobTok := e.memberJoins(bob, ws.ID, "Bob")
@@ -83,7 +103,7 @@ func TestPassesAPI(t *testing.T) {
 	if resp, _ := e.do("DELETE", base+"/members/"+jsonID(adaUser["id"]), "", withCookie(bob), withCSRF()); resp.StatusCode != 200 {
 		t.Fatalf("remove sponsor = %d", resp.StatusCode)
 	}
-	resp, out := e.do("POST", base+"/messages", `{"body":"still here?"}`, withBearer(agentTok))
+	resp, out := e.do("POST", base+"/messages", `{"body":"still here?"}`, withBearer(rejoinedTok))
 	if resp.StatusCode != 401 || !strings.Contains(out["error"].(string), "Ada Lovelace, who invited this agent, is no longer a member") {
 		t.Errorf("agent of a removed sponsor = %d %v", resp.StatusCode, out)
 	}

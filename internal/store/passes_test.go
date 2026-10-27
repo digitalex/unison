@@ -154,6 +154,110 @@ func TestAgentCredential(t *testing.T) {
 	}
 }
 
+func TestAgentRejoin(t *testing.T) {
+	s, _, ws, alex, _ := passSetup(t)
+	ctx := context.Background()
+
+	// 1. Initial join as an agent.
+	pass1, _, err := s.MintPass(ctx, ws.ID, alex.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p1, token1, evs1, err := s.JoinWithPass(ctx, ws.ID, pass1, "Quill", "🪶")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p1.Name != "Quill" || p1.Emoji != "🪶" {
+		t.Fatalf("agent p1 = %+v", p1)
+	}
+	if !sameTypes(evs1, "participant.joined") {
+		t.Fatalf("events = %v", eventTypes(evs1))
+	}
+
+	// 2. Quill is revoked (e.g. idle or sponsor revokes it).
+	if _, _, err := s.RevokeAgent(ctx, alex.ID, p1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Authenticate(ctx, token1); !errors.Is(err, ErrRevoked) {
+		t.Fatalf("revoked agent token1 Authenticate err = %v, want ErrRevoked", err)
+	}
+
+	// 3. Quill rejoins with a new pass using the same name and a new emoji.
+	pass2, _, err := s.MintPass(ctx, ws.ID, alex.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p2, token2, evs2, err := s.JoinWithPass(ctx, ws.ID, pass2, "Quill", "🖋️")
+	if err != nil {
+		t.Fatalf("rejoin err = %v", err)
+	}
+	if p2.ID != p1.ID {
+		t.Errorf("p2.ID = %d, want existing p1.ID = %d", p2.ID, p1.ID)
+	}
+	if p2.Emoji != "🖋️" {
+		t.Errorf("p2.Emoji = %q, want '🖋️'", p2.Emoji)
+	}
+	if p2.RevokedAt != 0 || p2.RevokeReason != "" {
+		t.Errorf("p2 still marked revoked: revoked_at=%d reason=%q", p2.RevokedAt, p2.RevokeReason)
+	}
+	if !sameTypes(evs2, "participant.joined") {
+		t.Fatalf("rejoin events = %v", eventTypes(evs2))
+	}
+
+	// Old token is invalidated, new token authenticates.
+	if _, err := s.Authenticate(ctx, token1); !errors.Is(err, ErrNotFound) {
+		t.Errorf("old token Authenticate err = %v, want ErrNotFound", err)
+	}
+	a, err := s.Authenticate(ctx, token2)
+	if err != nil || a.ID != p1.ID || a.RevokedAt != 0 {
+		t.Errorf("new token Authenticate = %+v %v", a, err)
+	}
+
+	// 4. Rejoin with same name case-insensitively and empty emoji (retains existing emoji).
+	pass3, _, err := s.MintPass(ctx, ws.ID, alex.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p3, token3, _, err := s.JoinWithPass(ctx, ws.ID, pass3, "quill", "")
+	if err != nil {
+		t.Fatalf("case-insensitive rejoin err = %v", err)
+	}
+	if p3.ID != p1.ID {
+		t.Errorf("p3.ID = %d, want %d", p3.ID, p1.ID)
+	}
+	if p3.Emoji != "🖋️" {
+		t.Errorf("p3.Emoji = %q, want '🖋️'", p3.Emoji)
+	}
+	if _, err := s.Authenticate(ctx, token3); err != nil {
+		t.Errorf("token3 Authenticate err = %v", err)
+	}
+
+	// 5. Trying to join with pass using a human member's name fails with ErrConflict.
+	pass4, _, err := s.MintPass(ctx, ws.ID, alex.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, _, err = s.JoinWithPass(ctx, ws.ID, pass4, "Alex", "")
+	if !errors.Is(err, ErrConflict) {
+		t.Errorf("join with human member's name err = %v, want ErrConflict", err)
+	}
+
+	// 6. Only one participant row exists for Quill in ListParticipants.
+	parts, err := s.ListParticipants(ctx, ws.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var quillCount int
+	for _, p := range parts {
+		if strings.EqualFold(p.Name, "quill") {
+			quillCount++
+		}
+	}
+	if quillCount != 1 {
+		t.Errorf("quill participant count = %d, want 1", quillCount)
+	}
+}
+
 // TestAgentColumnsMigration opens a database from before agent passes
 // (participants with user_id but no sponsor_user_id/token_expires_at, no
 // agent_passes table) and checks the columns are added once, existing
