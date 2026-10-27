@@ -762,7 +762,38 @@ html.dialog-open {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  height: 100%;
+  overflow: hidden;
   padding: var(--space-s) var(--space-xs) var(--space-s) var(--space-s);
+}
+
+.sidebar-content {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding-right: 2px;
+  scrollbar-width: thin;
+  scrollbar-color: var(--panel-edge) transparent;
+}
+
+.sidebar-content::-webkit-scrollbar {
+  width: 4px;
+}
+
+.sidebar-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.sidebar-content::-webkit-scrollbar-thumb {
+  background: var(--panel-edge);
+  border-radius: var(--radius-full);
+}
+
+.sidebar-content::-webkit-scrollbar-thumb:hover {
+  background: var(--text-muted);
 }
 
 .sidebar-ws {
@@ -773,6 +804,7 @@ html.dialog-open {
   height: 36px;
   margin-bottom: var(--space-s);
   padding-left: var(--space-xs);
+  flex-shrink: 0;
 }
 
 .sidebar-ws .ws-name {
@@ -856,6 +888,15 @@ html.dialog-open {
   background: var(--accent);
 }
 
+.sidebar-section {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-section:first-child .nav-heading {
+  margin-top: var(--space-xxs);
+}
+
 .nav-heading {
   margin: var(--space-l) 10px var(--space-xxs);
   color: var(--text-muted);
@@ -863,6 +904,49 @@ html.dialog-open {
   font-weight: var(--weight-ui-semibold);
   letter-spacing: 0.04em;
   text-transform: uppercase;
+}
+
+.nav-heading-button {
+  display: flex;
+  align-items: center;
+  width: calc(100% - 10px);
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font-family: inherit;
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-semibold);
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+  text-align: left;
+  user-select: none;
+}
+
+.nav-heading-button:hover {
+  color: var(--text-secondary);
+}
+
+.nav-heading-count {
+  margin-left: var(--space-xxs);
+  opacity: 0.65;
+  font-weight: var(--weight-ui-regular);
+}
+
+.nav-heading-spacer {
+  flex: 1;
+}
+
+.nav-heading-chevron {
+  width: 12px;
+  height: 12px;
+  opacity: 0.7;
+  transition: transform var(--motion-duration) var(--motion-easing);
+}
+
+.nav-heading-chevron-closed {
+  transform: rotate(-90deg);
 }
 
 .nav-list-small .nav-link {
@@ -944,6 +1028,7 @@ button.nav-link {
   flex-direction: column;
   gap: 2px;
   padding-top: var(--space-xs);
+  flex-shrink: 0;
 }
 
 .sidebar-foot > .seg {
