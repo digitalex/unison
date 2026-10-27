@@ -74,7 +74,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
-  const notify = useNotifier(me, participants);
+  const notify = useNotifier(me, participants, view);
 
   const loaders = {
     workspace: () => call("GET").then(setWorkspace),
