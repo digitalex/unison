@@ -2,6 +2,8 @@ package store
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/base64"
 	"errors"
 	"testing"
 	"time"
@@ -123,6 +125,45 @@ func TestOAuthStateSingleUse(t *testing.T) {
 	*now = now.Add(OAuthStateTTL + time.Second)
 	if _, err := s.TakeOAuthState(ctx, "state-2"); !errors.Is(err, ErrNotFound) {
 		t.Errorf("expired state err = %v", err)
+	}
+}
+
+func TestAppCodes(t *testing.T) {
+	s, now := newStore(t)
+	ctx := context.Background()
+	u, err := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Ada"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	sum := sha256.Sum256([]byte("verifier"))
+	challenge := base64.RawURLEncoding.EncodeToString(sum[:])
+
+	// The app challenge round-trips through the OAuth state.
+	s.SaveOAuthState(ctx, "state-app", OAuthState{Provider: "github", AppChallenge: challenge})
+	if st, err := s.TakeOAuthState(ctx, "state-app"); err != nil || st.AppChallenge != challenge {
+		t.Errorf("app state = %+v, %v", st, err)
+	}
+
+	code, err := s.CreateAppCode(ctx, u.ID, challenge)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := s.RedeemAppCode(ctx, code, "verifier", "iPhone")
+	if err != nil {
+		t.Fatalf("redeem = %v", err)
+	}
+	if se, su, err := s.SessionByToken(ctx, token); err != nil || su.ID != u.ID || se.Kind != SessionApp || se.Label != "iPhone" {
+		t.Errorf("app session = %+v %+v %v", se, su, err)
+	}
+	if _, err := s.RedeemAppCode(ctx, code, "verifier", "iPhone"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second redeem err = %v", err)
+	}
+
+	// Codes expire.
+	code, _ = s.CreateAppCode(ctx, u.ID, challenge)
+	*now = now.Add(AppCodeTTL + time.Second)
+	if _, err := s.RedeemAppCode(ctx, code, "verifier", "iPhone"); !errors.Is(err, ErrNotFound) {
+		t.Errorf("expired code err = %v", err)
 	}
 }
 

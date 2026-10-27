@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"encoding/base64"
 	"encoding/hex"
@@ -21,6 +22,7 @@ import (
 const (
 	SessionBrowser = "browser"
 	SessionCLI     = "cli"
+	SessionApp     = "app" // a native app (the iPhone app), via RedeemAppCode
 )
 
 // SessionTTL is how long a session lives without use; every use (at most
@@ -292,12 +294,15 @@ func (s *Store) RevokeSession(ctx context.Context, userID, sessionID int64) erro
 
 // OAuthState is a pending OAuth login (state, PKCE verifier, return path).
 // LinkUserID, when set, makes it a link: the identity is attached to that
-// (signed-in) user instead of signing in.
+// (signed-in) user instead of signing in. AppChallenge, when set, makes it
+// a native app's login: the callback hands the app a one-time code (see
+// CreateAppCode) bound to this PKCE challenge instead of setting a cookie.
 type OAuthState struct {
-	Provider   string
-	Verifier   string
-	ReturnTo   string
-	LinkUserID int64
+	Provider     string
+	Verifier     string
+	ReturnTo     string
+	LinkUserID   int64
+	AppChallenge string
 }
 
 // OAuthStateTTL bounds how long a login may take at the provider.
@@ -310,8 +315,8 @@ func (s *Store) SaveOAuthState(ctx context.Context, state string, st OAuthState)
 	if err != nil {
 		return err
 	}
-	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, provider, verifier, return_to, expires_at, link_user_id) VALUES (?, ?, ?, ?, ?, ?)`,
-		HashToken(state), st.Provider, st.Verifier, st.ReturnTo, now+OAuthStateTTL.Milliseconds(), nullable(st.LinkUserID))
+	_, err = s.db.ExecContext(ctx, `INSERT INTO oauth_states (state_hash, provider, verifier, return_to, expires_at, link_user_id, app_challenge) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		HashToken(state), st.Provider, st.Verifier, st.ReturnTo, now+OAuthStateTTL.Milliseconds(), nullable(st.LinkUserID), nullString(st.AppChallenge))
 	return err
 }
 
@@ -320,10 +325,11 @@ func (s *Store) TakeOAuthState(ctx context.Context, state string) (*OAuthState, 
 	var st OAuthState
 	var expires int64
 	var link sql.NullInt64
+	var app sql.NullString
 	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		h := HashToken(state)
-		err := t.QueryRow(`SELECT provider, verifier, return_to, expires_at, link_user_id FROM oauth_states WHERE state_hash = ?`, h).
-			Scan(&st.Provider, &st.Verifier, &st.ReturnTo, &expires, &link)
+		err := t.QueryRow(`SELECT provider, verifier, return_to, expires_at, link_user_id, app_challenge FROM oauth_states WHERE state_hash = ?`, h).
+			Scan(&st.Provider, &st.Verifier, &st.ReturnTo, &expires, &link, &app)
 		if errors.Is(err, sql.ErrNoRows) {
 			return ErrNotFound
 		}
@@ -341,8 +347,70 @@ func (s *Store) TakeOAuthState(ctx context.Context, state string) (*OAuthState, 
 	if err != nil {
 		return nil, err
 	}
-	st.LinkUserID = link.Int64
+	st.LinkUserID, st.AppChallenge = link.Int64, app.String
 	return &st, nil
+}
+
+// ---- Native app sign-in ----
+//
+// A native app signs in through the browser OAuth flow, started with its own
+// PKCE challenge. Instead of a session cookie, the callback hands the app a
+// one-time code (through its unison:// redirect), and the app redeems the
+// code with the matching verifier for a session token. A code stolen on the
+// way (another app claiming the scheme) is useless without the verifier.
+
+// AppCodeTTL bounds how long the app has to redeem its code.
+const AppCodeTTL = 2 * time.Minute
+
+// CreateAppCode issues a single-use code that RedeemAppCode turns into a
+// session for userID, given the verifier for challenge (S256).
+func (s *Store) CreateAppCode(ctx context.Context, userID int64, challenge string) (string, error) {
+	now := s.nowMillis()
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM app_codes WHERE expires_at <= ?`, now); err != nil {
+		return "", err
+	}
+	code := randomToken("ac_", 32)
+	_, err := s.db.ExecContext(ctx, `INSERT INTO app_codes (code_hash, user_id, challenge, expires_at) VALUES (?, ?, ?, ?)`,
+		HashToken(code), userID, challenge, now+AppCodeTTL.Milliseconds())
+	return code, err
+}
+
+// RedeemAppCode spends a code from CreateAppCode and starts an app session,
+// returning its raw token. A code works once, before it expires, and only
+// with the verifier whose S256 hash is its challenge; otherwise ErrNotFound.
+func (s *Store) RedeemAppCode(ctx context.Context, code, verifier, label string) (string, error) {
+	var token string
+	var spent bool // a wrong verifier or a stale code: deleted, but no session
+	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		h := HashToken(code)
+		var userID, expires int64
+		var challenge string
+		err := t.QueryRow(`SELECT user_id, challenge, expires_at FROM app_codes WHERE code_hash = ?`, h).Scan(&userID, &challenge, &expires)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		// Spent even on a wrong verifier, so a code can't be guessed at.
+		if _, err := t.Exec(`DELETE FROM app_codes WHERE code_hash = ?`, h); err != nil {
+			return err
+		}
+		sum := sha256.Sum256([]byte(verifier))
+		if expires <= log.now || subtle.ConstantTimeCompare([]byte(base64.RawURLEncoding.EncodeToString(sum[:])), []byte(challenge)) != 1 {
+			spent = true // commit the delete
+			return nil
+		}
+		token, _, err = createSession(t, userID, SessionApp, label, log.now)
+		return err
+	})
+	if err != nil {
+		return "", err
+	}
+	if spent {
+		return "", ErrNotFound
+	}
+	return token, nil
 }
 
 // ---- Device authorization (unison login) ----

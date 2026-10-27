@@ -132,6 +132,7 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("POST /api/auth/device/token", s.deviceToken)
 	m.HandleFunc("GET /api/auth/device/lookup", s.requireUser(s.deviceLookup))
 	m.HandleFunc("POST /api/auth/device/approve", s.requireUser(s.deviceApprove))
+	m.HandleFunc("POST /api/auth/app/token", s.appToken)
 	m.HandleFunc("POST /api/invites/lookup", s.requireUser(s.lookupInvite))
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
 	m.HandleFunc("GET /api/me/sessions", s.requireUser(s.listSessions))
@@ -315,6 +316,16 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 			st.LinkUserID = a.user.ID
 		}
 	}
+	// app=1: a native app's sign-in (see appToken). Its PKCE challenge is
+	// stored with the state; the callback redirects to the app with a code.
+	if r.URL.Query().Get("app") == "1" {
+		ch := r.URL.Query().Get("code_challenge")
+		if !validChallenge(ch) {
+			writeError(w, http.StatusBadRequest, "app sign-in needs a code_challenge: the base64url SHA-256 of a PKCE verifier")
+			return
+		}
+		st.AppChallenge, st.LinkUserID = ch, 0
+	}
 	err := s.store.SaveOAuthState(r.Context(), state, st)
 	if err != nil {
 		storeError(w, err)
@@ -373,6 +384,15 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	u, err := s.store.LoginWithProvider(r.Context(), p.Name, *prof)
 	if err != nil {
 		storeError(w, err)
+		return
+	}
+	if st.AppChallenge != "" {
+		code, err := s.store.CreateAppCode(r.Context(), u.ID, st.AppChallenge)
+		if err != nil {
+			storeError(w, err)
+			return
+		}
+		http.Redirect(w, r, appRedirect+"?code="+url.QueryEscape(code), http.StatusFound)
 		return
 	}
 	token, _, err := s.store.CreateSession(r.Context(), u.ID, store.SessionBrowser, browserLabel(r.UserAgent()))
@@ -559,6 +579,38 @@ func (s *Server) revokeSession(w http.ResponseWriter, r *http.Request) {
 		clearCookie(w, r, sessionCookie, "/")
 	}
 	s.respond(w, http.StatusOK, map[string]any{"revoked": id}, nil, err)
+}
+
+// ---- Native app sign-in ----
+
+// appRedirect is where an app's sign-in returns, with ?code=: the iPhone
+// app's URL scheme, which its ASWebAuthenticationSession listens for.
+const appRedirect = "unison://auth"
+
+// validChallenge reports whether ch looks like an S256 PKCE challenge: 43
+// base64url characters (a SHA-256 hash).
+func validChallenge(ch string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(ch)
+	return err == nil && len(b) == sha256.Size
+}
+
+// appToken redeems the code from an app sign-in (/auth/{provider}/start?app=1)
+// for a session, given the PKCE verifier whose hash started it.
+func (s *Server) appToken(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Code         string `json:"code"`
+		CodeVerifier string `json:"code_verifier"`
+		Label        string `json:"label"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	token, err := s.store.RedeemAppCode(r.Context(), req.Code, req.CodeVerifier, firstNonEmpty(req.Label, "app"))
+	if errors.Is(err, store.ErrNotFound) {
+		writeError(w, http.StatusBadRequest, "this sign-in code is invalid, used or expired: sign in again")
+		return
+	}
+	s.respond(w, http.StatusOK, map[string]any{"token": token}, nil, err)
 }
 
 // ---- Device flow (`unison login`) ----
