@@ -18,13 +18,18 @@ import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
+const DORMANT_WINDOW_MS = 15 * 60 * 1000;
+
+function isDormant(g, now) {
+  return g.all.every((q) => agentStatus(q, now) || !q.last_seen_at || now - q.last_seen_at >= DORMANT_WINDOW_MS);
+}
 
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
   // A message about an item changes the item's message count; one that asks
   // you to act (or is done) changes your count of open actions (on /me).
-  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog", "me"] : ["messages", "me"];
-  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog"];
+  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog", "me", "participants"] : ["messages", "me", "participants"];
+  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog", "participants"];
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
@@ -734,8 +739,10 @@ function rosterGroups(participants) {
 }
 
 // People: who's here, one row per person (participants linked to the same
-// account are grouped), with a presence dot and their status. Your own row
-// sets your status; anyone else's starts a chat message to them (@Name).
+// account are grouped), with a presence dot and their status. Inactive users
+// (15m without activity) are greyed, have their status hidden, and are stacked
+// at the end of the list. Your own row sets your status; anyone else's starts a
+// chat message to them (@Name).
 function People({ participants, me, call, onError, onMention }) {
   const setStatus = async () => {
     const status = window.prompt("Your status", me?.status || "");
@@ -746,10 +753,26 @@ function People({ participants, me, call, onError, onMention }) {
       onError(err.message);
     }
   };
-  const now = Date.now();
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(Date.now()), 15000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const groups = rosterGroups(participants);
+  const activeGroups = [];
+  const dormantGroups = [];
+  for (const g of groups) {
+    if (isDormant(g, now)) {
+      dormantGroups.push(g);
+    } else {
+      activeGroups.push(g);
+    }
+  }
+
   return (
     <ul className="nav-list people" aria-label="Who's here">
-      {rosterGroups(participants).map((g) => {
+      {activeGroups.map((g) => {
         const p = g.primary;
         // Logged-out (or revoked) agents are never shown as active.
         const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(q, now));
@@ -782,6 +805,33 @@ function People({ participants, me, call, onError, onMention }) {
           </li>
         );
       })}
+      {dormantGroups.length > 0 && (
+        <li className={activeGroups.length > 0 ? "dormant-row with-sep" : "dormant-row"} key="dormant">
+          <div className="dormant-stack" aria-label="Inactive users">
+            {dormantGroups.map((g) => {
+              const p = g.primary;
+              const mine = me && g.all.some((q) => q.id === me.id);
+              const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
+              const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
+              const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — inactive`;
+              return (
+                <button
+                  key={g.key}
+                  type="button"
+                  className="dormant-chip"
+                  title={mine ? `${label} · set status` : `${label} · message @${p.name}`}
+                  aria-label={mine ? `${label}. Set status` : `${label}. Message @${p.name}`}
+                  onClick={mine ? setStatus : () => onMention(p.name)}
+                >
+                  <span className="avatar dormant" aria-hidden="true">
+                    {p.emoji}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        </li>
+      )}
     </ul>
   );
 }

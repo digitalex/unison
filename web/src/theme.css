@@ -1010,6 +1010,76 @@ button.nav-link {
   white-space: nowrap;
 }
 
+/* Inactive / dormant users stacked at the end of the user list */
+.dormant-row {
+  padding: 4px var(--space-xs);
+}
+
+.dormant-row.with-sep {
+  margin-top: 4px;
+  padding-top: 6px;
+  border-top: 1px solid var(--panel-edge);
+}
+
+.dormant-stack {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  padding: 2px 0;
+}
+
+.dormant-stack .dormant-chip {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  background: none;
+  border-radius: var(--radius-full);
+  cursor: pointer;
+  transition: transform var(--transition-fast);
+}
+
+.dormant-stack .dormant-chip + .dormant-chip {
+  margin-left: -5px;
+}
+
+.dormant-stack .dormant-chip:hover {
+  transform: scale(1.18);
+  z-index: 5;
+}
+
+.dormant-chip .avatar.dormant {
+  width: 22px;
+  height: 22px;
+  font-size: var(--size-xs);
+  filter: grayscale(1);
+  opacity: 0.45;
+  background: var(--panel);
+  box-shadow: 0 0 0 1.5px var(--base);
+  transition: filter var(--transition-fast), opacity var(--transition-fast);
+}
+
+.dormant-chip:hover .avatar.dormant {
+  filter: grayscale(0.2);
+  opacity: 0.95;
+  box-shadow: 0 0 0 1.5px var(--panel-edge);
+}
+
+.nav-link.person.dormant .avatar {
+  filter: grayscale(1);
+  opacity: 0.45;
+}
+
+.nav-link.person.dormant .person-name {
+  color: var(--text-muted);
+}
+
+.nav-link.person.dormant .person-status {
+  display: none;
+}
+
 .nav-invite.nav-link {
   height: 30px;
   color: var(--text-muted);
