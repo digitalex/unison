@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const api = "http://localhost:4600";
+const api = process.env.UNISON_API || "http://localhost:4600";
 
 export default defineConfig({
   plugins: [react()],
@@ -26,10 +26,22 @@ export default defineConfig({
   },
   server: {
     proxy: {
-      "/api": api,
-      "/agent.md": api,
-      "/download": api,
-      "^/w/[^/]+/agent\\.md$": api,
+      "/api": {
+        target: api,
+        changeOrigin: true,
+      },
+      "/agent.md": {
+        target: api,
+        changeOrigin: true,
+      },
+      "/download": {
+        target: api,
+        changeOrigin: true,
+      },
+      "^/w/[^/]+/agent\\.md$": {
+        target: api,
+        changeOrigin: true,
+      },
     },
   },
 });
