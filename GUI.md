@@ -1,4 +1,4 @@
-# GUI — Unison design language
+# GUI — GraphicalUIKomore design language
 
 This file contains the saved theme and instructions for using it. The **Theme values** sections are readable, editable JSON and can restore the theme in Graphical. The accompanying `gui/` references describe component structure, behavior, and resolved styles; `skills/` contains workflows for using them. The full-component selection also includes Graphical’s actual themed component source and runtime. The default theme-and-skills selection includes guidance only and adds no runtime source or dependencies.
 
@@ -66,13 +66,19 @@ Finish conversion with `graphical-audit`: find and fix gaps within the agreed sc
 | Apply this theme to existing UI         | `graphical-convert` |
 | Find and repair theme drift             | `graphical-audit`   |
 
+
+## Selected setup for this download
+
+The user selected **Install theme, skills, and all Base UI components**. The actual preview components, shared styling runtime, stylesheet, and current theme snapshot are included in `components/graphical/`. Use these files directly; do not recreate them from specifications. Follow [the component setup guide](gui/base-ui.md): import `components/graphical/styles.css` once, wrap the app with `GraphicalProvider` using the exported `theme`, and use the public components from `components/graphical/index.ts`. Apply the theme across existing app styles and components, preserving behavior and authored refinements. This is an explicit setup request: proceed without another conversion-scope question, honoring any narrower scope already supplied. Add only missing dependencies with the receiving package manager; preserve existing versions and report API incompatibilities. Install the chosen fonts and icons separately. Report component coverage, import paths, actual verification, and any visual or asset gaps. Copying files or installing Base UI alone is not completion.
+
 ## Fonts and icons
 
 Follow [asset installation](gui/assets.md) when implementing this theme. Download and configure the selected free assets from their official sources; no font files or icon artwork are bundled. Weights below are the authored requests: load matching static faces or a variable range and report any unavailable weight. Register the exact family aliases below, or map the role tokens to the loader’s actual family.
 
 | Selected font | Roles | Weights | Family stack | Setup |
 | --- | --- | --- | --- | --- |
-| <code>Inter</code> (free) | brand, ui, editorial, data | 400, 500, 700 | <code>"Sidebar Inter", sans-serif</code> | Download and load [Inter](https://rsms.me/inter/) in the app. |
+| <code>Geist</code> (free) | brand, ui, editorial | 300, 400, 600 | <code>"Sidebar Geist", sans-serif</code> | Download and load [Geist](https://vercel.com/font) in the app. |
+| <code>Geist Mono</code> (free) | data | 300, 400, 600 | <code>"Sidebar Geist Mono", monospace</code> | Download and load [Geist Mono](https://vercel.com/font) in the app. |
 
 ### Icons
 
@@ -94,9 +100,9 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 {
   "format": "graphical-theme",
   "version": 1,
-  "preset": "base",
+  "preset": "grove",
   "schemaVersion": 2,
-  "name": "Unison"
+  "name": "GraphicalUIKomore"
 }
 ```
 
@@ -105,75 +111,57 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 ```json
 {
   "colors": {
-    "light": {
-      "neutral-1": "#ffffff",
-      "neutral-2": "#fafafa",
-      "neutral-3": "#f0f0f0",
-      "neutral-4": "#dedede",
-      "neutral-5": "#c5c5c5",
-      "neutral-6": "#969696",
-      "neutral-7": "#6c6c6c",
-      "neutral-8": "#454545",
-      "neutral-9": "#252525",
-      "neutral-10": "#000000",
-      "color-1": "#00afe8",
-      "color-2": "#085e55",
-      "color-3": "#ffed9b",
-      "color-4": "#ffb5aa",
-      "success": "#000000",
-      "warning": "#000000",
-      "error": "#000000"
-    },
     "dark": {
+      "error": "#ff5263",
+      "color-1": "#e5e5e5",
+      "color-2": "#b1b1b1",
+      "color-3": "#777777",
+      "color-4": "#424242",
+      "success": "#76ef6b",
+      "warning": "#ffa344",
       "neutral-1": "#000000",
-      "neutral-2": "#202020",
-      "neutral-3": "#2b2b2b",
-      "neutral-4": "#383838",
-      "neutral-5": "#505050",
-      "neutral-6": "#777777",
-      "neutral-7": "#a3a3a3",
-      "neutral-8": "#c6c6c6",
-      "neutral-9": "#e5e5e5",
-      "neutral-10": "#ffffff",
-      "color-1": "#00afe8",
-      "color-2": "#085e55",
-      "color-3": "#ffed9b",
-      "color-4": "#ffb5aa",
-      "success": "#ffffff",
-      "warning": "#ffffff",
-      "error": "#ffffff"
+      "neutral-2": "#21201d",
+      "neutral-3": "#2c2b28",
+      "neutral-4": "#393835",
+      "neutral-5": "#52504c",
+      "neutral-6": "#797773",
+      "neutral-7": "#a5a39f",
+      "neutral-8": "#c8c6c2",
+      "neutral-9": "#e6e5e3",
+      "neutral-10": "#ffffff"
+    },
+    "light": {
+      "error": "#ff5263",
+      "color-1": "#262626",
+      "color-2": "#707070",
+      "color-3": "#b6b6b6",
+      "color-4": "#e8e8e8",
+      "success": "#76ef6b",
+      "warning": "#ffa344",
+      "neutral-1": "#ffffff",
+      "neutral-2": "#fafaf9",
+      "neutral-3": "#f2f0ec",
+      "neutral-4": "#e1ddd5",
+      "neutral-5": "#cbc5b9",
+      "neutral-6": "#9b968a",
+      "neutral-7": "#716c61",
+      "neutral-8": "#4a453b",
+      "neutral-9": "#29241b",
+      "neutral-10": "#000000"
     }
   },
-  "primaryForeground": { "light": "neutral-2", "dark": "neutral-2" },
+  "primaryForeground": { "dark": "neutral-2", "light": "neutral-2" },
   "primaryActionColor": "neutral-10",
-  "neutralTone": "neutral",
-  "colorEmphasis": 50,
+  "neutralTone": "warm",
+  "colorEmphasis": 19.1943359375,
   "keyColorPalette": [
-    "#ff5a00",
-    "#ff9800",
-    "#cf9148",
-    "#d4b441",
-    "#ffea00",
-    "#abff5a",
-    "#6dcc00",
-    "#00c853",
-    "#00906c",
-    "#085e55",
-    "#00b7c4",
-    "#00e1f3",
-    "#00afe8",
-    "#0088ff",
-    "#07376b",
-    "#000000",
-    "#5151fc",
-    "#5100c0",
-    "#a34cf3",
-    "#e82cf2",
-    "#ff6fff",
-    "#ffc0ff",
-    "#ff2c9c",
-    "#ff2863",
-    "#fc032d"
+    "#76ef6b",
+    "#E0E709",
+    "#00c9bb",
+    "#009ff0",
+    "#e864ff",
+    "#262626",
+    "#ffa344"
   ]
 }
 ```
@@ -184,32 +172,32 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 {
   "fonts": {
     "ui": {
-      "family": "\"Sidebar Inter\", sans-serif",
-      "weights": { "regular": 400, "medium": 500, "heavy": 700 }
-    },
-    "brand": {
-      "family": "\"Sidebar Inter\", sans-serif",
-      "weights": { "regular": 400, "medium": 500, "heavy": 700 }
-    },
-    "editorial": {
-      "family": "\"Sidebar Inter\", sans-serif",
-      "weights": { "regular": 400, "medium": 500, "heavy": 700 }
+      "family": "\"Sidebar Geist\", sans-serif",
+      "weights": { "heavy": 600, "medium": 400, "regular": 300 }
     },
     "data": {
-      "family": "\"Sidebar Inter\", sans-serif",
-      "weights": { "regular": 400, "medium": 500, "heavy": 700 }
+      "family": "\"Sidebar Geist Mono\", monospace",
+      "weights": { "heavy": 600, "medium": 400, "regular": 300 }
+    },
+    "brand": {
+      "family": "\"Sidebar Geist\", sans-serif",
+      "weights": { "heavy": 600, "medium": 400, "regular": 300 }
+    },
+    "editorial": {
+      "family": "\"Sidebar Geist\", sans-serif",
+      "weights": { "heavy": 600, "medium": 400, "regular": 300 }
     }
   },
   "text": {
-    "xxs": { "size": 10, "lineHeight": 14 },
-    "xs": { "size": 12, "lineHeight": 16 },
-    "s": { "size": 14, "lineHeight": 20 },
-    "m": { "size": 16, "lineHeight": 24 },
-    "l": { "size": 24, "lineHeight": 32 },
-    "xl": { "size": 36, "lineHeight": 40 },
-    "xxl": { "size": 48, "lineHeight": 52 }
+    "l": { "size": 23.697, "lineHeight": 31.596 },
+    "m": { "size": 15.798, "lineHeight": 23.697 },
+    "s": { "size": 13.823, "lineHeight": 19.748 },
+    "xl": { "size": 35.546, "lineHeight": 39.495 },
+    "xs": { "size": 11.848, "lineHeight": 15.798 },
+    "xxl": { "size": 47.394, "lineHeight": 51.343 },
+    "xxs": { "size": 9.874, "lineHeight": 13.823 }
   },
-  "letterSpacing": { "xs": -0.02, "s": -0.01, "m": 0, "l": 0.01, "xl": 0.02 }
+  "letterSpacing": { "l": 0.01, "m": 0, "s": -0.01, "xl": 0.02, "xs": -0.02 }
 }
 ```
 
@@ -218,17 +206,24 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 ```json
 {
   "spacing": {
-    "zero": 0,
-    "xxs": 4,
-    "xs": 8,
-    "s": 12,
-    "m": 16,
-    "l": 24,
-    "xl": 32,
-    "xxl": 48
+    "l": 23.199,
+    "m": 15.466,
+    "s": 11.599,
+    "xl": 30.933,
+    "xs": 7.733,
+    "xxl": 46.399,
+    "xxs": 3.866,
+    "zero": 0
   },
-  "radius": { "zero": 0, "xs": 4, "s": 8, "m": 12, "l": 24, "xl": 36, "full": 9999 },
-  "buttonRadius": "s"
+  "radius": {
+    "l": 22.13,
+    "m": 11.33,
+    "s": 7.54,
+    "xl": 33.26,
+    "xs": 3.75,
+    "full": 9999,
+    "zero": 0
+  }
 }
 ```
 
@@ -236,31 +231,31 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 
 ```json
 {
-  "border": { "none": 0, "s": 1, "m": 1, "l": 2 },
+  "border": { "l": 2, "m": 1, "s": 1, "none": 0 },
   "shadows": {
-    "s": {
+    "l": {
       "x": 0,
-      "y": 1,
-      "blur": 2,
+      "y": 12,
+      "blur": 30,
+      "color": { "dark": "neutral-1", "light": "neutral-10" },
       "spread": 0,
-      "opacity": 0,
-      "color": { "light": "neutral-10", "dark": "neutral-1" }
+      "opacity": 0
     },
     "m": {
       "x": 0,
       "y": 8,
       "blur": 24,
+      "color": { "dark": "neutral-1", "light": "neutral-10" },
       "spread": 0,
-      "opacity": 0,
-      "color": { "light": "neutral-10", "dark": "neutral-1" }
+      "opacity": 0
     },
-    "l": {
+    "s": {
       "x": 0,
-      "y": 12,
-      "blur": 30,
+      "y": 1,
+      "blur": 2,
+      "color": { "dark": "neutral-1", "light": "neutral-10" },
       "spread": 0,
-      "opacity": 0,
-      "color": { "light": "neutral-10", "dark": "neutral-1" }
+      "opacity": 0
     }
   }
 }
@@ -271,11 +266,20 @@ Lengths are pixels, letter spacing is em, motion durations are milliseconds, and
 ```json
 {
   "animation": {
-    "duration": 150,
-    "easing": [ 0.2, 0.8, 0.2, 1 ],
-    "large": { "duration": 300, "easing": [ 0.16, 1, 0.3, 1 ] },
+    "type": "easing",
+    "large": {
+      "type": "easing",
+      "bounce": 0.3,
+      "easing": [ 0.16, 1, 0.3, 1 ],
+      "duration": 280,
+      "visualDuration": 0.36
+    },
+    "bounce": 0.2,
+    "easing": [ 0.16, 1, 0.3, 1 ],
+    "duration": 160,
     "popupScale": 0.96,
-    "pressDistance": 1
+    "pressDistance": 1,
+    "visualDuration": 0.2
   }
 }
 ```
@@ -291,7 +295,15 @@ No separate icon weight is set; icons follow the surrounding text weight.
 ### Component edits
 
 ```json
-{ "componentTokens": {}, "componentVariants": {} }
+{
+  "componentTokens": {
+    "switch:default:part:row:rest": { "gap": "s" },
+    "switch:default:part:label:rest": { "textSize": "m" },
+    "checkbox:default:part:label:rest": { "textSize": "m" },
+    "switch:default:part:control:rest": { "controlSize": "xl" }
+  },
+  "componentVariants": {}
+}
 ```
 
 <!-- graphical-theme:end -->

@@ -37,7 +37,7 @@ is intentionally absent until the design is done on the isocan canvas.
 
 ## UI work
 
-For UI work, follow [GUI.md](GUI.md) (the "Unison" Graphical theme, with
+For UI work, follow [GUI.md](GUI.md) (the "GraphicalUIKomore" Graphical theme, with
 references in `gui/`) and use the `graphical-ui`, `graphical-convert`, or
 `graphical-audit` skill in `.agents/skills/` as appropriate.
 

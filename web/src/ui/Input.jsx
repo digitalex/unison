@@ -1,9 +1,10 @@
 import { ChevronDown } from "lucide-react";
+import { Input as GraphicalInput } from "components/graphical";
 
-// Unison text field, textarea, and select controls (gui/components/unison/
-// input.md and select.md). Native elements; all props pass through.
+// Unison text field, textarea, and select controls (gui/components/graphicaluikomore/
+// input.md and select.md). Native & Base UI elements; all props pass through.
 export function Input({ className = "", ...props }) {
-  return <input {...props} className={`control ${className}`.trim()} />;
+  return <GraphicalInput {...props} className={`control ${className}`.trim()} />;
 }
 
 export function Textarea({ className = "", ...props }) {
