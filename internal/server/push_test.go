@@ -15,6 +15,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/store"
@@ -313,4 +314,42 @@ func testAPNsKey(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
+}
+
+type slowPusher struct {
+	delay time.Duration
+	fake  fakePusher
+}
+
+func (s *slowPusher) Send(ctx context.Context, token string, n push.Notification) error {
+	select {
+	case <-time.After(s.delay):
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	return s.fake.Send(ctx, token, n)
+}
+
+func TestConcurrentPush(t *testing.T) {
+	slow := &slowPusher{delay: 100 * time.Millisecond}
+	e := newPushEnv(t, slow)
+
+	dev3 := "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
+	dev4 := "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
+	e.register(e.adaUser, dev3, "Ada's Watch")
+	e.register(e.adaUser, dev4, "Ada's Mac")
+
+	start := time.Now()
+	m := e.post("/messages", e.bobTok, `{"body":"hi @ada, concurrent test"}`)
+	duration := time.Since(start)
+
+	_ = m
+	got := slow.fake.take()
+	if len(got) != 4 {
+		t.Fatalf("expected 4 pushes, got %d", len(got))
+	}
+
+	if duration >= 300*time.Millisecond {
+		t.Errorf("delivery took %v, expected < 300ms (indicating concurrent execution)", duration)
+	}
 }
