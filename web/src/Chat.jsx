@@ -334,12 +334,12 @@ function ActionLine({ message, participants, asksMe, needsMe, onDone }) {
       </span>
       {asksMe &&
         (needsMe ? (
-          <Button variant="primary" className="action-done" onClick={() => onDone(true)}>
+          <Button variant="primary" size="small" className="action-done" onClick={() => onDone(true)}>
             <Check aria-hidden="true" />
             Done
           </Button>
         ) : (
-          <Button variant="ghost" className="action-done" title="Mark it not done" onClick={() => onDone(false)}>
+          <Button variant="ghost" size="small" className="action-done" title="Mark it not done" onClick={() => onDone(false)}>
             <Undo2 aria-hidden="true" />
             Undo
           </Button>
