@@ -62,10 +62,40 @@ func queuedIDs(t *tx, wsID string) ([]int64, error) {
 	return ids, rows.Err()
 }
 
+const renumberBatchSize = 500
+
 // renumber assigns positions 1..n to ids in order.
 func renumber(t *tx, ids []int64) error {
-	for i, id := range ids {
-		if _, err := t.Exec(`UPDATE items SET position = ? WHERE id = ?`, i+1, id); err != nil {
+	if len(ids) == 0 {
+		return nil
+	}
+	for start := 0; start < len(ids); start += renumberBatchSize {
+		end := start + renumberBatchSize
+		if end > len(ids) {
+			end = len(ids)
+		}
+		chunk := ids[start:end]
+
+		var sb strings.Builder
+		sb.WriteString("UPDATE items SET position = CASE id")
+		args := make([]any, 0, len(chunk)*3)
+
+		for i, id := range chunk {
+			pos := start + i + 1
+			sb.WriteString(" WHEN ? THEN ?")
+			args = append(args, id, pos)
+		}
+		sb.WriteString(" END WHERE id IN (")
+		for i, id := range chunk {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("?")
+			args = append(args, id)
+		}
+		sb.WriteString(")")
+
+		if _, err := t.Exec(sb.String(), args...); err != nil {
 			return err
 		}
 	}
