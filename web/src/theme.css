@@ -220,7 +220,8 @@
   --accent: light-dark(var(--color-1), var(--color-1));
   --accent-text: light-dark(var(--neutral-2), var(--neutral-2));
   --accent-soft: light-dark(#26262614, #e5e5e51f);
-  --link: light-dark(#262626, #e5e5e5);
+  /* Links keep the Unison blue so they stand out from the neutral text. */
+  --link: light-dark(#00739a, #5ccdf2);
   --focus: var(--color-1);
   --focus-ring: var(--color-1-transparent);
   --mention: light-dark(#ffa34433, #ffa34426);
