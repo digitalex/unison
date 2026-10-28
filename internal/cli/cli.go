@@ -21,6 +21,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/digitalex/unison/internal/guide"
@@ -1797,8 +1798,16 @@ func (f *eventFilter) authorOf(msgID int64) int64 {
 	return f.authors[msgID]
 }
 
+var mentionRegexCache sync.Map
+
 func mentions(body, name string) bool {
-	re := regexp.MustCompile(`(?i)@(` + regexp.QuoteMeta(name) + `|all|everyone)\b`)
+	v, ok := mentionRegexCache.Load(name)
+	var re *regexp.Regexp
+	if !ok {
+		re = regexp.MustCompile(`(?i)@(` + regexp.QuoteMeta(name) + `|all|everyone)\b`)
+		v, _ = mentionRegexCache.LoadOrStore(name, re)
+	}
+	re = v.(*regexp.Regexp)
 	return re.MatchString(body)
 }
 

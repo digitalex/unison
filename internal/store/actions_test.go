@@ -3,7 +3,9 @@ package store
 import (
 	"context"
 	"errors"
+	"regexp"
 	"slices"
+	"sync"
 	"testing"
 )
 
@@ -184,5 +186,121 @@ func TestInboxTableDropped(t *testing.T) {
 	var n int
 	if err := s.db.QueryRowContext(context.Background(), `SELECT COUNT(*) FROM inbox`).Scan(&n); err == nil {
 		t.Error("the inbox table still exists")
+	}
+}
+
+func TestMentions(t *testing.T) {
+	tests := []struct {
+		name     string
+		body     string
+		partName string
+		want     bool
+	}{
+		{
+			name:     "exact match",
+			body:     "@Alex please review",
+			partName: "Alex",
+			want:     true,
+		},
+		{
+			name:     "case insensitivity",
+			body:     "cc @alex and @ALEX",
+			partName: "Alex",
+			want:     true,
+		},
+		{
+			name:     "word boundary - prefix non-match",
+			body:     "cc @AlexSmith",
+			partName: "Alex",
+			want:     false,
+		},
+		{
+			name:     "word boundary - trailing punctuation",
+			body:     "Hello @Alex, how are you?",
+			partName: "Alex",
+			want:     true,
+		},
+		{
+			name:     "special characters - dots and dashes in name",
+			body:     "Ask @alex.smith and @user-1 for help",
+			partName: "alex.smith",
+			want:     true,
+		},
+		{
+			name:     "special characters - brackets with word boundary ending",
+			body:     "Ask @[user]v1 for help",
+			partName: "[user]v1",
+			want:     true,
+		},
+		{
+			name:     "special characters - escaped regex metacharacters non-match",
+			body:     "Ask @userv1 for help",
+			partName: "[user]v1",
+			want:     false,
+		},
+		{
+			name:     "no mention",
+			body:     "Hello world",
+			partName: "Alex",
+			want:     false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := mentions(tt.body, tt.partName)
+			if got != tt.want {
+				t.Errorf("mentions(%q, %q) = %v; want %v", tt.body, tt.partName, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestMentionsConcurrency(t *testing.T) {
+	const goroutines = 20
+	const iterations = 100
+	names := []string{"Alex", "Bob", "alex.smith", "user-1", "agent_007"}
+	body := "Hello @Alex, cc @Bob and @alex.smith with @user-1 and @agent_007!"
+
+	var wg sync.WaitGroup
+	for i := 0; i < goroutines; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for j := 0; j < iterations; j++ {
+				for _, n := range names {
+					if !mentions(body, n) {
+						t.Errorf("expected mentions(%q, %q) to be true", body, n)
+					}
+				}
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+func BenchmarkMentions(b *testing.B) {
+	body := "Hello @Alex, please review PR #42 and ask @Bob and @user[v1] if they are ready."
+	names := []string{"Alex", "Bob", "user[v1]", "Charlie", "Dave", "Eve", "Frank", "Grace"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		for _, name := range names {
+			_ = mentions(body, name)
+		}
+	}
+}
+
+func BenchmarkMentionsUncached(b *testing.B) {
+	body := "Hello @Alex, please review PR #42 and ask @Bob and @user[v1] if they are ready."
+	names := []string{"Alex", "Bob", "user[v1]", "Charlie", "Dave", "Eve", "Frank", "Grace"}
+
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		for _, name := range names {
+			_ = regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(name) + `\b`).MatchString(body)
+		}
 	}
 }
