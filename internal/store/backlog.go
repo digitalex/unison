@@ -82,7 +82,7 @@ func renumber(t *tx, ids []int64) error {
 
 		for i, id := range chunk {
 			pos := start + i + 1
-			sb.WriteString(" WHEN ? THEN ?")
+			sb.WriteString(" WHEN ? THEN CAST(? AS BIGINT)")
 			args = append(args, id, pos)
 		}
 		sb.WriteString(" END WHERE id IN (")
