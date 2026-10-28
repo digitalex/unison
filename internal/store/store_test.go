@@ -324,4 +324,110 @@ func TestConcurrentWriters(t *testing.T) {
 	}
 }
 
+func TestDeleteWorkspace(t *testing.T) {
+	s, _, a, b := setup(t)
+	ctx := t.Context()
+	wsID := a.WorkspaceID
+
+	// Create user accounts and link membership
+	u1, err := s.LoginWithProvider(ctx, "github", Profile{Subject: "del-u1", Name: "User 1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	u2, err := s.LoginWithProvider(ctx, "google", Profile{Subject: "del-u2", Name: "User 2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := s.JoinAsUser(ctx, wsID, u1.ID, "User1", "👤"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, _, _, err := s.JoinAsUser(ctx, wsID, u2.ID, "User2", "👥"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backlog item, comments, and PR
+	it, _, err := s.AddItem(ctx, a, "Fix something", "Details", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AddComment(ctx, a, it.ID, "A comment"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.LinkPR(ctx, a, it.ID, "https://github.com/digitalex/unison/pull/1"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Messages: parent message and threaded reply, plus reaction and action
+	m1, _, err := s.Post(ctx, a, NewMessage{Body: "@" + b.Name + " root message", ItemID: ptr(it.ID), ActionRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.Post(ctx, b, NewMessage{Body: "Reply message", ParentID: ptr(m1.ID)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.React(ctx, b, m1.ID, "👍", false); err != nil {
+		t.Fatal(err)
+	}
+
+	// Webhook and delivery
+	wh, _, err := s.AddWebhook(ctx, a, NewWebhook{Name: "CI", Instructions: "deploy instructions"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReceiveDelivery(ctx, wh, IncomingDelivery{Source: "github", Event: "push", Summary: "commit", Body: []byte("{}"), Headers: map[string]string{}}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Passes and invites
+	if _, _, err := s.MintPass(ctx, wsID, u1.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CreateEmailInvite(ctx, wsID, u1.ID, "invitee@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Delete workspace
+	if err := s.DeleteWorkspace(ctx, wsID); err != nil {
+		t.Fatalf("DeleteWorkspace failed: %v", err)
+	}
+
+	// GetWorkspace should return ErrNotFound
+	if _, err := s.GetWorkspace(ctx, wsID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("GetWorkspace after delete = %v, want ErrNotFound", err)
+	}
+
+	// Deleting again should return ErrNotFound
+	if err := s.DeleteWorkspace(ctx, wsID); !errors.Is(err, ErrNotFound) {
+		t.Errorf("second DeleteWorkspace = %v, want ErrNotFound", err)
+	}
+
+	// Verify all workspace tables are cleaned up for wsID
+	for _, table := range []string{
+		"webhook_deliveries", "webhooks", "workspace_repos", "item_comments",
+		"item_prs", "reactions", "message_actions", "messages", "items",
+		"agent_passes", "workspace_invites", "memberships", "participants",
+		"events", "workspaces",
+	} {
+		col := "workspace_id"
+		if table == "workspaces" {
+			col = "id"
+		}
+		var count int
+		q := "SELECT count(*) FROM " + table + " WHERE " + col + " = ?"
+		if err := s.db.QueryRowContext(ctx, q, wsID).Scan(&count); err != nil {
+			t.Errorf("checking %s: %v", table, err)
+		} else if count != 0 {
+			t.Errorf("table %s has %d rows for deleted workspace, want 0", table, count)
+		}
+	}
+
+	// Verify global user accounts are still intact
+	if _, err := s.GetUser(ctx, u1.ID); err != nil {
+		t.Errorf("GetUser(u1) after workspace deletion: %v", err)
+	}
+	if _, err := s.GetUser(ctx, u2.ID); err != nil {
+		t.Errorf("GetUser(u2) after workspace deletion: %v", err)
+	}
+}
+
 func ptr[T any](v T) *T { return &v }

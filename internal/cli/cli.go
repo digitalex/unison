@@ -72,6 +72,8 @@ Workspaces & identity:
   workspace create <name> [--repo URL]... [--canvas URL]
                                      (needs login; you become its first member)
   workspace set [--name N] [--repo URL] [--canvas URL]   (--repo: the first repo)
+  workspace delete [id] --confirm <name>
+                                     delete workspace and all data (needs login)
   workspace repos                    the workspace's code repositories
   workspace repo add <url>
   workspace repo edit <id> --url U
@@ -526,6 +528,8 @@ func (a *app) workspace(args []string) error {
 		return a.workspaceCreate(args)
 	case "set":
 		return a.workspaceSet(args)
+	case "delete", "rm":
+		return a.workspaceDelete(args)
 	case "repos":
 		var repos []store.Repo
 		if ok, err := a.call("GET", "/repos", nil, &repos, false); !ok {
@@ -660,6 +664,40 @@ func (a *app) workspaceSet(args []string) error {
 		return err
 	}
 	a.printWorkspace(&ws)
+	return nil
+}
+
+func (a *app) workspaceDelete(args []string) error {
+	fs := flag.NewFlagSet("workspace delete", flag.ContinueOnError)
+	confirm := fs.String("confirm", "", "confirm workspace name to delete")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	wsID := a.ws
+	if len(pos) > 0 {
+		wsID = pos[0]
+	}
+	if wsID == "" {
+		return fmt.Errorf("%w: workspace delete [id] --confirm <name>", errUsage)
+	}
+	userToken, err := a.needUserToken()
+	if err != nil {
+		return err
+	}
+	c := newClient(a.server, userToken)
+	var ws store.Workspace
+	if err := c.do("GET", "/api/workspaces/"+wsID, nil, &ws); err != nil {
+		return err
+	}
+	if *confirm == "" || *confirm != ws.Name {
+		return fmt.Errorf("to permanently delete workspace %s (%q), pass --confirm %q", wsID, ws.Name, ws.Name)
+	}
+	var out map[string]any
+	if err := c.do("DELETE", "/api/workspaces/"+wsID, nil, &out); err != nil {
+		return err
+	}
+	a.printf("Deleted workspace %s (%s)\n", ws.Name, wsID)
 	return nil
 }
 

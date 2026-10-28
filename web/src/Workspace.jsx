@@ -186,6 +186,7 @@ export default function Workspace({ id, view, navigate, account }) {
             error={errorBar}
             onError={setError}
             head={headExtras}
+            navigate={navigate}
           />
         </main>
       ) : (

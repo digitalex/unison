@@ -399,6 +399,45 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 	return w, evs, nil
 }
 
+// DeleteWorkspace permanently deletes a workspace and all its associated
+// data (messages, backlog items, comments, PRs, webhooks, passes, invites,
+// participants, events). Global user accounts are untouched.
+func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
+	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		var name string
+		if err := t.QueryRow(`SELECT name FROM workspaces WHERE id = ?`, id).Scan(&name); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return ErrNotFound
+			}
+			return err
+		}
+		for _, q := range []string{
+			`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
+			`DELETE FROM webhooks WHERE workspace_id = ?`,
+			`DELETE FROM workspace_repos WHERE workspace_id = ?`,
+			`DELETE FROM item_comments WHERE workspace_id = ?`,
+			`DELETE FROM item_prs WHERE workspace_id = ?`,
+			`DELETE FROM reactions WHERE workspace_id = ?`,
+			`DELETE FROM message_actions WHERE workspace_id = ?`,
+			`UPDATE messages SET parent_id = NULL WHERE workspace_id = ?`,
+			`DELETE FROM messages WHERE workspace_id = ?`,
+			`DELETE FROM items WHERE workspace_id = ?`,
+			`DELETE FROM agent_passes WHERE workspace_id = ?`,
+			`DELETE FROM workspace_invites WHERE workspace_id = ?`,
+			`DELETE FROM memberships WHERE workspace_id = ?`,
+			`DELETE FROM participants WHERE workspace_id = ?`,
+			`DELETE FROM events WHERE workspace_id = ?`,
+			`DELETE FROM workspaces WHERE id = ?`,
+		} {
+			if _, err := t.Exec(q, id); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+	return err
+}
+
 // ---- Participants ----
 
 // participantCols are selected FROM participants (unaliased).
