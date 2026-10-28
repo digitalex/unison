@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"log"
+	"sync"
 	"time"
 
 	"github.com/digitalex/unison/internal/push"
@@ -117,21 +118,27 @@ func (s *Server) pushTo(ctx context.Context, userID int64, n push.Notification) 
 		log.Printf("push: listing devices of user %d: %v", userID, err)
 		return
 	}
+	var wg sync.WaitGroup
+	wg.Add(len(devices))
 	for _, d := range devices {
-		err := s.pusher.Send(ctx, d.APNSToken, n)
-		switch {
-		case err == nil:
-			err = s.store.TouchDevice(ctx, d.ID)
-		case errors.Is(err, push.ErrUnregistered):
-			err = s.store.ForgetDevice(ctx, d.ID)
-			if err == nil {
-				log.Printf("push: forgot device %d of user %d (unregistered)", d.ID, userID)
+		go func(d store.Device) {
+			defer wg.Done()
+			err := s.pusher.Send(ctx, d.APNSToken, n)
+			switch {
+			case err == nil:
+				err = s.store.TouchDevice(ctx, d.ID)
+			case errors.Is(err, push.ErrUnregistered):
+				err = s.store.ForgetDevice(ctx, d.ID)
+				if err == nil {
+					log.Printf("push: forgot device %d of user %d (unregistered)", d.ID, userID)
+				}
 			}
-		}
-		if err != nil {
-			log.Printf("push: device %d of user %d: %v", d.ID, userID, err)
-		}
+			if err != nil {
+				log.Printf("push: device %d of user %d: %v", d.ID, userID, err)
+			}
+		}(d)
 	}
+	wg.Wait()
 }
 
 // truncate shortens s to at most n runes, ending in an ellipsis when cut.
