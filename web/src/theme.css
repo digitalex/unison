@@ -243,11 +243,10 @@
   --control-shadow: 0 1px 2px light-dark(#00000014, #00000066);
   --accent-glow: 0 1px 2px #0000001f, 0 2px 6px color-mix(in srgb, var(--accent) 35%, transparent);
 
-  /* Base surface texture (canvas: "Surface pattern — A: dot grid"): a faint
-     dot grid plus a soft light from the top, so the base reads as slightly 3D. */
-  --pattern-ink: light-dark(#00000017, #ffffff0f);
-  --pattern-size: 14px;
-  --surface-light: light-dark(#ffffff8c, #ffffff0a);
+  /* Base surface lighting (canvas: "Background gradient replacement (#55)"):
+     a subtle overhead radial gradient replacing the repeated dot texture
+     so the base reads with gentle depth. */
+  --surface-light: light-dark(#ffffffb3, #ffffff14);
 
   /* Earlier Unison aliases, now resolved through the semantic roles. */
   --border-default-color: var(--border);
@@ -282,12 +281,8 @@ body {
 
 body {
   background-color: var(--base);
-  background-image:
-    radial-gradient(120% 70% at 50% 0%, var(--surface-light), transparent 70%),
-    radial-gradient(circle at 1px 1px, var(--pattern-ink) 1px, transparent 1.5px);
-  background-size:
-    100% 100%,
-    var(--pattern-size) var(--pattern-size);
+  background-image: radial-gradient(120% 75% at 50% 0%, var(--surface-light), transparent 75%);
+  background-size: 100% 100%;
   background-attachment: fixed;
   color: var(--text);
   font-family: var(--font-ui);
