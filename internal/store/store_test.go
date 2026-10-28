@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"sync"
 	"testing"
@@ -11,7 +12,7 @@ import (
 	"github.com/digitalex/unison/internal/store/storetest"
 )
 
-func newStore(t *testing.T) (*Store, *time.Time) {
+func newStore(t testing.TB) (*Store, *time.Time) {
 	t.Helper()
 	s, err := Open(storetest.DSN(t))
 	if err != nil {
@@ -431,3 +432,156 @@ func TestDeleteWorkspace(t *testing.T) {
 }
 
 func ptr[T any](v T) *T { return &v }
+
+func TestRenumberBatched(t *testing.T) {
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+
+	// 1. Empty ids slice
+	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		return renumber(t, nil)
+	})
+	if err != nil {
+		t.Fatalf("renumber(nil) = %v", err)
+	}
+
+	// 2. Single item
+	it1, _, err := s.AddItem(ctx, a, "item 1", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, want := titles(t, s, a.WorkspaceID), []string{"item 1"}; !equal(got, want) {
+		t.Fatalf("single item backlog = %v, want %v", got, want)
+	}
+
+	// 3. Large backlog spanning multiple batches (> 500 items, e.g. 600 items)
+	const totalItems = 600
+	var itemIDs []int64
+	itemIDs = append(itemIDs, it1.ID)
+
+	for i := 2; i <= totalItems; i++ {
+		it, _, err := s.AddItem(ctx, a, fmt.Sprintf("item %d", i), "", 0)
+		if err != nil {
+			t.Fatalf("AddItem %d: %v", i, err)
+		}
+		itemIDs = append(itemIDs, it.ID)
+	}
+
+	// Reverse itemIDs array and renumber directly
+	for i, j := 0, len(itemIDs)-1; i < j; i, j = i+1, j-1 {
+		itemIDs[i], itemIDs[j] = itemIDs[j], itemIDs[i]
+	}
+
+	_, err = s.tx(ctx, func(t *tx, log *eventLog) error {
+		return renumber(t, itemIDs)
+	})
+	if err != nil {
+		t.Fatalf("renumber %d items: %v", totalItems, err)
+	}
+
+	// Verify all 600 items now have positions 1..600 matching reversed order
+	items, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(items) != totalItems {
+		t.Fatalf("ListBacklog returned %d items, want %d", len(items), totalItems)
+	}
+	for i, item := range items {
+		expectedID := itemIDs[i]
+		if item.ID != expectedID {
+			t.Errorf("item at position %d has ID %d, want %d", i+1, item.ID, expectedID)
+		}
+		if item.Position != int64(i+1) {
+			t.Errorf("item %d has position %d, want %d", item.ID, item.Position, i+1)
+		}
+	}
+
+	// Test MoveItem, CloseItem, DeleteItem on large backlog
+	// Move first item to position 300
+	movedID := items[0].ID
+	if _, _, err := s.MoveItem(ctx, a, movedID, 300); err != nil {
+		t.Fatalf("MoveItem: %v", err)
+	}
+	itemsAfterMove, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(itemsAfterMove) != totalItems {
+		t.Fatalf("ListBacklog after move returned %d items, want %d", len(itemsAfterMove), totalItems)
+	}
+	for i, item := range itemsAfterMove {
+		if item.Position != int64(i+1) {
+			t.Errorf("after move: item %d has position %d, want %d", item.ID, item.Position, i+1)
+		}
+	}
+	if itemsAfterMove[299].ID != movedID {
+		t.Errorf("item not moved to position 300, got ID %d at pos 300", itemsAfterMove[299].ID)
+	}
+
+	// Close an item
+	closeID := itemsAfterMove[100].ID
+	if _, _, err := s.CloseItem(ctx, a, closeID, "done"); err != nil {
+		t.Fatalf("CloseItem: %v", err)
+	}
+	itemsAfterClose, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(itemsAfterClose) != totalItems-1 {
+		t.Fatalf("ListBacklog after close returned %d items, want %d", len(itemsAfterClose), totalItems-1)
+	}
+	for i, item := range itemsAfterClose {
+		if item.Position != int64(i+1) {
+			t.Errorf("after close: item %d has position %d, want %d", item.ID, item.Position, i+1)
+		}
+	}
+
+	// Delete an item
+	deleteID := itemsAfterClose[200].ID
+	if _, err := s.DeleteItem(ctx, a, deleteID); err != nil {
+		t.Fatalf("DeleteItem: %v", err)
+	}
+	itemsAfterDelete, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(itemsAfterDelete) != totalItems-2 {
+		t.Fatalf("ListBacklog after delete returned %d items, want %d", len(itemsAfterDelete), totalItems-2)
+	}
+	for i, item := range itemsAfterDelete {
+		if item.Position != int64(i+1) {
+			t.Errorf("after delete: item %d has position %d, want %d", item.ID, item.Position, i+1)
+		}
+	}
+}
+
+func BenchmarkRenumber(b *testing.B) {
+	for _, size := range []int{10, 100, 500, 1000} {
+		b.Run(fmt.Sprintf("size=%d", size), func(b *testing.B) {
+			s, _ := newStore(b)
+			ctx := context.Background()
+			ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+			p, _, _, _ := s.Join(ctx, ws.ID, "BenchmarkUser", "🏎️")
+
+			ids := make([]int64, size)
+			for i := 0; i < size; i++ {
+				it, _, err := s.AddItem(ctx, p, fmt.Sprintf("item %d", i), "", 0)
+				if err != nil {
+					b.Fatal(err)
+				}
+				ids[i] = it.ID
+			}
+
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+					return renumber(t, ids)
+				})
+				if err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
