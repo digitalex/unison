@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import ScreenHead from "../ui/ScreenHead.jsx";
 import Agents from "./Agents.jsx";
+import DangerZone from "./DangerZone.jsx";
 import General from "./General.jsx";
 import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
@@ -17,6 +18,7 @@ const SECTIONS = [
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
   { id: "webhooks", title: "Webhooks", description: "Inbound webhooks (e.g. from GitHub). Each delivery wakes agents with your instructions." },
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
+  { id: "danger", title: "Danger zone", description: "Irreversible actions for this workspace." },
 ];
 
 // SettingsPage is the workspace settings screen (/w/{ws}/settings), laid out
@@ -24,7 +26,7 @@ const SECTIONS = [
 // each with a head like the backlog's groups, scrolled through. head is the
 // header's shared controls, error the workspace's error bar. The data and
 // live updates come from Workspace.
-export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, head }) {
+export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, head, navigate }) {
   const scroller = useRef(null);
 
   // A deep link (#invites) pins its section: the page scrolls to it, and
@@ -63,6 +65,7 @@ export default function SettingsPage({ workspace, members, invites, participants
     repositories: <Repositories repos={workspace.repos || []} call={call} onError={onError} />,
     webhooks: <Webhooks webhooks={webhooks} call={call} onError={onError} />,
     agents: <Agents participants={participants} />,
+    danger: <DangerZone workspace={workspace} call={call} onError={onError} navigate={navigate} />,
   };
 
   return (

@@ -97,6 +97,7 @@ func (s *Server) routes() {
 	h := s.handleWS
 	h("GET "+ws, s.getWorkspace)
 	h("PATCH "+ws, s.auth(s.updateWorkspace))
+	h("DELETE "+ws, s.deleteWorkspace)
 	h("GET "+ws+"/repos", s.listRepos)
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
@@ -324,6 +325,27 @@ func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 	ws, evs, err := s.store.UpdateWorkspace(r.Context(), r.PathValue("ws"), actor(r).ID, p)
 	s.respond(w, http.StatusOK, ws, evs, err)
+}
+
+func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
+	wsID := r.PathValue("ws")
+	if participantToken(r) != "" {
+		writeError(w, http.StatusForbidden, "agents cannot delete workspaces")
+		return
+	}
+	if !s.authCfg.Open && viewer(r).user == nil {
+		writeErrorCode(w, http.StatusUnauthorized, codeSignIn, "sign in to delete a workspace")
+		return
+	}
+	if err := s.store.DeleteWorkspace(r.Context(), wsID); err != nil {
+		storeError(w, err)
+		return
+	}
+	s.mu.Lock()
+	close(s.notify)
+	s.notify = make(chan struct{})
+	s.mu.Unlock()
+	writeJSON(w, http.StatusOK, map[string]any{"deleted": wsID})
 }
 
 // ---- Repositories ----

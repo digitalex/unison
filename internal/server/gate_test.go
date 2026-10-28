@@ -2,6 +2,7 @@ package server
 
 import (
 	"bufio"
+	"errors"
 	"net/http"
 	"strings"
 	"testing"
@@ -394,5 +395,72 @@ func TestInviteLinkSignInRoundTrip(t *testing.T) {
 	// Opening the link again (already a member) returns the same participant.
 	if resp, again := e.do("POST", "/api/workspaces/"+wsID+"/join", `{"invite":"`+token+`"}`, withCookie(bob), withCSRF()); resp.StatusCode/100 != 2 || again["token"] != out["token"] {
 		t.Errorf("rejoin = %d %v", resp.StatusCode, again)
+	}
+}
+
+func TestDeleteWorkspaceAPI(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := t.Context()
+	ada, _ := e.login("github", "/", adaGitHub, adaGitHubEmails)
+	bob, _ := e.login("google", "/", bobGoogle, nil)
+
+	resp, ws := e.do("POST", "/api/workspaces", `{"name":"To Delete"}`, withCookie(ada), withCSRF())
+	if resp.StatusCode != 201 {
+		t.Fatalf("create = %d", resp.StatusCode)
+	}
+	wsID := ws["id"].(string)
+
+	// An agent joins with a pass
+	_, passResp := e.do("POST", "/api/workspaces/"+wsID+"/passes", `{}`, withCookie(ada), withCSRF())
+	pass := passResp["pass"].(string)
+	_, joinResp := e.do("POST", "/api/workspaces/"+wsID+"/join", `{"name":"Bot","pass":"`+pass+`"}`)
+	botToken := joinResp["token"].(string)
+
+	// Agent token cannot delete workspace
+	if resp, _ := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withBearer(botToken)); resp.StatusCode != 403 {
+		t.Errorf("agent delete = %d, want 403", resp.StatusCode)
+	}
+
+	// Non-member cannot delete workspace
+	if resp, _ := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 {
+		t.Errorf("non-member delete = %d, want 403", resp.StatusCode)
+	}
+
+	// Member without CSRF cannot delete workspace
+	if resp, _ := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(ada)); resp.StatusCode != 403 {
+		t.Errorf("delete without CSRF = %d, want 403", resp.StatusCode)
+	}
+
+	// Member with CSRF deletes workspace
+	resp, delResp := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(ada), withCSRF())
+	if resp.StatusCode != 200 || delResp["deleted"] != wsID {
+		t.Fatalf("delete = %d %v, want 200 deleted=%s", resp.StatusCode, delResp, wsID)
+	}
+
+	// Store confirms workspace is gone
+	if _, err := e.st.GetWorkspace(ctx, wsID); !errors.Is(err, store.ErrNotFound) {
+		t.Errorf("GetWorkspace after delete = %v, want ErrNotFound", err)
+	}
+
+	// Subsequent API requests to the deleted workspace are refused by gate (unknown workspace)
+	if resp, out := e.do("GET", "/api/workspaces/"+wsID, `{}`, withCookie(ada)); resp.StatusCode != 403 || out["code"] != codeMember {
+		t.Errorf("GET after delete = %d %v, want 403 %s", resp.StatusCode, out, codeMember)
+	}
+	if resp, out := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(ada), withCSRF()); resp.StatusCode != 403 || out["code"] != codeMember {
+		t.Errorf("DELETE after delete = %d %v, want 403 %s", resp.StatusCode, out, codeMember)
+	}
+
+	// Workspace list no longer contains it
+	_, list := e.doList("GET", "/api/workspaces", withCookie(ada))
+	for _, w := range list {
+		if w["id"] == wsID {
+			t.Errorf("deleted workspace %s still in list: %v", wsID, list)
+		}
+	}
+
+	// Global account Ada still exists
+	_, u, _ := e.st.SessionByToken(ctx, ada.Value)
+	if _, err := e.st.GetUser(ctx, u.ID); err != nil {
+		t.Errorf("Ada's account missing after workspace deletion: %v", err)
 	}
 }
