@@ -149,14 +149,14 @@
   --weight-data-regular: 400;
 
   --color-none: transparent;
-  --color-1: #00afe8;
-  --color-1-transparent: #00afe833;
-  --color-2: #085e55;
-  --color-2-transparent: #085e5533;
-  --color-3: #ffed9b;
-  --color-3-transparent: #ffed9b33;
-  --color-4: #ffb5aa;
-  --color-4-transparent: #ffb5aa33;
+  --color-1: light-dark(#262626, #e5e5e5);
+  --color-1-transparent: light-dark(#26262633, #e5e5e533);
+  --color-2: light-dark(#707070, #b1b1b1);
+  --color-2-transparent: light-dark(#70707033, #b1b1b133);
+  --color-3: light-dark(#b6b6b6, #777777);
+  --color-3-transparent: light-dark(#b6b6b633, #77777733);
+  --color-4: light-dark(#e8e8e8, #424242);
+  --color-4-transparent: light-dark(#e8e8e833, #42424233);
 
   --shadow-none: none;
   --shadow-s: 0px 1px 2px 0px #00000000;
@@ -180,56 +180,55 @@
 
 :root {
   --neutral-1: light-dark(#ffffff, #000000);
-  --neutral-2: light-dark(#fafafa, #202020);
-  --neutral-3: light-dark(#f0f0f0, #2b2b2b);
-  --neutral-4: light-dark(#dedede, #383838);
-  --neutral-5: light-dark(#c5c5c5, #505050);
-  --neutral-6: light-dark(#969696, #777777);
-  --neutral-7: light-dark(#6c6c6c, #a3a3a3);
-  --neutral-8: light-dark(#454545, #c6c6c6);
-  --neutral-9: light-dark(#252525, #e5e5e5);
+  --neutral-2: light-dark(#fafaf9, #21201d);
+  --neutral-3: light-dark(#f2f0ec, #2c2b28);
+  --neutral-4: light-dark(#e1ddd5, #393835);
+  --neutral-5: light-dark(#cbc5b9, #52504c);
+  --neutral-6: light-dark(#9b968a, #797773);
+  --neutral-7: light-dark(#716c61, #a5a39f);
+  --neutral-8: light-dark(#4a453b, #c8c6c2);
+  --neutral-9: light-dark(#29241b, #e6e5e3);
   --neutral-10: light-dark(#000000, #ffffff);
 
   --neutral-1-transparent: light-dark(#ffffff33, #00000033);
-  --neutral-2-transparent: light-dark(#fafafa33, #20202033);
-  --neutral-3-transparent: light-dark(#f0f0f033, #2b2b2b33);
-  --neutral-4-transparent: light-dark(#dedede33, #38383833);
-  --neutral-5-transparent: light-dark(#c5c5c533, #50505033);
-  --neutral-6-transparent: light-dark(#96969633, #77777733);
-  --neutral-7-transparent: light-dark(#6c6c6c33, #a3a3a333);
-  --neutral-8-transparent: light-dark(#45454533, #c6c6c633);
-  --neutral-9-transparent: light-dark(#25252533, #e5e5e533);
+  --neutral-2-transparent: light-dark(#fafaf933, #21201d33);
+  --neutral-3-transparent: light-dark(#f2f0ec33, #2c2b2833);
+  --neutral-4-transparent: light-dark(#e1ddd533, #39383533);
+  --neutral-5-transparent: light-dark(#cbc5b933, #52504c33);
+  --neutral-6-transparent: light-dark(#9b968a33, #79777333);
+  --neutral-7-transparent: light-dark(#716c6133, #a5a39f33);
+  --neutral-8-transparent: light-dark(#4a453b33, #c8c6c233);
+  --neutral-9-transparent: light-dark(#29241b33, #e6e5e333);
   --neutral-10-transparent: light-dark(#00000033, #ffffff33);
-  --success: light-dark(#000000, #ffffff);
-  --success-transparent: light-dark(#00000033, #ffffff33);
-  --warning: light-dark(#000000, #ffffff);
-  --warning-transparent: light-dark(#00000033, #ffffff33);
-  --error: light-dark(#000000, #ffffff);
-  --error-transparent: light-dark(#00000033, #ffffff33);
+  --success: light-dark(#76ef6b, #76ef6b);
+  --success-transparent: light-dark(#76ef6b33, #76ef6b33);
+  --warning: light-dark(#ffa344, #ffa344);
+  --warning-transparent: light-dark(#ffa34433, #ffa34433);
+  --error: light-dark(#ff5263, #ff5263);
+  --error-transparent: light-dark(#ff526333, #ff526333);
 
-  /* Semantic roles (design/shared.css contrast fixes: solid borders, muted
-   * text one step darker, teal/blue accent, explicit status colors). */
+  /* Semantic roles (GraphicalUIKomore warm neutrals, dark/silver accent) */
   --canvas: var(--neutral-1);
-  --surface: light-dark(#fafafa, #161616);
-  --surface-muted: light-dark(#f0f0f0, #202020);
-  --surface-hover: light-dark(#f0f0f0, #2b2b2b);
-  --border: light-dark(#dedede, #2b2b2b);
-  --border-strong: light-dark(#c5c5c5, #383838);
+  --surface: light-dark(#fafaf9, #21201d);
+  --surface-muted: light-dark(#f2f0ec, #2c2b28);
+  --surface-hover: light-dark(#f2f0ec, #393835);
+  --border: light-dark(#e1ddd5, #393835);
+  --border-strong: light-dark(#cbc5b9, #52504c);
   --text: var(--neutral-10);
   --text-secondary: var(--neutral-8);
-  --text-muted: light-dark(#6c6c6c, #a3a3a3);
-  --accent: light-dark(var(--color-2), var(--color-1));
-  --accent-text: light-dark(#ffffff, #000000);
-  --accent-soft: light-dark(#085e5514, #00afe81f);
-  --link: light-dark(#00739a, #5ccdf2);
+  --text-muted: light-dark(#716c61, #a5a39f);
+  --accent: light-dark(var(--color-1), var(--color-1));
+  --accent-text: light-dark(var(--neutral-2), var(--neutral-2));
+  --accent-soft: light-dark(#26262614, #e5e5e51f);
+  --link: light-dark(#262626, #e5e5e5);
   --focus: var(--color-1);
   --focus-ring: var(--color-1-transparent);
-  --mention: light-dark(#ffed9b66, #ffed9b26);
-  --mention-edge: #e0b400;
-  --danger: light-dark(#b3261e, #ffb5aa);
-  --status-open: light-dark(#969696, #777777);
-  --status-assigned: var(--color-1);
-  --status-done: light-dark(#085e55, #3fb8a8);
+  --mention: light-dark(#ffa34433, #ffa34426);
+  --mention-edge: #ffa344;
+  --danger: var(--error);
+  --status-open: var(--neutral-6);
+  --status-assigned: var(--accent);
+  --status-done: var(--success);
   --presence-active: #22a06b;
   --presence-away: var(--status-open);
 
