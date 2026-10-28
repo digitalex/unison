@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"regexp"
+	"sync"
 )
 
 // Action-required messages (#49) replaced the inbox. A chat message that
@@ -42,9 +43,18 @@ func mentionedIn(t *tx, wsID string, authorID int64, body string) ([]int64, erro
 	return ids, rows.Err()
 }
 
+var mentionRegexCache sync.Map
+
 // mentions reports whether body @mentions name.
 func mentions(body, name string) bool {
-	return regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(name) + `\b`).MatchString(body)
+	v, ok := mentionRegexCache.Load(name)
+	var re *regexp.Regexp
+	if !ok {
+		re = regexp.MustCompile(`(?i)@` + regexp.QuoteMeta(name) + `\b`)
+		v, _ = mentionRegexCache.LoadOrStore(name, re)
+	}
+	re = v.(*regexp.Regexp)
+	return re.MatchString(body)
 }
 
 // addActions asks the participants a new message mentions to act on it, or
