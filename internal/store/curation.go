@@ -50,6 +50,14 @@ func attachExtras(t *tx, wsID string, items []*Item) error {
 	filter, args := `workspace_id = ?`, []any{wsID}
 	if len(items) == 1 {
 		filter, args = `workspace_id = ? AND item_id = ?`, []any{wsID, items[0].ID}
+	} else if len(items) > 1 {
+		marks := strings.TrimSuffix(strings.Repeat("?, ", len(items)), ", ")
+		filter = `workspace_id = ? AND item_id IN (` + marks + `)`
+		args = make([]any, 0, 1+len(items))
+		args = append(args, wsID)
+		for _, it := range items {
+			args = append(args, it.ID)
+		}
 	}
 	rows, err := t.Query(`SELECT id, item_id, url, added_by, created_at FROM item_prs WHERE `+filter+` ORDER BY id`, args...)
 	if err != nil {

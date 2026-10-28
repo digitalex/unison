@@ -153,3 +153,90 @@ func TestMoveAcrossAssignedItems(t *testing.T) {
 		t.Errorf("queue = %q, want %q", strings.Join(order, " "), want)
 	}
 }
+
+func TestAttachExtrasMultiItem(t *testing.T) {
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+
+	it1, _, _ := s.AddItem(ctx, a, "Item One", "", 0)
+	it2, _, _ := s.AddItem(ctx, a, "Item Two", "", 0)
+	it3, _, _ := s.AddItem(ctx, a, "Item Three", "", 0)
+
+	// Add PRs
+	s.LinkPR(ctx, a, it1.ID, "https://github.com/digitalex/unison/pull/1")
+	s.LinkPR(ctx, a, it2.ID, "https://github.com/digitalex/unison/pull/2")
+	s.LinkPR(ctx, a, it3.ID, "https://github.com/digitalex/unison/pull/3")
+
+	// Add comments
+	s.AddComment(ctx, a, it1.ID, "Comment on item 1 - A")
+	s.AddComment(ctx, a, it1.ID, "Comment on item 1 - B")
+	s.AddComment(ctx, a, it2.ID, "Comment on item 2 - A")
+
+	// Add messages attached to items
+	s.PostMessage(ctx, a, "Msg on item 1", nil, &it1.ID)
+	s.PostMessage(ctx, a, "Msg on item 2", nil, &it2.ID)
+	s.PostMessage(ctx, a, "Msg on item 3", nil, &it3.ID)
+
+	// Test ListBacklog (fetches all 3 items together in multi-item path)
+	items, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil {
+		t.Fatalf("ListBacklog failed: %v", err)
+	}
+	if len(items) != 3 {
+		t.Fatalf("ListBacklog returned %d items, want 3", len(items))
+	}
+
+	byID := make(map[int64]Item, len(items))
+	for _, it := range items {
+		byID[it.ID] = it
+	}
+
+	if len(byID[it1.ID].PRs) != 1 || byID[it1.ID].PRs[0].URL != "https://github.com/digitalex/unison/pull/1" {
+		t.Errorf("it1 PRs = %+v", byID[it1.ID].PRs)
+	}
+	if byID[it1.ID].CommentCount != 2 {
+		t.Errorf("it1 CommentCount = %d, want 2", byID[it1.ID].CommentCount)
+	}
+	if byID[it1.ID].MessageCount != 1 {
+		t.Errorf("it1 MessageCount = %d, want 1", byID[it1.ID].MessageCount)
+	}
+
+	if len(byID[it2.ID].PRs) != 1 || byID[it2.ID].PRs[0].URL != "https://github.com/digitalex/unison/pull/2" {
+		t.Errorf("it2 PRs = %+v", byID[it2.ID].PRs)
+	}
+	if byID[it2.ID].CommentCount != 1 {
+		t.Errorf("it2 CommentCount = %d, want 1", byID[it2.ID].CommentCount)
+	}
+	if byID[it2.ID].MessageCount != 1 {
+		t.Errorf("it2 MessageCount = %d, want 1", byID[it2.ID].MessageCount)
+	}
+
+	if len(byID[it3.ID].PRs) != 1 || byID[it3.ID].PRs[0].URL != "https://github.com/digitalex/unison/pull/3" {
+		t.Errorf("it3 PRs = %+v", byID[it3.ID].PRs)
+	}
+	if byID[it3.ID].CommentCount != 0 {
+		t.Errorf("it3 CommentCount = %d, want 0", byID[it3.ID].CommentCount)
+	}
+	if byID[it3.ID].MessageCount != 1 {
+		t.Errorf("it3 MessageCount = %d, want 1", byID[it3.ID].MessageCount)
+	}
+
+	// Test attachExtras directly with a slice containing only [it1, it2]
+	slice := []*Item{
+		{ID: it1.ID, WorkspaceID: a.WorkspaceID},
+		{ID: it2.ID, WorkspaceID: a.WorkspaceID},
+	}
+	_, err = s.tx(ctx, func(t *tx, log *eventLog) error {
+		return attachExtras(t, a.WorkspaceID, slice)
+	})
+	if err != nil {
+		t.Fatalf("attachExtras failed: %v", err)
+	}
+
+	if len(slice[0].PRs) != 1 || slice[0].CommentCount != 2 || slice[0].MessageCount != 1 {
+		t.Errorf("slice[0] extras = PRs:%d Comments:%d Msgs:%d", len(slice[0].PRs), slice[0].CommentCount, slice[0].MessageCount)
+	}
+	if len(slice[1].PRs) != 1 || slice[1].CommentCount != 1 || slice[1].MessageCount != 1 {
+		t.Errorf("slice[1] extras = PRs:%d Comments:%d Msgs:%d", len(slice[1].PRs), slice[1].CommentCount, slice[1].MessageCount)
+	}
+}
