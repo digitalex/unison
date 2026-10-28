@@ -461,7 +461,8 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             Settings
           </a>
         )}
-        {account.user ? <AccountMenu account={account} showName menuExtra={() => <ThemeRow />} /> : <ThemeSwitch />}
+        <ThemeSwitch />
+        {account.user && <AccountMenu account={account} showName menuExtra={() => <ThemeRow />} />}
       </div>
     </nav>
   );
@@ -547,6 +548,7 @@ function HeadExtras({ workspace, call, account, members, settingsLink }) {
     <>
       <span className="head-account">
         <InviteButton workspace={workspace} account={account} members={members} call={call} className="button button-ghost button-icon" />
+        <ThemeSwitch />
         {account.user ? (
           <AccountMenu
             account={account}
@@ -564,12 +566,9 @@ function HeadExtras({ workspace, call, account, members, settingsLink }) {
             )}
           />
         ) : (
-          <>
-            <ThemeSwitch />
-            <a className="button button-ghost button-icon" {...settingsLink} title="Workspace settings" aria-label="Workspace settings">
-              <Settings aria-hidden="true" />
-            </a>
-          </>
+          <a className="button button-ghost button-icon" {...settingsLink} title="Workspace settings" aria-label="Workspace settings">
+            <Settings aria-hidden="true" />
+          </a>
         )}
       </span>
     </>

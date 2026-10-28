@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import Button from "../ui/Button.jsx";
 import Field from "../ui/Field.jsx";
 import { Input } from "../ui/Input.jsx";
+import ThemeSwitch from "../ui/ThemeSwitch.jsx";
 
 // Settings → General: the workspace's name and canvas URL.
 export default function General({ workspace, call, onError }) {
@@ -36,6 +37,9 @@ export default function General({ workspace, call, onError }) {
       </Field>
       <Field label="Canvas URL">
         <Input placeholder="https://isocan.io/p/…" {...field("canvas_url")} />
+      </Field>
+      <Field label="Theme">
+        <ThemeSwitch />
       </Field>
       <div className="actions-row">
         <Button variant="primary" type="submit" disabled={!dirty}>
