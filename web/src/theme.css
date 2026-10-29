@@ -2835,6 +2835,16 @@ html.reordering * {
   border-top: var(--border-s) solid var(--border);
 }
 
+.md-item {
+  color: var(--link);
+  font-weight: var(--weight-ui-medium);
+  text-decoration: none;
+}
+
+.md-item:hover {
+  text-decoration: underline;
+}
+
 .md-mention {
   color: var(--accent);
   font-weight: var(--weight-ui-medium);

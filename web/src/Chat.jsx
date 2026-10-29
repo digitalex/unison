@@ -3,7 +3,7 @@ import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, Messag
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
-import Markdown from "./Markdown.jsx";
+import Markdown, { refersToPR } from "./Markdown.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
 // The workspace chat room, a screen of its own. Threads are one level deep.
@@ -409,6 +409,7 @@ function Composer({ parent, items, call, onError, mention, onMentioned, prefill,
 // itemMentioned is the first backlog item the text names as #id, if any.
 function itemMentioned(text, items) {
   for (const m of text.matchAll(/(?:^|[^\w&/])#(\d+)\b/g)) {
+    if (refersToPR(text.slice(Math.max(0, m.index - 16), m.index + m[0].indexOf("#")))) continue;
     const item = items.find((it) => it.id === Number(m[1]));
     if (item) return item;
   }
