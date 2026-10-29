@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Ellipsis, ListChecks, MessageSquare, Reply, Undo2, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Reply, RotateCcw, Undo2, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -19,7 +19,9 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
 // focusing) a message shows its actions: reply (in its thread), and the
-// reactions.
+// reactions. activity (events) shows between the messages, by time, as
+// one-line updates: items added, closed and reopened, people joining and
+// leaving (#93).
 
 // REACTIONS are the emoji anyone can put on a message (the server accepts
 // exactly these).
@@ -31,7 +33,7 @@ const REACTIONS = [
   { emoji: "💯", label: "100" },
 ];
 
-export default function Chat({ messages, updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
+export default function Chat({ messages, activity = [], updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
   const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
   const [threadId, setThreadId] = useState(null); // The thread open in the panel (its first message).
   const [prefill, setPrefill] = useState(null); // {text, at}: start the thread composer with this.
@@ -40,7 +42,7 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages.length]);
+  }, [messages.length, activity.length]);
 
   const byId = new Map(messages.map((m) => [m.id, m]));
   const replies = new Map();
@@ -50,6 +52,7 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
     }
   }
   const roots = messages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
+  const log = byTime(roots, activity);
   const thread = threadId ? byId.get(threadId) : null;
   // You, on any of your account's devices: actions are per account.
   const mine = new Set(participants.filter((p) => p.id === me?.id || (me?.user_id && p.user_id === me.user_id)).map((p) => p.id));
@@ -120,7 +123,10 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
         <div className="chat-main">
           <div className="chat-log">
             {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
-            {roots.map((m) => (
+            {log.map(({ message: m, event }) =>
+              event ? (
+                <ActivityLine key={`e${event.seq}`} event={event} participants={participants} />
+              ) : (
               <Message key={m.id} {...messageProps(m, m)}>
                 {replies.has(m.id) && (
                   <ThreadSummary
@@ -133,7 +139,8 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
                   />
                 )}
               </Message>
-            ))}
+              ),
+            )}
             <div ref={bottom} />
           </div>
           <Composer {...composerProps} mention={mention} onMentioned={onMentioned} placeholder="Message the workspace…  @Name to mention" />
@@ -162,6 +169,73 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
         )}
       </div>
     </section>
+  );
+}
+
+// byTime merges messages and activity events into one log, oldest first:
+// [{message} | {event}].
+function byTime(messages, events) {
+  const out = [...messages.map((message) => ({ message, at: message.created_at })), ...events.map((event) => ({ event, at: event.created_at }))];
+  return out.sort((a, b) => a.at - b.at);
+}
+
+const ACTIVITY_ICONS = {
+  "backlog.added": ListPlus,
+  "backlog.closed": CircleCheck,
+  "backlog.reopened": RotateCcw,
+  "participant.joined": UserPlus,
+  "member.removed": UserMinus,
+};
+
+// activityText says what an activity event did, as [who, rest, item]: who
+// in bold, item (if any) a link to the backlog item.
+function activityText(event, participants) {
+  const d = event.data || {};
+  const actor = participants.find((p) => p.id === event.actor_id);
+  const name = (p) => (p ? `${p.emoji ? `${p.emoji} ` : ""}${p.name}` : "Someone");
+  switch (event.type) {
+    case "backlog.added":
+      return [name(actor), "added", d];
+    case "backlog.closed":
+      return [name(actor), "closed", d];
+    case "backlog.reopened":
+      return [name(actor), "reopened", d];
+    case "participant.joined":
+      return [name(d), d.sponsor ? `joined · agent of ${d.sponsor.display_name}` : "joined"];
+    case "member.removed":
+      // Removing yourself is leaving.
+      return actor && actor.user_id === d.user_id ? [d.display_name, "left the workspace"] : [name(actor), `removed ${d.display_name}`];
+    default:
+      return [name(actor), event.type];
+  }
+}
+
+// ActivityLine is one activity event in the main log: a small pill on a
+// divider, unlike a message (no author block, reactions or thread).
+function ActivityLine({ event, participants }) {
+  const [who, rest, item] = activityText(event, participants);
+  const Icon = ACTIVITY_ICONS[event.type] || ListChecks;
+  const at = new Date(event.created_at);
+  return (
+    <div className={`activity activity-${event.type.replace(".", "-")}`} role="note">
+      <span className="activity-pill">
+        <Icon aria-hidden="true" />
+        <span className="activity-text">
+          <span className="activity-who">{who}</span> {rest}
+          {item?.id && (
+            <>
+              {" "}
+              <a {...itemLink(item.id)}>
+                #{item.id} {item.title}
+              </a>
+            </>
+          )}
+        </span>
+        <span className="activity-time" title={at.toLocaleString()}>
+          {at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+        </span>
+      </span>
+    </div>
   );
 }
 

@@ -1654,6 +1654,67 @@ button.group-head {
   margin: var(--space-xxs) var(--space-m) 0 calc(var(--space-m) + 24px + var(--space-xs));
 }
 
+/* Activity updates in the main log (#93): a one-line pill on a divider. */
+.activity {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  margin: 6px var(--space-m);
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.activity::before,
+.activity::after {
+  content: "";
+  flex: 1;
+  min-width: var(--space-m);
+  height: 1px;
+  background: var(--panel-edge);
+}
+
+.activity-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  max-width: 80%;
+  padding: 2px 10px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+}
+
+.activity-pill .lucide {
+  flex: none;
+  width: 13px;
+  height: 13px;
+}
+
+.activity-backlog-closed .lucide {
+  color: var(--status-done);
+}
+
+.activity-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.activity-who {
+  color: var(--text-secondary);
+  font-weight: var(--weight-ui-heavy);
+}
+
+.activity-text a {
+  color: var(--text-secondary);
+}
+
+.activity-time {
+  flex: none;
+  font-size: var(--size-xxs);
+}
+
 /* The line under a message that started a thread: opens the thread. */
 .thread-summary {
   display: inline-flex;

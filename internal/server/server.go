@@ -146,6 +146,7 @@ func (s *Server) routes() {
 	h("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
 	h("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
 	h("GET "+ws+"/events", s.events)
+	h("GET "+ws+"/activity", s.listActivity)
 	h("GET "+ws+"/stream", s.stream)
 }
 
@@ -752,6 +753,15 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+}
+
+// listActivity lists the workspace's latest activity events (items added,
+// closed, reopened; people joining and leaving), oldest first, for the
+// one-line updates in chat (#93).
+func (s *Server) listActivity(w http.ResponseWriter, r *http.Request) {
+	limit, _ := strconv.Atoi(r.URL.Query().Get("limit"))
+	evs, err := s.store.RecentActivity(r.Context(), r.PathValue("ws"), limit)
+	s.respond(w, http.StatusOK, evs, nil, err)
 }
 
 // stream is a Server-Sent Events feed of a workspace's events, for browsers.
