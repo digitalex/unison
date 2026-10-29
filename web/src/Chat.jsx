@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Ellipsis, ListChecks, Reply, Undo2, X } from "lucide-react";
+import { Check, CircleAlert, Ellipsis, ListChecks, MessageSquare, Reply, Undo2, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import Markdown from "./Markdown.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The workspace chat room, a screen of its own. Threads are one level deep:
-// replies are listed under the message that started the thread. head is the
+// The workspace chat room, a screen of its own. Threads are one level deep.
+// The main log lists the messages that start threads; one with replies shows
+// a thread summary that opens the thread in a panel beside the log (over it
+// on phones), with its own composer. head is the
 // header's shared controls (who's here, Invite), error the workspace's
 // error bar. updateMessages updates the shown messages in place (for
 // optimistic reactions). Messages after newAfter are new to you: those that
@@ -16,7 +18,8 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 // @mentions to act (action_required): it stands out for them, with Done.
 // A message can be about a backlog item: it shows a chip that opens the item.
 // `shown` ({id, at}) is a message to scroll to and highlight. Hovering (or
-// focusing) a message shows its actions: reply, and the reactions.
+// focusing) a message shows its actions: reply (in its thread), and the
+// reactions.
 
 // REACTIONS are the emoji anyone can put on a message (the server accepts
 // exactly these).
@@ -29,33 +32,15 @@ const REACTIONS = [
 ];
 
 export default function Chat({ messages, updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
-  const [text, setText] = useState("");
-  const [replyTo, setReplyTo] = useState(null);
-  const [linked, setLinked] = useState(false); // Tie the message to the item it mentions.
-  const [replyItem, setReplyItem] = useState(null); // The item of the message replied to.
   const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
-  const [needsAction, setNeedsAction] = useState(false); // Ask the people the message mentions to act.
-  const composer = useRef(null);
-  const mentionedItem = itemMentioned(text, items) || replyItem;
+  const [threadId, setThreadId] = useState(null); // The thread open in the panel (its first message).
+  const [prefill, setPrefill] = useState(null); // {text, at}: start the thread composer with this.
   const flashed = useShowMessage(shown, messages);
   const bottom = useRef(null);
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
   }, [messages.length]);
-
-  useEffect(() => {
-    if (!mention) return;
-    const prefix = `@${mention} `;
-    setText((t) => (t.startsWith(prefix) ? t : prefix + t));
-    onMentioned();
-    // Once the text is in: type right after the mention.
-    requestAnimationFrame(() => {
-      const el = composer.current;
-      el?.focus();
-      el?.setSelectionRange(el.value.length, el.value.length);
-    });
-  }, [mention]);
 
   const byId = new Map(messages.map((m) => [m.id, m]));
   const replies = new Map();
@@ -65,47 +50,26 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
     }
   }
   const roots = messages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
+  const thread = threadId ? byId.get(threadId) : null;
   // You, on any of your account's devices: actions are per account.
   const mine = new Set(participants.filter((p) => p.id === me?.id || (me?.user_id && p.user_id === me.user_id)).map((p) => p.id));
   if (me) mine.add(me.id);
-  const canAsk = /@\S/.test(text);
 
-  const send = async (e) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    try {
-      await call("POST", "/messages", {
-        body: text,
-        parent_id: replyTo?.id,
-        item_id: linked && mentionedItem ? mentionedItem.id : undefined,
-        action_required: needsAction && canAsk ? true : undefined,
-      });
-      setText("");
-      setNeedsAction(false);
-      cancelReply();
-    } catch (err) {
-      onError(err.message);
-    }
-  };
+  useOpenShownThread(shown, byId, setThreadId);
+  useEffect(() => {
+    if (!thread) return;
+    const onKey = (e) => e.key === "Escape" && setThreadId(null);
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [Boolean(thread)]);
 
-  // Reply: in the message's thread, to its author (prefilled @mention),
-  // about the same item if it has one.
+  // Reply: in the message's thread (opening it), to its author (a
+  // prefilled @mention).
   const startReply = (root, target) => {
-    setReplyTo(root);
+    setThreadId(root.id);
     const author = participants.find((p) => p.id === target.author_id);
-    const mention = author && author.id !== me?.id ? `@${author.name} ` : "";
-    if (mention && !text.startsWith(mention)) setText(mention + text);
-    if (target.item) {
-      setReplyItem(target.item);
-      setLinked(true);
-    }
+    setPrefill({ text: author && author.id !== me?.id ? `@${author.name} ` : "", at: Date.now() });
     setActionsFor(null);
-    composer.current?.focus();
-  };
-  const cancelReply = () => {
-    setReplyTo(null);
-    setReplyItem(null);
-    setLinked(false);
   };
   // react toggles your reaction. It shows at once (optimistically); the
   // live update that follows brings what the server says everyone sees, and
@@ -146,79 +110,212 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
     actionsOpen: actionsFor === m.id,
     onToggleActions: () => setActionsFor(actionsFor === m.id ? null : m.id),
   });
+  const composerProps = { items, call, onError };
 
   return (
-    <section className="screen chat" aria-label="Chat">
+    <section className={thread ? "screen chat chat-thread-open" : "screen chat"} aria-label="Chat">
       <ScreenHead title="Chat">{head}</ScreenHead>
       {error}
-      <div className="chat-log">
-        {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
-        {roots.map((m) => (
-          <Message key={m.id} {...messageProps(m, m)}>
-            {replies.has(m.id) && (
-              <div className="thread">
-                {replies.get(m.id).map((r) => (
-                  <Message key={r.id} {...messageProps(r, m)} />
+      <div className="chat-body">
+        <div className="chat-main">
+          <div className="chat-log">
+            {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
+            {roots.map((m) => (
+              <Message key={m.id} {...messageProps(m, m)}>
+                {replies.has(m.id) && (
+                  <ThreadSummary
+                    replies={replies.get(m.id)}
+                    participants={participants}
+                    me={me}
+                    newAfter={newAfter}
+                    open={threadId === m.id}
+                    onOpen={() => setThreadId(threadId === m.id ? null : m.id)}
+                  />
+                )}
+              </Message>
+            ))}
+            <div ref={bottom} />
+          </div>
+          <Composer {...composerProps} mention={mention} onMentioned={onMentioned} placeholder="Message the workspace…  @Name to mention" />
+        </div>
+        {thread && (
+          <aside className="thread-panel" aria-label={`Thread #${thread.id}`}>
+            <header className="thread-head">
+              <MessageSquare aria-hidden="true" />
+              <span className="thread-title">Thread</span>
+              <span className="thread-count">{countLabel((replies.get(thread.id) || []).length)}</span>
+              <span className="spacer" />
+              <Button variant="ghost" iconOnly aria-label="Close thread" title="Close thread (Esc)" onClick={() => setThreadId(null)}>
+                <X aria-hidden="true" />
+              </Button>
+            </header>
+            <ThreadLog key={thread.id} replies={replies.get(thread.id) || []}>
+              <Message {...messageProps(thread, thread)} />
+              <div className="thread-replies">
+                {(replies.get(thread.id) || []).map((r) => (
+                  <Message key={r.id} {...messageProps(r, thread)} />
                 ))}
               </div>
-            )}
-          </Message>
-        ))}
-        <div ref={bottom} />
-      </div>
-      <form className="composer" onSubmit={send}>
-        {replyTo && (
-          <p className="replying">
-            Replying in thread #{replyTo.id}
-            <Button type="button" variant="ghost" iconOnly aria-label="Cancel reply" title="Cancel reply" onClick={cancelReply}>
-              <X aria-hidden="true" />
-            </Button>
-          </p>
+            </ThreadLog>
+            <Composer key={thread.id} {...composerProps} parent={thread} prefill={prefill} placeholder="Reply in thread…" autoFocus />
+          </aside>
         )}
-        <Textarea
-          ref={composer}
-          aria-label="Message"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) send(e);
-          }}
-          rows={3}
-          placeholder="Message the workspace…  @Name to mention"
-        />
-        <div className="composer-foot">
-          {mentionedItem ? (
-            <button
-              type="button"
-              className={linked ? "chip link-item linked" : "chip link-item"}
-              aria-pressed={linked}
-              title={linked ? "The message will be tied to this backlog item" : "Tie the message to this backlog item"}
-              onClick={() => setLinked(!linked)}
-            >
-              <ListChecks aria-hidden="true" />
-              {linked ? "Linked to" : "Link to"} #{mentionedItem.id} <span className="link-item-title">{mentionedItem.title}</span>
-            </button>
-          ) : (
-            <span className="hint">Enter to send · Shift+Enter for a new line</span>
-          )}
-          {canAsk && (
-            <button
-              type="button"
-              className={needsAction ? "chip needs-action-toggle on" : "chip needs-action-toggle"}
-              aria-pressed={needsAction}
-              title="Ask the people you @mention to act: it stands out for them until they're done"
-              onClick={() => {
-                setNeedsAction(!needsAction);
-                composer.current?.focus();
-              }}
-            >
-              <CircleAlert aria-hidden="true" />
-              Needs action
-            </button>
-          )}
-        </div>
-      </form>
+      </div>
     </section>
+  );
+}
+
+function countLabel(n) {
+  return n === 1 ? "1 reply" : `${n} replies`;
+}
+
+// ThreadSummary is a thread's line under its first message in the main
+// log: how many replies, who replied, and when the last one came. It
+// stands out when the thread has replies new to you; clicking it opens (or
+// closes) the thread.
+function ThreadSummary({ replies, participants, me, newAfter, open, onOpen }) {
+  const last = replies[replies.length - 1];
+  const authors = [...new Set(replies.map((r) => r.author_id))].slice(0, 4).map((id) => participants.find((p) => p.id === id)).filter(Boolean);
+  const fresh = replies.filter((r) => r.id > newAfter && r.author_id !== me?.id).length;
+  const at = new Date(last.created_at);
+  return (
+    <button type="button" className={["thread-summary", fresh && "has-new", open && "open"].filter(Boolean).join(" ")} aria-expanded={open} onClick={onOpen}>
+      <span className="thread-avatars" aria-hidden="true">
+        {authors.map((p) => (
+          <span key={p.id} className="thread-avatar" title={p.name}>
+            {p.emoji}
+          </span>
+        ))}
+      </span>
+      <span className="thread-replies-count">{countLabel(replies.length)}</span>
+      {fresh > 0 && <span className="thread-new">{fresh} new</span>}
+      <span className="thread-last" title={at.toLocaleString()}>
+        Last reply {at.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+      </span>
+    </button>
+  );
+}
+
+// ThreadLog scrolls the thread panel to its latest reply when the thread
+// opens and when a reply arrives.
+function ThreadLog({ replies, children }) {
+  const end = useRef(null);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "nearest" });
+  }, [replies.length]);
+  return (
+    <div className="thread-log">
+      {children}
+      <div ref={end} />
+    </div>
+  );
+}
+
+// useOpenShownThread opens the thread of the shown message when it is a
+// reply (from a notification or a link), so it can be scrolled to.
+function useOpenShownThread(shown, byId, setThreadId) {
+  const message = shown ? byId.get(shown.id) : null;
+  const parent = message?.parent_id && byId.has(message.parent_id) ? message.parent_id : null;
+  useEffect(() => {
+    if (parent) setThreadId(parent);
+  }, [parent, shown?.at]);
+}
+
+// Composer writes a message: to the main chat, or with parent a reply in
+// parent's thread (tied to its backlog item, if it has one). mention (a
+// name) starts the text with "@Name "; onMentioned says it was used.
+// prefill ({text, at}) starts the text with text, e.g. the @mention of the
+// author being replied to.
+function Composer({ parent, items, call, onError, mention, onMentioned, prefill, placeholder, autoFocus }) {
+  const [text, setText] = useState("");
+  const [linked, setLinked] = useState(Boolean(parent?.item)); // Tie the message to the item it mentions.
+  const [needsAction, setNeedsAction] = useState(false); // Ask the people the message mentions to act.
+  const composer = useRef(null);
+  const mentionedItem = itemMentioned(text, items) || parent?.item || null;
+  const canAsk = /@\S/.test(text);
+
+  const startWith = (prefix) => {
+    if (prefix) setText((t) => (t.startsWith(prefix) ? t : prefix + t));
+    // Once the text is in: type after it.
+    requestAnimationFrame(() => {
+      const el = composer.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  };
+  useEffect(() => {
+    if (!mention) return;
+    startWith(`@${mention} `);
+    onMentioned();
+  }, [mention]);
+  useEffect(() => {
+    if (prefill) startWith(prefill.text);
+    else if (autoFocus) composer.current?.focus();
+  }, [prefill?.at]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    try {
+      await call("POST", "/messages", {
+        body: text,
+        parent_id: parent?.id,
+        item_id: linked && mentionedItem ? mentionedItem.id : undefined,
+        action_required: needsAction && canAsk ? true : undefined,
+      });
+      setText("");
+      setNeedsAction(false);
+      if (!parent) setLinked(false);
+    } catch (err) {
+      onError(err.message);
+    }
+  };
+
+  return (
+    <form className="composer" onSubmit={send}>
+      <Textarea
+        ref={composer}
+        aria-label={parent ? `Reply in thread #${parent.id}` : "Message"}
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" && !e.shiftKey) send(e);
+        }}
+        rows={parent ? 2 : 3}
+        placeholder={placeholder}
+      />
+      <div className="composer-foot">
+        {mentionedItem ? (
+          <button
+            type="button"
+            className={linked ? "chip link-item linked" : "chip link-item"}
+            aria-pressed={linked}
+            title={linked ? "The message will be tied to this backlog item" : "Tie the message to this backlog item"}
+            onClick={() => setLinked(!linked)}
+          >
+            <ListChecks aria-hidden="true" />
+            {linked ? "Linked to" : "Link to"} #{mentionedItem.id} <span className="link-item-title">{mentionedItem.title}</span>
+          </button>
+        ) : (
+          <span className="hint">Enter to send · Shift+Enter for a new line</span>
+        )}
+        {canAsk && (
+          <button
+            type="button"
+            className={needsAction ? "chip needs-action-toggle on" : "chip needs-action-toggle"}
+            aria-pressed={needsAction}
+            title="Ask the people you @mention to act: it stands out for them until they're done"
+            onClick={() => {
+              setNeedsAction(!needsAction);
+              composer.current?.focus();
+            }}
+          >
+            <CircleAlert aria-hidden="true" />
+            Needs action
+          </button>
+        )}
+      </div>
+    </form>
   );
 }
 

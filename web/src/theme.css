@@ -599,6 +599,14 @@ html.dialog-open {
 }
 
 @media (max-width: 640px) {
+  .chat-body .thread-panel {
+    position: absolute;
+    inset: 0;
+    z-index: 5;
+    width: auto;
+    border-left: 0;
+  }
+
   .dialog {
     width: 100vw;
     max-width: none;
@@ -1580,6 +1588,132 @@ button.group-head {
 
 /* ---- Chat (Chat.jsx): a screen, aligned with the backlog ---- */
 
+/* Chat: the main log and composer, and an open thread's panel beside them
+   (over them on phones). */
+.chat-body {
+  position: relative;
+  display: flex;
+  flex: 1;
+  min-height: 0;
+}
+
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+
+.thread-panel {
+  display: flex;
+  flex-direction: column;
+  flex: none;
+  width: min(400px, 45%);
+  min-height: 0;
+  border-left: var(--border-s) solid var(--panel-edge);
+  background: var(--panel);
+}
+
+.thread-head {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 44px;
+  padding: 0 var(--space-xs) 0 var(--space-m);
+  border-bottom: var(--border-s) solid var(--panel-edge);
+}
+
+.thread-head .lucide {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+}
+
+.thread-title {
+  font-weight: var(--weight-ui-heavy);
+}
+
+.thread-count {
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.thread-log {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: var(--space-xs) 0;
+}
+
+.thread-log > .thread-replies {
+  margin: var(--space-xxs) var(--space-m) 0 calc(var(--space-m) + 24px + var(--space-xs));
+}
+
+/* The line under a message that started a thread: opens the thread. */
+.thread-summary {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-top: var(--space-xxs);
+  padding: 2px var(--space-xs) 2px 2px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--size-xs);
+  cursor: pointer;
+}
+
+.thread-summary:hover,
+.thread-summary.open {
+  background: var(--surface-hover);
+}
+
+.thread-summary:focus-visible {
+  outline: var(--focus-ring-outline);
+}
+
+.thread-avatars {
+  display: inline-flex;
+}
+
+.thread-avatar {
+  display: grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  margin-right: -4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-muted);
+  box-shadow: 0 0 0 2px var(--panel);
+  font-size: 11px;
+}
+
+.thread-avatar:last-child {
+  margin-right: 0;
+}
+
+.thread-replies-count {
+  color: var(--link);
+  font-weight: var(--weight-ui-heavy);
+}
+
+.thread-new {
+  padding: 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  color: var(--accent-text);
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-heavy);
+}
+
+.thread-last {
+  color: var(--text-muted);
+}
+
 .chat-log {
   flex: 1;
   min-height: 0;
@@ -1969,20 +2103,20 @@ button.group-head {
   font-variant-numeric: tabular-nums;
 }
 
-.thread {
+.thread-replies {
   margin-top: var(--space-xxs);
   padding-left: var(--space-xs);
   border-left: var(--border-l) solid var(--border-strong);
 }
 
-.thread .msg {
+.thread-replies .msg {
   grid-template-columns: minmax(0, 1fr);
   margin: 0;
   padding: 2px 0;
   border-radius: 0;
 }
 
-.thread .msg:hover {
+.thread-replies .msg:hover {
   background: none;
 }
 
