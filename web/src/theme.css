@@ -604,7 +604,12 @@ html.dialog-open {
     inset: 0;
     z-index: 5;
     width: auto;
+    min-width: 0;
     border-left: 0;
+  }
+
+  .thread-resizer {
+    display: none;
   }
 
   .dialog {
@@ -1608,11 +1613,48 @@ button.group-head {
   min-height: 0;
 }
 
+/* The draggable border between chat and thread (#115). It sits over the
+   panel's left edge: a wide hit area around a hairline that lights up. */
+.thread-resizer {
+  position: relative;
+  z-index: 2;
+  flex: none;
+  width: 9px;
+  margin: 0 -5px 0 -4px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.thread-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 4px;
+  background: transparent;
+  transition: background 120ms;
+}
+
+.thread-resizer:hover::after,
+.thread-resizer:focus-visible::after,
+html.resizing .thread-resizer::after {
+  background: var(--focus);
+}
+
+.thread-resizer:focus-visible {
+  outline: none;
+}
+
+html.resizing,
+html.resizing * {
+  cursor: col-resize !important;
+  user-select: none;
+}
+
 .thread-panel {
   display: flex;
   flex-direction: column;
   flex: none;
-  width: min(400px, 45%);
+  width: min(var(--thread-width, min(400px, 45%)), calc(100% - 320px));
+  min-width: min(280px, 100%);
   min-height: 0;
   border-left: var(--border-s) solid var(--panel-edge);
   background: var(--panel);
