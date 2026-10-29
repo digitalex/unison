@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -86,5 +87,121 @@ func TestSchedules(t *testing.T) {
 	}
 	if list, _ := s.ListSchedules(ctx, a.WorkspaceID); len(list) != 1 {
 		t.Errorf("after remove list = %+v", list)
+	}
+}
+
+// TestMaterializeSchedules: a due schedule becomes an item at the top of the
+// backlog (backlog.added, linked by schedule_id), once; while that run is
+// open, later runs are noted as missed instead of piling up; after it's done
+// the next run adds a new item; a weekly one waits for its day; removing a
+// schedule leaves its items and stops its runs.
+func TestMaterializeSchedules(t *testing.T) {
+	s, now, a, _ := setup(t)
+	ctx := context.Background()
+	sweep := func() []string {
+		t.Helper()
+		evs, err := s.MaterializeSchedules(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// System events, so they wake and notify the schedule's creator too.
+		for _, ev := range evs {
+			if ev.ActorID != 0 {
+				t.Errorf("%s by actor %d, want 0 (the system)", ev.Type, ev.ActorID)
+			}
+		}
+		return eventTypes(evs)
+	}
+	advanceTo := func(ms int64) { *now = time.UnixMilli(ms) }
+	queued := func() []Item {
+		t.Helper()
+		items, _, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return items
+	}
+
+	s.AddItem(ctx, a, "Existing work", "", 0)
+	daily, _, _ := s.AddSchedule(ctx, a, ScheduleInput{Title: "Triage", Body: "Look at new issues", Cadence: CadenceDaily})
+	if got := sweep(); len(got) != 0 {
+		t.Fatalf("before it's due: events %v", got)
+	}
+
+	// Due: one item, on top, linked to the schedule; sweeping again adds nothing.
+	advanceTo(daily.NextDueAt + 1000)
+	if got := sweep(); !equal(got, []string{"backlog.added"}) {
+		t.Fatalf("due: events %v, want one backlog.added", got)
+	}
+	items := queued()
+	run := items[0]
+	if run.Title != "Triage" || run.Body != "Look at new issues" || run.Position != 1 || run.ScheduleID == nil || *run.ScheduleID != daily.ID || run.CreatedBy != a.ID {
+		t.Fatalf("run = %+v, want Triage on top, from schedule %d, by its creator", run, daily.ID)
+	}
+	if len(items) != 2 || items[1].Title != "Existing work" {
+		t.Errorf("queue = %+v, want the run above the existing item", items)
+	}
+	if got := sweep(); len(got) != 0 {
+		t.Errorf("same tick again: events %v", got)
+	}
+	list, _ := s.ListSchedules(ctx, a.WorkspaceID)
+	if list[0].NextDueAt != nextDue(*now, CadenceDaily, "").UnixMilli() {
+		t.Errorf("next due = %d, want the next midnight", list[0].NextDueAt)
+	}
+
+	// Next day, the run is still open: no second item, a missed-run comment.
+	advanceTo(list[0].NextDueAt + 1000)
+	if got := sweep(); !equal(got, []string{"comment.added"}) {
+		t.Fatalf("missed: events %v, want a comment", got)
+	}
+	if n := len(queued()); n != 2 {
+		t.Errorf("missed: %d queued items, want 2 (no pile-up)", n)
+	}
+	comments, _ := s.ListComments(ctx, a.WorkspaceID, run.ID)
+	if len(comments) != 1 || !strings.Contains(comments[0].Body, "Missed") {
+		t.Errorf("comments = %+v, want one missed-run note", comments)
+	}
+
+	// Done, then the next run adds a new item again.
+	if _, _, err := s.CloseItem(ctx, a, run.ID, "triaged"); err != nil {
+		t.Fatal(err)
+	}
+	list, _ = s.ListSchedules(ctx, a.WorkspaceID)
+	advanceTo(list[0].NextDueAt + 1000)
+	if got := sweep(); !equal(got, []string{"backlog.added"}) {
+		t.Fatalf("after done: events %v", got)
+	}
+	if again := queued()[0]; again.ID == run.ID || again.ScheduleID == nil || *again.ScheduleID != daily.ID {
+		t.Errorf("new run = %+v", again)
+	}
+
+	// A weekly schedule only runs on its day.
+	day := weekdays[now.AddDate(0, 0, 3).Weekday()]
+	weekly, _, _ := s.AddSchedule(ctx, a, ScheduleInput{Title: "Dependency updates", Cadence: CadenceWeekly, Weekday: day})
+	if _, err := s.RemoveSchedule(ctx, a, daily.ID); err != nil {
+		t.Fatal(err)
+	}
+	if weekly.NextDueAt <= now.UnixMilli() {
+		t.Fatalf("weekly next due %d is not in the future", weekly.NextDueAt)
+	}
+	advanceTo(weekly.NextDueAt - 1000)
+	if got := sweep(); len(got) != 0 {
+		t.Errorf("before its day: events %v (the removed daily must not run either)", got)
+	}
+	advanceTo(weekly.NextDueAt + 1000)
+	if got := sweep(); !equal(got, []string{"backlog.added"}) {
+		t.Errorf("on its day: events %v", got)
+	}
+
+	// The removed daily's items stay.
+	all, _, _ := s.ListBacklog(ctx, a.WorkspaceID, "all")
+	fromDaily := 0
+	for _, it := range all {
+		if it.ScheduleID != nil && *it.ScheduleID == daily.ID {
+			fromDaily++
+		}
+	}
+	if fromDaily != 2 {
+		t.Errorf("%d items from the removed schedule, want 2 (kept)", fromDaily)
 	}
 }

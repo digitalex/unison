@@ -59,7 +59,8 @@ func New(st *store.Store, web fs.FS) *Server {
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
 
 // RunLeaseSweeper releases expired backlog leases every interval until ctx
-// is done, so clients watching the stream see items return to the queue.
+// is done, so clients watching the stream see items return to the queue. It
+// also turns due recurring schedules into backlog items (#112).
 // (Expiry is also applied lazily on every backlog read and write.)
 func (s *Server) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 	t := time.NewTicker(interval)
@@ -72,6 +73,12 @@ func (s *Server) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 			evs, err := s.store.ExpireLeases(ctx)
 			if err != nil {
 				log.Printf("lease sweeper: %v", err)
+			}
+			s.published(evs)
+			// Due recurring tasks become backlog items on the same tick (#112).
+			evs, err = s.store.MaterializeSchedules(ctx)
+			if err != nil {
+				log.Printf("schedule sweeper: %v", err)
 			}
 			s.published(evs)
 		}

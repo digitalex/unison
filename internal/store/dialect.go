@@ -300,6 +300,10 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	{"participants", "last_active_at", "INTEGER", "BIGINT"},
 	{"participants", "revoke_reason", "TEXT", "TEXT"},
 	{"oauth_states", "app_challenge", "TEXT", "TEXT"},
+	// items.schedule_id (#112) is the schedule that created an item (a
+	// recurring run); NULL for others. No foreign key: removing a schedule
+	// leaves its items alone.
+	{"items", "schedule_id", "INTEGER", "BIGINT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
@@ -314,6 +318,7 @@ func (d db) addParticipantColumns(t *sql.Tx) error {
 		`CREATE INDEX IF NOT EXISTS participants_user ON participants(user_id)`,
 		`CREATE INDEX IF NOT EXISTS participants_sponsor ON participants(sponsor_user_id)`,
 		`CREATE INDEX IF NOT EXISTS messages_item ON messages(item_id)`,
+		`CREATE INDEX IF NOT EXISTS items_schedule ON items(schedule_id)`,
 	} {
 		if _, err := t.Exec(q); err != nil {
 			return err
