@@ -3,16 +3,18 @@ import { ChevronDown, ChevronRight, GitPullRequest, GripVertical, MessageSquare,
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { meta, name, prLabel } from "./backlogFormat.js";
 import { OPEN_ITEM } from "./nav.js";
+import RecurringSection, { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The prioritized backlog, grouped into In progress (assigned), Open and Done.
+// The prioritized backlog, grouped into In progress (assigned), Open, the
+// recurring tasks that add items to it (#113), and Done.
 // Queued items (open + assigned) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
-export default function Backlog({ items, participants, me, workspace, call, onError, head, error }) {
+export default function Backlog({ items, schedules, participants, me, workspace, call, onError, head, error }) {
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
@@ -82,6 +84,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
         {rows("open", groups.open)}
 
+        <RecurringSection schedules={schedules} run={run} />
+
         <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
           {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
           <span className="status done" />
@@ -142,6 +146,7 @@ function BacklogRow({ item, list, highlight, participants, me, repos, run, reord
         </span>
         <span className={`status ${item.status}`} title={item.status} />
         <span className="item-id">#{item.id}</span>
+        <RecurringMarker item={item} />
         <button type="button" className="row-title" aria-haspopup="dialog">
           {item.title}
         </button>

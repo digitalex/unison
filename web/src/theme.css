@@ -1594,6 +1594,69 @@ button.group-head {
   color: var(--text-muted);
 }
 
+/* Recurring tasks (Recurring.jsx): the backlog's Recurring group, and the
+   marker on items a schedule added. */
+.group-head .group-icon {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.recurring-marker {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  color: var(--accent);
+}
+
+.recurring-marker .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+/* Schedule rows have no hover actions: keep their next run showing. */
+.item.recurring .row:hover .meta,
+.item.recurring .row:focus-within .meta {
+  display: inline;
+}
+
+.add-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: calc(100% - 12px);
+  height: 32px;
+  margin: 1px 6px;
+  padding: 0 10px 0 calc(10px + 18px + var(--space-s));
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text-muted);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.add-row:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.add-row .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.schedule-when {
+  display: flex;
+  gap: var(--space-l);
+}
+
+/* Compact selects, like the item dialog's "Assign to…". */
+.schedule-when .select {
+  width: fit-content;
+}
+
 /* ---- Chat (Chat.jsx): a screen, aligned with the backlog ---- */
 
 /* Chat: the main log and composer, and an open thread's panel beside them
