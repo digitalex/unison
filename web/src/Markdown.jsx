@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { itemLink } from "./nav.js";
 
 // A small Markdown renderer for chat. It builds React elements only — no
 // HTML strings, no dangerouslySetInnerHTML — so raw HTML in a message stays
@@ -7,8 +8,8 @@ import { Fragment } from "react";
 // Blocks: paragraphs (single newlines are line breaks, as in chat), fenced
 // code, > quotes, - * + and 1. lists (one nested level), # to ### headings
 // (rendered small), and --- rules. Inline: **bold** __bold__ *italic*
-// _italic_ ~~strike~~ `code` [text](url), bare URLs, @mentions and backslash
-// escapes. Unclosed markers render literally. Every scan is linear-time
+// _italic_ ~~strike~~ `code` [text](url), bare URLs, @mentions, #N backlog
+// item references (links that open the item, #98) and backslash escapes. Unclosed markers render literally. Every scan is linear-time
 // (closing-marker searches are memoized), and nesting depth is capped.
 
 const MAX_DEPTH = 4;
@@ -209,6 +210,12 @@ function trimUrl(url) {
   return trimmed;
 }
 
+// refersToPR says whether the text before a "#N" makes it a pull request
+// ("PR #82", "pull request #82"), not a backlog item.
+export function refersToPR(before) {
+  return /\b(?:PRs?|pull(?: request)?s?)\s*$/i.test(before);
+}
+
 // safeHref returns an allowed href for url, or null.
 export function safeHref(url) {
   const u = url.trim();
@@ -351,6 +358,18 @@ function renderInline(s, depth = 0) {
       if (href) {
         push(link(href, url, i));
         i += url.length;
+        continue;
+      }
+    }
+    if (c === "#" && depth < MAX_DEPTH && !isWord(s[i - 1]) && s[i - 1] !== "&" && s[i - 1] !== "/") {
+      const m = s.slice(i + 1, i + 11).match(/^\d{1,9}(?![\p{L}\p{N}_])/u);
+      if (m && !refersToPR(s.slice(Math.max(0, i - 16), i))) {
+        push(
+          <a key={i} className="md-item" title={`Open backlog item #${m[0]}`} {...itemLink(Number(m[0]))}>
+            #{m[0]}
+          </a>,
+        );
+        i += 1 + m[0].length;
         continue;
       }
     }
