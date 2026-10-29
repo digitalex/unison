@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { DevicePage, useAccount } from "./Account.jsx";
 import { ApiError, api } from "./api.js";
 import { JoinPage } from "./Gate.jsx";
+import { LEGAL_PATHS } from "./Legal.jsx";
 import Landing, { SiteHeader } from "./Landing.jsx";
 import Profile from "./Profile.jsx";
 import Workspace from "./Workspace.jsx";
@@ -13,7 +14,8 @@ import { Input } from "./ui/Input.jsx";
 // in); "/w/:id" is a workspace's backlog, "/w/:id/chat" its chat,
 // "/w/:id/settings" its settings,
 // "/w/:id/join?invite=…" where an invite link lands; "/me" is your profile;
-// "/auth/device" approves a `unison login`.
+// "/auth/device" approves a `unison login`; "/privacy-policy" and
+// "/terms-of-service" are the legal pages.
 export default function App() {
   const account = useAccount();
   const [path, setPath] = useState(window.location.pathname);
@@ -33,6 +35,8 @@ export default function App() {
   if (match) return <Workspace key={match[1]} id={match[1]} view={match[2] || "backlog"} navigate={navigate} account={account} />;
   if (path === "/auth/device") return <DevicePage account={account} navigate={navigate} />;
   if (path === "/me") return <Profile account={account} navigate={navigate} />;
+  const Legal = LEGAL_PATHS[path];
+  if (Legal) return <Legal account={account} />;
   return <Home navigate={navigate} account={account} />;
 }
 

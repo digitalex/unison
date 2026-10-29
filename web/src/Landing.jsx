@@ -1,5 +1,6 @@
 import { Bot, Github, LayoutGrid, ListChecks, LogIn, Webhook } from "lucide-react";
 import { AccountMenu } from "./Account.jsx";
+import { LegalLinks } from "./Legal.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
 const REPO_URL = "https://github.com/digitalex/unison";
@@ -131,6 +132,7 @@ export default function Landing({ account, children }) {
           <Github aria-hidden="true" />
           Source on GitHub
         </a>
+        <LegalLinks />
       </footer>
     </div>
   );
