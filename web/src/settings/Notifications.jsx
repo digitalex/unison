@@ -2,6 +2,34 @@ import { useState } from "react";
 import Button from "../ui/Button.jsx";
 import { notifySupported, useNotifyPref } from "../notify.js";
 
+// What to check when the browser shows a notification that never reaches
+// the screen: the operating system decides last.
+const OS_HINT =
+  "If you didn't see it, your system is hiding your browser's notifications: on a Mac, open System Settings → Notifications → (your browser) and allow them, and turn off Focus / Do Not Disturb. On Windows, check Settings → System → Notifications.";
+
+// showTestNotification shows a test notification and resolves to what
+// happened, as the browser reports it: shown, failed, or no answer. Each test
+// gets its own tag, so a second click alerts again instead of silently
+// replacing the first.
+function showTestNotification() {
+  return new Promise((resolve) => {
+    const n = new Notification("Unison test notification", {
+      body: "Desktop notifications are working!",
+      tag: `test-notification-${Date.now()}`,
+      icon: "/apple-touch-icon.png",
+    });
+    const timer = setTimeout(() => resolve(`Sent, but the browser hasn't confirmed it was shown. ${OS_HINT}`), 4000);
+    n.onshow = () => {
+      clearTimeout(timer);
+      resolve(`The browser shows it now. ${OS_HINT}`);
+    };
+    n.onerror = () => {
+      clearTimeout(timer);
+      resolve("The browser couldn't show it. Check that notifications are allowed for this site in the browser's site settings.");
+    };
+  });
+}
+
 // Settings → Notifications: desktop notifications for mentions, actions, and joins.
 export default function Notifications() {
   const [on, turnOn, turnOff] = useNotifyPref();
@@ -19,12 +47,8 @@ export default function Notifications() {
           return;
         }
       }
-      const n = new Notification("Unison test notification", {
-        body: "Desktop notifications are working!",
-        tag: "test-notification",
-        icon: "/apple-touch-icon.png",
-      });
-      setTestStatus("Test notification sent!");
+      setTestStatus("Sending…");
+      setTestStatus(await showTestNotification());
     } catch (err) {
       setTestStatus(`Failed to show notification: ${err.message}`);
     }
