@@ -31,12 +31,13 @@ type Server struct {
 	ws       *http.ServeMux
 	wsRoutes []string // their patterns (the route-walk test checks each)
 
-	// notify is closed and replaced whenever new events are recorded; it
-	// wakes long-polls (`unison wait`) and SSE streams. The broadcast is
-	// in-process, so every client must reach the same server: deployments run
-	// a single instance (Cloud Run max-instances=1), even with Postgres.
+	// notify holds a channel per workspace with waiters; it is closed (and
+	// dropped) when that workspace records events, waking its long-polls
+	// (`unison wait`) and SSE streams. The broadcast is in-process, so every
+	// client must reach the same server: deployments run a single instance
+	// (Cloud Run max-instances=1), even with Postgres.
 	mu     sync.Mutex
-	notify chan struct{}
+	notify map[string]chan struct{}
 
 	authCfg AuthConfig
 
@@ -48,7 +49,7 @@ type Server struct {
 // New returns a Server backed by st. web holds the built UI (index.html at
 // its root) and may be nil.
 func New(st *store.Store, web fs.FS) *Server {
-	s := &Server{store: st, web: web, mux: http.NewServeMux(), ws: http.NewServeMux(), notify: make(chan struct{})}
+	s := &Server{store: st, web: web, mux: http.NewServeMux(), ws: http.NewServeMux(), notify: map[string]chan struct{}{}}
 	s.SetAuth(AuthConfig{})
 	s.routes()
 	return s
@@ -158,22 +159,38 @@ func (s *Server) handleWS(pattern string, h http.HandlerFunc) {
 
 // ---- Plumbing ----
 
-// published wakes everyone waiting for events.
+// published wakes everyone waiting for events in the events' workspaces.
 func (s *Server) published(evs []store.Event) {
 	if len(evs) == 0 {
 		return
 	}
-	s.mu.Lock()
-	close(s.notify)
-	s.notify = make(chan struct{})
-	s.mu.Unlock()
+	for _, e := range evs {
+		s.wake(e.WorkspaceID)
+	}
 	s.pushEvents(evs)
 }
 
-func (s *Server) waitChan() <-chan struct{} {
+// wake wakes everyone waiting for events in workspace wsID.
+func (s *Server) wake(wsID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.notify
+	if ch, ok := s.notify[wsID]; ok {
+		close(ch)
+		delete(s.notify, wsID)
+	}
+}
+
+// waitChan returns a channel that is closed when workspace wsID next
+// records events.
+func (s *Server) waitChan(wsID string) <-chan struct{} {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ch, ok := s.notify[wsID]
+	if !ok {
+		ch = make(chan struct{})
+		s.notify[wsID] = ch
+	}
+	return ch
 }
 
 type ctxKey struct{}
@@ -342,10 +359,7 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
-	s.mu.Lock()
-	close(s.notify)
-	s.notify = make(chan struct{})
-	s.mu.Unlock()
+	s.wake(wsID)
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": wsID})
 }
 
@@ -731,7 +745,7 @@ func (s *Server) events(w http.ResponseWriter, r *http.Request) {
 	deadline := time.NewTimer(time.Duration(min(max(wait, 0), 300)) * time.Second)
 	defer deadline.Stop()
 	for {
-		ch := s.waitChan()
+		ch := s.waitChan(wsID)
 		evs, err := s.store.EventsAfter(ctx, wsID, after, 0)
 		if err != nil {
 			storeError(w, err)
@@ -791,7 +805,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 	heartbeat := time.NewTicker(20 * time.Second)
 	defer heartbeat.Stop()
 	for {
-		ch := s.waitChan()
+		ch := s.waitChan(wsID)
 		evs, err := s.store.EventsAfter(ctx, wsID, after, 0)
 		if err != nil {
 			return

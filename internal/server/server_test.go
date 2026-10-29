@@ -156,3 +156,26 @@ func getAs(t *testing.T, url, token string) (int, string) {
 	body, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, string(body)
 }
+
+// Events wake only the waiters of their own workspace (#107).
+func TestPublishedWakesOnlyItsWorkspace(t *testing.T) {
+	s := &Server{notify: map[string]chan struct{}{}}
+	a, b := s.waitChan("ws_a"), s.waitChan("ws_b")
+	if s.waitChan("ws_a") != a {
+		t.Fatal("waiters of one workspace should share a channel")
+	}
+	s.published([]store.Event{{WorkspaceID: "ws_b", Type: "message.created"}})
+	select {
+	case <-a:
+		t.Error("an event in ws_b woke ws_a")
+	default:
+	}
+	select {
+	case <-b:
+	default:
+		t.Error("an event in ws_b didn't wake ws_b")
+	}
+	if len(s.notify) != 1 {
+		t.Errorf("notify = %v, want only ws_a's channel left", s.notify)
+	}
+}
