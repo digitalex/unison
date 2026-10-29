@@ -766,7 +766,10 @@ html.dialog-open {
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  overflow: hidden;
+  /* Not overflow: hidden. The account menu opens out of the sidebar foot,
+     wider than the sidebar, and must not be clipped (#91). The links scroll
+     in .sidebar-content instead. */
+  overflow: visible;
   padding: var(--space-s) var(--space-xs) var(--space-s) var(--space-s);
 }
 
