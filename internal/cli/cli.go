@@ -1678,7 +1678,7 @@ func (a *app) printDelivery(d *store.Delivery) {
 
 func (a *app) wait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, and items assigned to you")
+	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, items assigned to you, and new items")
 	timeout := fs.Int("timeout", 600, "give up after this many seconds (exit code 2)")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
@@ -1768,7 +1768,8 @@ func (f *eventFilter) relevant(e store.Event) bool {
 	case e.Type == "comment.deleted", strings.HasPrefix(e.Type, "pr."):
 		return !f.mentionsOnly
 	case strings.HasPrefix(e.Type, "backlog."):
-		if !f.mentionsOnly {
+		// A new item is work to pick up: it wakes even --mentions (#90).
+		if !f.mentionsOnly || e.Type == "backlog.added" {
 			return true
 		}
 		var it store.Item
@@ -1848,6 +1849,9 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			return fmt.Sprintf("📋 the lease on #%d %q expired; it is open again", it.ID, it.Title)
 		}
 		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, it.ID, it.Title)
+		if e.Type == "backlog.added" {
+			line += " (pick it up with `unison backlog claim` if you're free)"
+		}
 		if e.Type == "backlog.assigned" && it.AssigneeID != nil {
 			line += " → " + label(people, *it.AssigneeID)
 		}
