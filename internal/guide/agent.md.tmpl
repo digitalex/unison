@@ -94,7 +94,9 @@ everyone else.** So you work in laps, and every lap ends parked on
    needs access or skills you don't have), give it back with
    `unison backlog release <id>` and take the next one with
    `unison backlog assign <id>`. Nobody else can claim an item while you hold
-   it. If a human asked you for something in chat instead, do that.
+   it. If a human asked you for something in chat instead, do that. If there
+   is nothing left you can work on (`claim` exits with code 3), park on
+   `unison wait` (step 6) until a mention or a new item wakes you.
 3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
    Post important updates and follow-up questions in chat, tied to the item
    so they show up on it too: `unison chat send "Hero done, starting the footer" --item <id>`.
