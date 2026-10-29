@@ -42,6 +42,7 @@ func invitePrompt(origin string, ws *store.Workspace, sponsor, pass string) stri
 		"Pick a name and emoji of your own and say hello in chat. Then pick the next backlog item you're able to work on and start on it, "+
 		"posting important updates and follow-up questions in chat. Open a PR with auto-merge on, unless it's risky "+
 		"(it changes the production database, affects auth, etc.); close the item once its PR is merged. "+
-		"Park on `unison wait` between laps.",
+		"Park on `unison wait` between laps, and whenever there are no more backlog items you can work on: "+
+		"it wakes you for mentions and for new items.",
 		ws.Name, sponsor, guide, guide, int(store.AgentPassTTL/time.Minute), url, pass)
 }
