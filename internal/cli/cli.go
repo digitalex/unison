@@ -151,6 +151,14 @@ Backlog (#1 is the highest priority):
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
+Recurring tasks (a run comes due at 00:00 server time and is added to the top
+of the backlog):
+  schedule [list]                    the workspace's recurring tasks
+  schedule add <title> (--daily | --weekly DAY) [--body B]
+                                     DAY is mon, tue, … sun
+  schedule edit <id> [--title T] [--body B] [--daily | --weekly DAY]
+  schedule remove <id>               (items it already added stay)
+
 Webhooks (e.g. from GitHub; each delivery wakes agents with the webhook's
 plain-text instructions):
   webhook [list]
@@ -279,6 +287,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.backlog(rest)
 	case "webhook", "webhooks":
 		return a.webhook(rest)
+	case "schedule", "schedules":
+		return a.schedule(rest)
 	case "wait":
 		return a.wait(rest)
 	}
@@ -615,6 +625,81 @@ func (a *app) workspaceRepo(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: workspace repo add <url> | edit <id> --url U | remove <id>", errUsage)
+}
+
+func scheduleLine(sc store.Schedule) string {
+	cadence := "daily"
+	if sc.Cadence == store.CadenceWeekly {
+		cadence = "weekly on " + sc.Weekday
+	}
+	return fmt.Sprintf("%-3d %s (%s; next %s)", sc.ID, sc.Title, cadence, time.UnixMilli(sc.NextDueAt).Format("Mon Jan 2 15:04"))
+}
+
+func (a *app) schedule(args []string) error {
+	sub := "list"
+	if len(args) > 0 {
+		sub, args = args[0], args[1:]
+	}
+	fs := flag.NewFlagSet("schedule "+sub, flag.ContinueOnError)
+	patch := map[string]any{}
+	fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
+	fs.Func("body", "the item body", func(v string) error { patch["body"] = v; return nil })
+	fs.BoolFunc("daily", "due every day", func(string) error { patch["cadence"] = store.CadenceDaily; return nil })
+	fs.Func("weekly", "due weekly on DAY (mon … sun)", func(v string) error {
+		patch["cadence"], patch["weekday"] = store.CadenceWeekly, v
+		return nil
+	})
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	var sc store.Schedule
+	switch {
+	case sub == "list" && len(pos) == 0:
+		var list []store.Schedule
+		if ok, err := a.call("GET", "/schedules", nil, &list, false); !ok {
+			return err
+		}
+		if len(list) == 0 {
+			a.printf("No recurring tasks yet. Add one: unison schedule add <title> --daily | --weekly DAY\n")
+		}
+		for _, sc := range list {
+			a.printf("%s\n", scheduleLine(sc))
+		}
+		return nil
+	case sub == "add" && len(pos) == 1:
+		if patch["cadence"] == nil {
+			return fmt.Errorf("%w: schedule add <title> needs --daily or --weekly DAY", errUsage)
+		}
+		patch["title"] = pos[0]
+		if ok, err := a.call("POST", "/schedules", patch, &sc, true); !ok {
+			return err
+		}
+		a.printf("Added recurring task %s\n", scheduleLine(sc))
+		return nil
+	case sub == "edit" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		if ok, err := a.call("PATCH", fmt.Sprintf("/schedules/%d", id), patch, &sc, true); !ok {
+			return err
+		}
+		a.printf("Updated recurring task %s\n", scheduleLine(sc))
+		return nil
+	case (sub == "remove" || sub == "rm") && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/schedules/%d", id), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Removed recurring task %d.\n", id)
+		return nil
+	}
+	return fmt.Errorf("%w: schedule [list] | add <title> (--daily | --weekly DAY) [--body B] | edit <id> … | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
@@ -1780,7 +1865,7 @@ func (f *eventFilter) relevant(e store.Event) bool {
 		var d store.DeliveryEvent
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
-		strings.HasPrefix(e.Type, "webhook."):
+		strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
 		return !f.mentionsOnly
 	}
 	return false
@@ -1897,6 +1982,10 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var r store.Repo
 		json.Unmarshal(e.Data, &r)
 		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
+	case strings.HasPrefix(e.Type, "schedule."):
+		var sc store.Schedule
+		json.Unmarshal(e.Data, &sc)
+		return fmt.Sprintf("🔁 %s %s recurring task %s", who, strings.TrimPrefix(e.Type, "schedule."), scheduleLine(sc))
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
 }

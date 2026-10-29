@@ -258,6 +258,21 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison-web |") {
 		t.Errorf("agent help lacks the repositories:\n%s", out)
 	}
+	// Recurring tasks (#111).
+	if out := e.ok(agent, "schedule", "add", "Dependency updates", "--weekly", "fri", "--body", "Bump and test"); !strings.Contains(out, "Dependency updates (weekly on fri; next Fri") {
+		t.Errorf("schedule add = %q", out)
+	}
+	if _, errOut, code := e.run(agent, "schedule", "add", "No cadence"); code == 0 || !strings.Contains(errOut, "--daily or --weekly") {
+		t.Errorf("schedule add without a cadence: exit %d, stderr %q", code, errOut)
+	}
+	e.ok(human, "schedule", "edit", "1", "--daily")
+	if out := e.ok(agent, "schedule"); !strings.Contains(out, "1   Dependency updates (daily; next ") {
+		t.Errorf("schedule list = %q", out)
+	}
+	e.ok(agent, "schedule", "remove", "1")
+	if out := e.ok(agent, "schedule", "list"); !strings.Contains(out, "No recurring tasks yet") {
+		t.Errorf("schedule list after remove = %q", out)
+	}
 	e.ok(human, "workspace", "repo", "remove", "1")
 	var after store.Workspace
 	json.Unmarshal([]byte(e.ok(human, "workspace", "--json")), &after)

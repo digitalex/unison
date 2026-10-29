@@ -103,6 +103,10 @@ func (s *Server) routes() {
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
 	h("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
+	h("GET "+ws+"/schedules", s.listSchedules)
+	h("POST "+ws+"/schedules", s.auth(s.addSchedule))
+	h("PATCH "+ws+"/schedules/{id}", s.auth(s.editSchedule))
+	h("DELETE "+ws+"/schedules/{id}", s.auth(s.removeSchedule))
 	h("GET "+ws+"/me", s.auth(s.me))
 	h("PATCH "+ws+"/me", s.auth(s.updateMe))
 	h("POST "+ws+"/passes", s.requireUser(s.mintPass))
@@ -395,6 +399,41 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	evs, err := s.store.RemoveRepo(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
+}
+
+// ---- Recurring tasks ----
+
+func (s *Server) listSchedules(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListSchedules(r.Context(), r.PathValue("ws"))
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) addSchedule(w http.ResponseWriter, r *http.Request) {
+	var req store.ScheduleInput
+	if !decode(w, r, &req) {
+		return
+	}
+	sc, evs, err := s.store.AddSchedule(r.Context(), actor(r), req)
+	s.respond(w, http.StatusCreated, sc, evs, err)
+}
+
+func (s *Server) editSchedule(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var p store.SchedulePatch
+	if !ok || !decode(w, r, &p) {
+		return
+	}
+	sc, evs, err := s.store.EditSchedule(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, sc, evs, err)
+}
+
+func (s *Server) removeSchedule(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	evs, err := s.store.RemoveSchedule(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
 }
 
