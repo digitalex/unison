@@ -3073,6 +3073,32 @@ html.reordering * {
   max-width: 640px;
 }
 
+/* Legal pages (/privacy-policy, /terms-of-service): readable long-form text. */
+.legal {
+  line-height: var(--line-m);
+}
+
+.legal h2 {
+  margin: var(--space-l) 0 0;
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  font-weight: var(--weight-ui-heavy);
+}
+
+.legal p,
+.legal ul {
+  margin: 0;
+  color: var(--text-secondary);
+}
+
+.legal ul {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding-left: var(--space-l);
+  list-style: disc;
+}
+
 .site-foot {
   display: flex;
   flex-wrap: wrap;
