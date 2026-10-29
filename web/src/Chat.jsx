@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -195,6 +195,8 @@ function activityText(event, participants) {
   const name = (p) => (p ? `${p.emoji ? `${p.emoji} ` : ""}${p.name}` : "Someone");
   switch (event.type) {
     case "backlog.added":
+      // A recurring task's run is added by the system (#112).
+      if (isRecurringRun(event)) return ["Recurring task", "added", d];
       return [name(actor), "added", d];
     case "backlog.assigned": {
       if (d.assignee_id === event.actor_id) return [name(actor), "started working on", d];
@@ -215,11 +217,15 @@ function activityText(event, participants) {
   }
 }
 
+function isRecurringRun(event) {
+  return event.type === "backlog.added" && !event.actor_id && Boolean(event.data?.schedule_id);
+}
+
 // ActivityLine is one activity event in the main log: a small pill on a
 // divider, unlike a message (no author block, reactions or thread).
 function ActivityLine({ event, participants }) {
   const [who, rest, item] = activityText(event, participants);
-  const Icon = ACTIVITY_ICONS[event.type] || ListChecks;
+  const Icon = isRecurringRun(event) ? Repeat : ACTIVITY_ICONS[event.type] || ListChecks;
   const at = new Date(event.created_at);
   return (
     <div className={`activity activity-${event.type.replace(".", "-")}`} role="note">
