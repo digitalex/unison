@@ -28,6 +28,9 @@ function isDormant(g, now) {
 // store.ActivityTypes.
 const ACTIVITY_TYPES = ["backlog.added", "backlog.assigned", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"];
 
+// Item events after which other items' positions may have changed.
+const RENUMBERS = ["backlog.added", "backlog.moved", "backlog.closed", "backlog.reopened", "backlog.deleted"];
+
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
   // Message events carry the message: it is applied to the list as is
@@ -36,12 +39,15 @@ function collectionFor({ type, data }) {
   // act (or is marked done) changes counts of open actions (on /me).
   if (type.startsWith("message.")) {
     if (!data?.id) return ["messages", "me"];
-    const reloads = data.item_id ? ["backlog"] : [];
-    if (type === "message.done" || type === "message.undone" || data.action_required) reloads.push("me");
-    return reloads;
+    return type === "message.done" || type === "message.undone" || data.action_required ? ["me"] : [];
   }
+  // Item events carry the item and are applied in place too (#105). Those
+  // that renumber the queue (adding, moving, closing, reopening, deleting)
+  // also reload the open and assigned items: small, unlike every done item.
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) {
-    return ACTIVITY_TYPES.includes(type) ? ["backlog", "participants", "activity"] : ["backlog", "participants"];
+    const reloads = RENUMBERS.includes(type) || !(data?.id || data?.item?.id) ? ["queued"] : [];
+    if (ACTIVITY_TYPES.includes(type)) reloads.push("activity");
+    return reloads;
   }
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
@@ -60,6 +66,18 @@ function withMessage(list, m) {
   if (list.some((x) => x.id === m.id)) return list.map((x) => (x.id === m.id ? m : x));
   const out = [...list, m];
   return list.length && list[list.length - 1].id > m.id ? out.sort((a, b) => a.id - b.id) : out;
+}
+
+// withItem returns the backlog with item it in it (replaced by id, or added).
+function withItem(list, it) {
+  return list.some((x) => x.id === it.id) ? list.map((x) => (x.id === it.id ? it : x)) : [...list, it];
+}
+
+// withQueued returns the backlog with its open and assigned items replaced by
+// queued (fresh from the server, in priority order), keeping the done ones.
+function withQueued(list, queued) {
+  const ids = new Set(queued.map((it) => it.id));
+  return [...queued, ...list.filter((it) => it.status === "done" && !ids.has(it.id))];
 }
 
 // The server's refusals that mean "you can't see this workspace" (as
@@ -105,7 +123,10 @@ export default function Workspace({ id, view, navigate, account }) {
     participants: () => call("GET", "/participants").then(setParticipants),
     messages: () => call("GET", "/messages?limit=500").then(setMessages),
     activity: () => call("GET", "/activity").then(setActivity),
+    // Everything, done items included: on load and after a reconnect only.
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
+    // Open and assigned items, after events that renumber them (#105).
+    queued: () => call("GET", "/backlog").then((queued) => setBacklog((list) => withQueued(list, queued))),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
@@ -119,6 +140,8 @@ export default function Workspace({ id, view, navigate, account }) {
     setGate({ code: e.code, message: e.message });
   };
   const reload = (name) => loaders[name]().catch(refused);
+  // Everything ("queued" is part of "backlog").
+  const loadAll = () => Object.keys(loaders).filter((name) => name !== "queued").forEach(reload);
   const onJoined = () => {
     setGate(null);
     setJoins((n) => n + 1);
@@ -128,7 +151,7 @@ export default function Workspace({ id, view, navigate, account }) {
   useEffect(() => {
     if (!account.ready) return;
     setGate(null);
-    Object.keys(loaders).forEach(reload);
+    loadAll();
   }, [id, token, account.ready, joins]);
 
   // Live updates: message events are applied as they come (#103); other
@@ -137,9 +160,19 @@ export default function Workspace({ id, view, navigate, account }) {
   // stream open also keeps us present in the roster.
   const messagesNow = useRef(messages);
   messagesNow.current = messages;
+  // Item events carry the item (comment events too, as data.item).
+  const applyItemEvent = ({ type, data }) => {
+    if (type === "backlog.deleted" && data?.id) return setBacklog((list) => list.filter((it) => it.id !== data.id));
+    const it = type.startsWith("comment.") ? data?.item : data;
+    if ((type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) && it?.id) setBacklog((list) => withItem(list, it));
+  };
   const applyMessageEvent = ({ type, data }) => {
     if (!type.startsWith("message.") || !data?.id) return;
     setMessages((list) => withMessage(list, data));
+    // A message about an item changes that item's message count.
+    if (type === "message.created" && data.item_id) {
+      call("GET", `/backlog/${data.item_id}`).then((it) => setBacklog((list) => withItem(list, it)), refused);
+    }
     // A reply can mark its thread's first message done, which has no event
     // of its own: refetch just that message when it asks people to act.
     const parent = type === "message.created" && data.parent_id && messagesNow.current.find((m) => m.id === data.parent_id);
@@ -154,7 +187,7 @@ export default function Workspace({ id, view, navigate, account }) {
     let opened = false;
     src.onopen = () => {
       setLive(true);
-      if (opened) Object.keys(loaders).forEach(reload);
+      if (opened) loadAll();
       opened = true;
     };
     src.onerror = () => setLive(false);
@@ -162,6 +195,7 @@ export default function Workspace({ id, view, navigate, account }) {
       const event = JSON.parse(msg.data);
       notify(event);
       applyMessageEvent(event);
+      applyItemEvent(event);
       collectionFor(event).forEach(reload);
     };
     const roster = setInterval(() => reload("participants"), 30000);

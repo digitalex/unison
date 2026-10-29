@@ -24,7 +24,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
   };
   const queued = items.filter((it) => it.status !== "done");
   const groups = { assigned: queued.filter((it) => it.status === "assigned"), open: queued.filter((it) => it.status === "open") };
-  const done = items.filter((it) => it.status === "done");
+  // Most recently closed first (items closed live are added at the end).
+  const done = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
   const reorder = useReorder(groups, moveTo);
   const openedItem = useOpenItem(openId, items, closeItem, setNotice);
   useDismiss(notice, setNotice);
