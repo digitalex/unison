@@ -2845,6 +2845,12 @@ html.reordering * {
 }
 
 /* ---- Invite: a person (link) or an agent (pass) ---- */
+@media (min-width: 641px) {
+  .dialog.invite-dialog {
+    width: min(480px, calc(100vw - 2 * var(--space-l)));
+  }
+}
+
 .seg.invite-kind {
   display: inline-flex;
   align-self: flex-start;
