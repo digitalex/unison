@@ -50,7 +50,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
 
   return (
     <section className="screen" aria-label="Backlog">
-      <ScreenHead title="Backlog" note="top is most important">
+      <ScreenHead title="Backlog">
         {head}
         <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog">
           <Plus aria-hidden="true" />
