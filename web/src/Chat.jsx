@@ -216,9 +216,6 @@ export default function Chat({ messages, updateMessages, newAfter, mention, onMe
               Needs action
             </button>
           )}
-          <Button variant="primary" type="submit">
-            Send
-          </Button>
         </div>
       </form>
     </section>

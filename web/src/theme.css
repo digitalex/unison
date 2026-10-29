@@ -3560,6 +3560,11 @@ html.reordering * {
     justify-content: flex-end;
   }
 
+  /* Only the hint, which phones hide: no empty row under the field. */
+  .composer-foot:not(:has(.chip)) {
+    display: none;
+  }
+
   .tabbar {
     display: grid;
     grid-auto-columns: 1fr;
