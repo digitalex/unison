@@ -97,6 +97,8 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
       onError(err.message);
     }
   };
+  const body = useRef(null);
+  const [threadWidth, setThreadWidth] = useStoredWidth();
   const messageProps = (m, root) => ({
     message: m,
     onDone: (done) => setDone(m, done),
@@ -115,7 +117,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
     <section className={thread ? "screen chat chat-thread-open" : "screen chat"} aria-label="Chat">
       <ScreenHead title="Chat">{head}</ScreenHead>
       {error}
-      <div className="chat-body">
+      <div className="chat-body" ref={body} style={threadWidth ? { "--thread-width": `${threadWidth}px` } : undefined}>
         <div className="chat-main">
           <div className="chat-log">
             {roots.length === 0 && <p className="chat-empty">No messages yet. Say hello.</p>}
@@ -141,6 +143,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
           </div>
           <Composer {...composerProps} mention={mention} onMentioned={onMentioned} placeholder="Message the workspace…  @Name to mention" />
         </div>
+        {thread && <ThreadResizer body={body} width={threadWidth} onWidth={setThreadWidth} />}
         {thread && (
           <aside className="thread-panel" aria-label={`Thread #${thread.id}`}>
             <header className="thread-head">
@@ -570,3 +573,79 @@ function Reactions({ reactions, participants, me, onReact }) {
   );
 }
 
+
+// The thread panel's width, as dragged (#115): per browser, so it survives
+// reloads. null means the default width.
+const THREAD_WIDTH_KEY = "unison.threadWidth";
+const THREAD_MIN = 280; // px; the chat keeps at least CHAT_MIN
+const CHAT_MIN = 320;
+
+function useStoredWidth() {
+  const [width, setWidth] = useState(() => {
+    try {
+      return Number(localStorage.getItem(THREAD_WIDTH_KEY)) || null;
+    } catch {
+      return null;
+    }
+  });
+  const save = (w) => {
+    setWidth(w);
+    try {
+      if (w) localStorage.setItem(THREAD_WIDTH_KEY, String(w));
+      else localStorage.removeItem(THREAD_WIDTH_KEY);
+    } catch {
+      // Storage may be unavailable (private windows); the width just won't stick.
+    }
+  };
+  return [width, save];
+}
+
+// ThreadResizer is the draggable border between the chat and the thread
+// panel: dragging left widens the thread, right narrows it. Arrow keys move
+// it too; a double-click restores the default width.
+function ThreadResizer({ body, width, onWidth }) {
+  const clamp = (w) => {
+    const total = body.current?.getBoundingClientRect().width || 0;
+    return Math.round(Math.max(THREAD_MIN, Math.min(w, total - CHAT_MIN)));
+  };
+  const current = () => body.current?.querySelector(".thread-panel")?.getBoundingClientRect().width || width || 400;
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    const right = body.current.getBoundingClientRect().right;
+    const move = (ev) => onWidth(clamp(right - ev.clientX));
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      document.documentElement.classList.remove("resizing");
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    document.documentElement.classList.add("resizing");
+  };
+  const onKeyDown = (e) => {
+    const step = e.shiftKey ? 80 : 24;
+    if (e.key === "ArrowLeft") onWidth(clamp(current() + step));
+    else if (e.key === "ArrowRight") onWidth(clamp(current() - step));
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <div
+      className="thread-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize thread"
+      aria-valuenow={width || undefined}
+      title="Drag to resize · double-click to reset"
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onWidth(null)}
+    />
+  );
+}
