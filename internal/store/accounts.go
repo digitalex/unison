@@ -167,6 +167,12 @@ func (s *Store) GetUser(ctx context.Context, id int64) (*User, error) {
 	if err != nil {
 		return nil, err
 	}
+	return s.withIdentities(ctx, &u)
+}
+
+// withIdentities fills in u's identities.
+func (s *Store) withIdentities(ctx context.Context, u *User) (*User, error) {
+	id := u.ID
 	rows, err := s.db.QueryContext(ctx, `SELECT provider, subject, email, email_verified FROM user_identities WHERE user_id = ? ORDER BY id`, id)
 	if err != nil {
 		return nil, err
@@ -180,16 +186,17 @@ func (s *Store) GetUser(ctx context.Context, id int64) (*User, error) {
 		}
 		u.Identities = append(u.Identities, i)
 	}
-	return &u, rows.Err()
+	return u, rows.Err()
 }
 
 // ---- Sessions ----
 
 const sessionCols = `id, user_id, kind, label, created_at, last_seen_at, expires_at`
 
-func scanSession(row interface{ Scan(...any) error }) (*Session, error) {
+// scanSession scans sessionCols, then any extra columns into extra.
+func scanSession(row interface{ Scan(...any) error }, extra ...any) (*Session, error) {
 	var se Session
-	if err := row.Scan(&se.ID, &se.UserID, &se.Kind, &se.Label, &se.CreatedAt, &se.LastSeenAt, &se.ExpiresAt); err != nil {
+	if err := row.Scan(append([]any{&se.ID, &se.UserID, &se.Kind, &se.Label, &se.CreatedAt, &se.LastSeenAt, &se.ExpiresAt}, extra...)...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -241,8 +248,13 @@ func (s *Store) SessionByToken(ctx context.Context, token string) (*Session, *Us
 		return nil, nil, ErrNotFound
 	}
 	now := s.nowMillis()
-	se, err := scanSession(s.db.QueryRowContext(ctx, `SELECT `+sessionCols+` FROM sessions WHERE token_hash = ? AND revoked_at IS NULL AND expires_at > ?`,
-		HashToken(token), now))
+	// The session and its user in one query (every signed-in request does
+	// this, #108); the identities follow.
+	var u User
+	se, err := scanSession(s.db.QueryRowContext(ctx, `SELECT s.id, s.user_id, s.kind, s.label, s.created_at, s.last_seen_at, s.expires_at,
+		u.id, u.display_name, u.avatar_url, u.created_at
+		FROM sessions s JOIN users u ON u.id = s.user_id
+		WHERE s.token_hash = ? AND s.revoked_at IS NULL AND s.expires_at > ?`, HashToken(token), now), &u.ID, &u.DisplayName, &u.AvatarURL, &u.CreatedAt)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -252,11 +264,10 @@ func (s *Store) SessionByToken(ctx context.Context, token string) (*Session, *Us
 			return nil, nil, err
 		}
 	}
-	u, err := s.GetUser(ctx, se.UserID)
-	if err != nil {
+	if _, err := s.withIdentities(ctx, &u); err != nil {
 		return nil, nil, err
 	}
-	return se, u, nil
+	return se, &u, nil
 }
 
 // ListSessions returns a user's live sessions, most recently used first.

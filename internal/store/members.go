@@ -188,6 +188,25 @@ func (s *Store) RemoveMember(ctx context.Context, wsID string, byUserID, userID 
 	})
 }
 
+// MemberParticipant reports whether the user is a member of the workspace
+// and returns their participant there (nil if they haven't joined), which is
+// IsMember and UserParticipant in one query for the usual case: a member
+// with a participant (#108). Only when there is no such participant does it
+// ask IsMember.
+func (s *Store) MemberParticipant(ctx context.Context, wsID string, userID int64) (bool, *Participant, error) {
+	p, err := scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants
+		WHERE workspace_id = ? AND user_id = ? AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id = participants.workspace_id AND m.user_id = participants.user_id)
+		ORDER BY last_seen_at DESC, id DESC LIMIT 1`, wsID, userID))
+	if err == nil {
+		return true, p, nil
+	}
+	if !errors.Is(err, ErrNotFound) {
+		return false, nil, err
+	}
+	member, err := s.IsMember(ctx, wsID, userID)
+	return member, nil, err
+}
+
 // UserParticipant returns the user's most recently active participant in the
 // workspace (the one their account acts as there), or ErrNotFound.
 func (s *Store) UserParticipant(ctx context.Context, wsID string, userID int64) (*Participant, error) {
