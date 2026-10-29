@@ -301,7 +301,14 @@ func addItem(t *tx, log *eventLog, actor *Participant, title, body string, posit
 	if err != nil {
 		return nil, err
 	}
-	return it, log.add(actor.WorkspaceID, "backlog.added", actor.ID, it)
+	// A schedule's run is the system's doing (actor 0, like lease expiry),
+	// though created_by credits the schedule's creator: events by yourself
+	// don't wake you or push to you, and the creator should hear of it too.
+	eventActor := actor.ID
+	if scheduleID != nil {
+		eventActor = 0
+	}
+	return it, log.add(actor.WorkspaceID, "backlog.added", eventActor, it)
 }
 
 // ItemPatch holds optional item field updates.

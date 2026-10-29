@@ -104,6 +104,12 @@ func TestMaterializeSchedules(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		// System events, so they wake and notify the schedule's creator too.
+		for _, ev := range evs {
+			if ev.ActorID != 0 {
+				t.Errorf("%s by actor %d, want 0 (the system)", ev.Type, ev.ActorID)
+			}
+		}
 		return eventTypes(evs)
 	}
 	advanceTo := func(ms int64) { *now = time.UnixMilli(ms) }

@@ -223,6 +223,7 @@ func (s *Store) RemoveSchedule(ctx context.Context, actor *Participant, id int64
 // nothing piles up. Either way the next run moves to the schedule's next
 // boundary after now (not after completion), so a long downtime is one run.
 func (s *Store) MaterializeSchedules(ctx context.Context) ([]Event, error) {
+	loc := s.now().Location() // Like AddSchedule's, for the same midnights.
 	return s.tx(ctx, func(t *tx, log *eventLog) error {
 		rows, err := t.Query(`SELECT `+scheduleCols+` FROM schedules WHERE next_due_at <= ? ORDER BY next_due_at, id`, log.now)
 		if err != nil {
@@ -233,7 +234,7 @@ func (s *Store) MaterializeSchedules(ctx context.Context) ([]Event, error) {
 			return err
 		}
 		for i := range due {
-			if err := runSchedule(t, log, &due[i]); err != nil {
+			if err := runSchedule(t, log, &due[i], loc); err != nil {
 				return fmt.Errorf("schedule %d: %w", due[i].ID, err)
 			}
 		}
@@ -242,8 +243,8 @@ func (s *Store) MaterializeSchedules(ctx context.Context) ([]Event, error) {
 }
 
 // runSchedule makes one due run of sc (see MaterializeSchedules).
-func runSchedule(t *tx, log *eventLog, sc *Schedule) error {
-	next := nextDue(time.UnixMilli(log.now), sc.Cadence, sc.Weekday).UnixMilli()
+func runSchedule(t *tx, log *eventLog, sc *Schedule, loc *time.Location) error {
+	next := nextDue(time.UnixMilli(log.now).In(loc), sc.Cadence, sc.Weekday).UnixMilli()
 	// Advancing only from the due time we read makes overlapping sweeps (or
 	// several server instances) run it once.
 	res, err := t.Exec(`UPDATE schedules SET next_due_at = ? WHERE id = ? AND next_due_at = ?`, next, sc.ID, sc.NextDueAt)
@@ -259,7 +260,7 @@ func runSchedule(t *tx, log *eventLog, sc *Schedule) error {
 	err = t.QueryRow(`SELECT id FROM items WHERE schedule_id = ? AND status != ? ORDER BY id DESC LIMIT 1`, sc.ID, StatusDone).Scan(&open)
 	switch {
 	case err == nil:
-		return missedRun(t, log, creator, open, sc.NextDueAt)
+		return missedRun(t, log, creator, open, time.UnixMilli(sc.NextDueAt).In(loc))
 	case !errors.Is(err, sql.ErrNoRows):
 		return err
 	}
@@ -269,9 +270,9 @@ func runSchedule(t *tx, log *eventLog, sc *Schedule) error {
 
 // missedRun notes on a schedule's still-open item that a run due at dueAt
 // came and went: a comment, so the count of missed runs is in its history.
-func missedRun(t *tx, log *eventLog, creator *Participant, itemID, dueAt int64) error {
+func missedRun(t *tx, log *eventLog, creator *Participant, itemID int64, dueAt time.Time) error {
 	c := &Comment{ItemID: itemID, WorkspaceID: creator.WorkspaceID, AuthorID: creator.ID, CreatedAt: log.now,
-		Body: fmt.Sprintf("🔁 Missed the scheduled run due %s: this item was still open, so no new one was added.", time.UnixMilli(dueAt).Format("Mon 2 Jan 15:04"))}
+		Body: fmt.Sprintf("🔁 Missed the scheduled run due %s: this item was still open, so no new one was added.", dueAt.Format("Mon 2 Jan 15:04"))}
 	id, err := t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
 		c.ItemID, c.WorkspaceID, c.AuthorID, c.Body, c.CreatedAt)
 	if err != nil {
@@ -282,5 +283,6 @@ func missedRun(t *tx, log *eventLog, creator *Participant, itemID, dueAt int64) 
 	if err != nil {
 		return err
 	}
-	return log.add(creator.WorkspaceID, "comment.added", creator.ID, CommentEvent{Comment: c, Item: it})
+	// The note is by the creator, the event by the system (see addItem).
+	return log.add(creator.WorkspaceID, "comment.added", 0, CommentEvent{Comment: c, Item: it})
 }
