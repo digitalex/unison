@@ -139,7 +139,27 @@ export default function Workspace({ id, view, navigate, account }) {
     if (token && e.code !== "not_member") setToken(id, "");
     setGate({ code: e.code, message: e.message });
   };
-  const reload = (name) => loaders[name]().catch(refused);
+  // At most one request per collection in flight, plus one queued behind it
+  // for events that arrive meanwhile (#104): a burst of events costs one or
+  // two fetches per collection, and the newest response always lands last.
+  const loading = useRef({});
+  const reload = (name) => {
+    const state = (loading.current[name] ||= { busy: false, again: false });
+    if (state.busy) {
+      state.again = true;
+      return;
+    }
+    state.busy = true;
+    loaders[name]()
+      .catch(refused)
+      .finally(() => {
+        state.busy = false;
+        if (state.again) {
+          state.again = false;
+          reload(name);
+        }
+      });
+  };
   // Everything ("queued" is part of "backlog").
   const loadAll = () => Object.keys(loaders).filter((name) => name !== "queued").forEach(reload);
   const onJoined = () => {
