@@ -155,6 +155,8 @@ type Item struct {
 	UpdatedAt      int64  `json:"updated_at"`
 	ClosedAt       *int64 `json:"closed_at,omitempty"`
 	CloseNote      string `json:"close_note,omitempty"`
+	// ScheduleID is the schedule this item is a run of (#112), if any.
+	ScheduleID *int64 `json:"schedule_id,omitempty"`
 	// PRs are the pull requests linked to the item (several are allowed);
 	// CommentCount is how many comments it has, MessageCount how many chat
 	// messages are about it.

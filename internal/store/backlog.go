@@ -8,13 +8,13 @@ import (
 	"strings"
 )
 
-const itemCols = `id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note`
+const itemCols = `id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id`
 
 func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var it Item
-	var assignee, lease, closed sql.NullInt64
+	var assignee, lease, closed, schedule sql.NullInt64
 	if err := row.Scan(&it.ID, &it.WorkspaceID, &it.Title, &it.Body, &it.Status, &it.Position, &assignee, &lease,
-		&it.CreatedBy, &it.CreatedAt, &it.UpdatedAt, &closed, &it.CloseNote); err != nil {
+		&it.CreatedBy, &it.CreatedAt, &it.UpdatedAt, &closed, &it.CloseNote, &schedule); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -28,6 +28,9 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	}
 	if closed.Valid {
 		it.ClosedAt = &closed.Int64
+	}
+	if schedule.Valid {
+		it.ScheduleID = &schedule.Int64
 	}
 	it.PRs = []ItemPR{}
 	return &it, nil
@@ -273,7 +276,7 @@ func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body str
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		var err error
-		it, err = addItem(t, log, actor, title, body, position)
+		it, err = addItem(t, log, actor, title, body, position, nil)
 		return err
 	})
 	if err != nil {
@@ -283,10 +286,11 @@ func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body str
 }
 
 // addItem inserts an open item at position (<= 0: bottom) and records
-// backlog.added. title must already be validated.
-func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int) (*Item, error) {
-	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at) VALUES (?, ?, ?, ?, 0, ?, ?, ?)`, "id",
-		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now)
+// backlog.added. title must already be validated. scheduleID marks a
+// schedule's run (#112); nil for other items.
+func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int, scheduleID *int64) (*Item, error) {
+	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at, schedule_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)`, "id",
+		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now, scheduleID)
 	if err != nil {
 		return nil, err
 	}

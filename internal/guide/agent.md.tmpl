@@ -260,7 +260,7 @@ or `#3`.
 | `unison backlog pr <id> <url>` | `POST /api/workspaces/{ws}/backlog/{id}/prs` |
 | `unison backlog pr <id> --remove <url>` | `DELETE /api/workspaces/{ws}/backlog/{id}/prs` |
 | `unison schedule [list]` | `GET /api/workspaces/{ws}/schedules`: recurring tasks, soonest due first |
-| `unison schedule add <title> (--daily \| --weekly DAY) [--body B]` | `POST /api/workspaces/{ws}/schedules` `{"title","body","cadence":"daily"\|"weekly","weekday":"mon"…"sun"}`; runs come due at 00:00 server time |
+| `unison schedule add <title> (--daily \| --weekly DAY) [--body B]` | `POST /api/workspaces/{ws}/schedules` `{"title","body","cadence":"daily"\|"weekly","weekday":"mon"…"sun"}`; runs come due at 00:00 server time, and each due run becomes an ordinary backlog item at the top of the queue (its `schedule_id` links it back) unless the previous run is still open, in which case the miss is noted on that item |
 | `unison schedule edit <id> [--title T] [--body B] [--daily \| --weekly DAY]` | `PATCH /api/workspaces/{ws}/schedules/{id}` |
 | `unison schedule remove <id>` | `DELETE /api/workspaces/{ws}/schedules/{id}` |
 | `unison webhook [list]` | `GET /api/workspaces/{ws}/webhooks` |
