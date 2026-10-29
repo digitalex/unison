@@ -171,49 +171,10 @@ func (s *Store) ExpireLeases(ctx context.Context) ([]Event, error) {
 // most recently closed first.
 func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, []Event, error) {
 	var out []Item
-	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if err := expireLeases(t, log, wsID); err != nil {
-			return err
-		}
-		query := `SELECT ` + itemCols + ` FROM items WHERE workspace_id = ?`
-		args := []any{wsID}
-		switch status {
-		case "":
-			query += ` AND status != ?`
-			args = append(args, StatusDone)
-		case "all":
-		case StatusOpen, StatusAssigned, StatusDone:
-			query += ` AND status = ?`
-			args = append(args, status)
-		default:
-			return fmt.Errorf("%w: unknown status %q (want open, assigned, done or all)", ErrInvalid, status)
-		}
-		query += ` ORDER BY status = 'done', position, closed_at DESC, id`
-		rows, err := t.Query(query, args...)
-		if err != nil {
-			return err
-		}
-		var list []*Item
-		for rows.Next() {
-			it, err := scanItem(rows)
-			if err != nil {
-				rows.Close()
-				return err
-			}
-			list = append(list, it)
-		}
-		rows.Close()
-		if err := rows.Err(); err != nil {
-			return err
-		}
-		if err := attachExtras(t, wsID, list); err != nil {
-			return err
-		}
-		out = make([]Item, 0, len(list))
-		for _, it := range list {
-			out = append(out, *it)
-		}
-		return nil
+	evs, err := s.readBacklog(ctx, wsID, func(t *tx) error {
+		var err error
+		out, err = listItems(t, wsID, status)
+		return err
 	})
 	if err != nil {
 		return nil, nil, err
@@ -221,13 +182,52 @@ func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, [
 	return out, evs, nil
 }
 
+func listItems(t *tx, wsID, status string) ([]Item, error) {
+	query := `SELECT ` + itemCols + ` FROM items WHERE workspace_id = ?`
+	args := []any{wsID}
+	switch status {
+	case "":
+		query += ` AND status != ?`
+		args = append(args, StatusDone)
+	case "all":
+	case StatusOpen, StatusAssigned, StatusDone:
+		query += ` AND status = ?`
+		args = append(args, status)
+	default:
+		return nil, fmt.Errorf("%w: unknown status %q (want open, assigned, done or all)", ErrInvalid, status)
+	}
+	query += ` ORDER BY status = 'done', position, closed_at DESC, id`
+	rows, err := t.Query(query, args...)
+	if err != nil {
+		return nil, err
+	}
+	var list []*Item
+	for rows.Next() {
+		it, err := scanItem(rows)
+		if err != nil {
+			rows.Close()
+			return nil, err
+		}
+		list = append(list, it)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if err := attachExtras(t, wsID, list); err != nil {
+		return nil, err
+	}
+	out := make([]Item, 0, len(list))
+	for _, it := range list {
+		out = append(out, *it)
+	}
+	return out, nil
+}
+
 // GetItem returns one backlog item.
 func (s *Store) GetItem(ctx context.Context, wsID string, id int64) (*Item, []Event, error) {
 	var it *Item
-	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if err := expireLeases(t, log, wsID); err != nil {
-			return err
-		}
+	evs, err := s.readBacklog(ctx, wsID, func(t *tx) error {
 		var err error
 		it, err = getItem(t, wsID, id)
 		return err
@@ -236,6 +236,32 @@ func (s *Store) GetItem(ctx context.Context, wsID string, id int64) (*Item, []Ev
 		return nil, nil, err
 	}
 	return it, evs, nil
+}
+
+// readBacklog runs a backlog read. Reads release expired leases first, so
+// they never show a stale assignee; that takes a write transaction, but
+// only when some lease has actually expired (#106). Otherwise the read
+// runs in a read-only transaction, off the write lock.
+func (s *Store) readBacklog(ctx context.Context, wsID string, read func(*tx) error) ([]Event, error) {
+	var expired bool
+	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM items WHERE workspace_id = ? AND status = ? AND lease_expires_at <= ?)`,
+		wsID, StatusAssigned, s.nowMillis()).Scan(&expired); err != nil {
+		return nil, err
+	}
+	if expired {
+		return s.tx(ctx, func(t *tx, log *eventLog) error {
+			if err := expireLeases(t, log, wsID); err != nil {
+				return err
+			}
+			return read(t)
+		})
+	}
+	t, err := s.db.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer t.Rollback()
+	return nil, read(t)
 }
 
 // AddItem adds a backlog item at the 1-based position (<= 0: bottom).
