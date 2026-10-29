@@ -127,22 +127,25 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 		writeError(w, http.StatusForbidden, "missing "+csrfHeader+" header")
 		return nil
 	}
-	if !s.authCfg.Open {
-		ok, err := s.store.IsMember(ctx, wsID, a.user.ID)
+	var p *store.Participant
+	if s.authCfg.Open {
+		if p, err = s.store.UserParticipant(ctx, wsID, a.user.ID); err != nil && !errors.Is(err, store.ErrNotFound) {
+			storeError(w, err)
+			return nil
+		}
+	} else {
+		// Membership and participant in one query (#108).
+		member, mp, err := s.store.MemberParticipant(ctx, wsID, a.user.ID)
 		if err != nil {
 			storeError(w, err)
 			return nil
 		}
-		if !ok {
+		if !member {
 			// Unknown workspaces look the same: no probing for IDs.
 			writeErrorCode(w, http.StatusForbidden, codeMember, "you're not a member of this workspace; ask a member for an invite")
 			return nil
 		}
-	}
-	p, err := s.store.UserParticipant(ctx, wsID, a.user.ID)
-	if err != nil && !errors.Is(err, store.ErrNotFound) {
-		storeError(w, err)
-		return nil
+		p = mp
 	}
 	if p != nil {
 		s.touch(ctx, p)

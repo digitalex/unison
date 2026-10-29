@@ -165,3 +165,36 @@ func openRaw(dsn string) (db, error) {
 	conn, err := sql.Open("sqlite", dsn)
 	return db{DB: conn}, err
 }
+
+// TestMemberParticipant: one call answers membership and finds the
+// participant: a member who joined, a member who hasn't, and someone whose
+// membership was removed (their participant stays, for history).
+func TestMemberParticipant(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	alex, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex"})
+	bob, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "2", Name: "Bob"})
+	cy, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "3", Name: "Cy"})
+	ws, _, _ := s.CreateWorkspaceFor(ctx, alex.ID, "W", "", "")
+	a, _, _, _, _ := s.JoinAsUser(ctx, ws.ID, alex.ID, "Alex", "")
+	b, _, _, _, _ := s.JoinAsUser(ctx, ws.ID, bob.ID, "Bob", "")
+	if _, err := s.RemoveMember(ctx, ws.ID, alex.ID, bob.ID); err != nil {
+		t.Fatal(err)
+	}
+	if member, p, err := s.MemberParticipant(ctx, ws.ID, alex.ID); err != nil || !member || p == nil || p.ID != a.ID {
+		t.Errorf("Alex: %v %+v %v, want member with participant %d", member, p, err, a.ID)
+	}
+	if member, p, err := s.MemberParticipant(ctx, ws.ID, bob.ID); err != nil || member || p != nil {
+		t.Errorf("Bob (removed; participant %d stays): %v %+v %v, want not a member", b.ID, member, p, err)
+	}
+	if member, p, err := s.MemberParticipant(ctx, ws.ID, cy.ID); err != nil || member || p != nil {
+		t.Errorf("Cy (never a member): %v %+v %v", member, p, err)
+	}
+	// A member who hasn't joined yet: a member, no participant.
+	if _, err := s.db.ExecContext(ctx, rebind(s.db.pg, `INSERT INTO memberships (workspace_id, user_id, created_at) VALUES (?, ?, 1)`), ws.ID, cy.ID); err != nil {
+		t.Fatal(err)
+	}
+	if member, p, err := s.MemberParticipant(ctx, ws.ID, cy.ID); err != nil || !member || p != nil {
+		t.Errorf("Cy (member, not joined): %v %+v %v, want member without participant", member, p, err)
+	}
+}
