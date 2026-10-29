@@ -198,3 +198,126 @@ func TestMemberParticipant(t *testing.T) {
 		t.Errorf("Cy (member, not joined): %v %+v %v, want member without participant", member, p, err)
 	}
 }
+
+// TestMergeAccountParticipants: a database from before #99 has an account
+// with three participants in a workspace (one per device). Boot merges them
+// into the oldest: their messages, items, comments, reactions, actions and
+// event actors move to it, duplicates collapse, and later boots are no-ops.
+// After that a second participant for the account is refused.
+func TestMergeAccountParticipants(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+	u, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex"})
+	keep, _, _, _, err := s.JoinAsUser(ctx, ws.ID, u.ID, "Alex", "🦊")
+	if err != nil {
+		t.Fatal(err)
+	}
+	phone, _, _, _ := s.Join(ctx, ws.ID, "AlexPhone", "")
+	laptop, _, _, _ := s.Join(ctx, ws.ID, "AlexLaptop", "")
+	ada, _, _, _ := s.Join(ctx, ws.ID, "Ada", "")
+
+	m1, _, _ := s.PostMessage(ctx, keep, "from the desk", nil, nil)
+	m2, _, _ := s.PostMessage(ctx, phone, "from the phone", nil, nil)
+	m3, _, _ := s.PostMessage(ctx, ada, "please look", nil, nil)
+	it, _, err := s.AddItem(ctx, phone, "Ship it", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	c, _, err := s.AddComment(ctx, laptop, it.ID, "on it")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, r := range []struct {
+		p     *Participant
+		emoji string
+	}{{keep, "👍"}, {phone, "👍"}, {phone, "❤️"}} {
+		if _, _, err := s.React(ctx, r.p, m1.ID, r.emoji, true); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+
+	// Make it the legacy shape: phone and laptop linked to the same account
+	// (laptop seen last), and actions asking both the desk and the phone.
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, q := range []struct {
+		q    string
+		args []any
+	}{
+		{`DROP INDEX IF EXISTS participants_user_once`, nil},
+		{`UPDATE participants SET user_id = ? WHERE id IN (?, ?)`, []any{u.ID, phone.ID, laptop.ID}},
+		{`UPDATE participants SET last_seen_at = 99999999999999 WHERE id = ?`, []any{laptop.ID}},
+		{`UPDATE items SET assignee_id = ? WHERE id = ?`, []any{laptop.ID, it.ID}},
+		{`INSERT INTO message_actions (workspace_id, message_id, participant_id, done_at) VALUES (?, ?, ?, NULL)`, []any{ws.ID, m3.ID, keep.ID}},
+		{`INSERT INTO message_actions (workspace_id, message_id, participant_id, done_at) VALUES (?, ?, ?, 5)`, []any{ws.ID, m3.ID, phone.ID}},
+		{`INSERT INTO message_actions (workspace_id, message_id, participant_id, done_at) VALUES (?, ?, ?, NULL)`, []any{ws.ID, m2.ID, laptop.ID}},
+	} {
+		if _, err := raw.Exec(rebind(raw.pg, q.q), q.args...); err != nil {
+			t.Fatalf("%s: %v", q.q, err)
+		}
+	}
+	raw.Close()
+
+	count := func(s *Store, q string, args ...any) int {
+		t.Helper()
+		var n int
+		if err := s.db.QueryRow(rebind(s.db.pg, q), args...).Scan(&n); err != nil {
+			t.Fatalf("%s: %v", q, err)
+		}
+		return n
+	}
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		p, err := s.UserParticipant(ctx, ws.ID, u.ID)
+		if err != nil || p.ID != keep.ID || p.LastSeenAt != 99999999999999 {
+			t.Errorf("boot %d: UserParticipant = %+v, %v; want #%d with the laptop's last-seen time", boot, p, err, keep.ID)
+		}
+		if n := count(s, `SELECT COUNT(*) FROM participants WHERE workspace_id = ?`, ws.ID); n != 2 {
+			t.Errorf("boot %d: %d participants, want 2 (Alex and Ada)", boot, n)
+		}
+		msgs, _ := s.ListMessages(ctx, ws.ID, 0)
+		for _, m := range msgs {
+			if m.ID == m2.ID && m.AuthorID != keep.ID {
+				t.Errorf("boot %d: the phone's message is by %d, want %d", boot, m.AuthorID, keep.ID)
+			}
+			if m.ID == m1.ID && (len(m.Reactions) != 2 || m.Reactions[0].Count != 1) {
+				t.Errorf("boot %d: reactions = %+v, want one 👍 and one ❤️, both by Alex", boot, m.Reactions)
+			}
+			if m.ID == m3.ID && (len(m.ActionFor) != 1 || m.ActionFor[0] != keep.ID || len(m.DoneBy) != 1) {
+				t.Errorf("boot %d: action for %v done by %v; want Alex, done (the phone had marked it)", boot, m.ActionFor, m.DoneBy)
+			}
+			if m.ID == m2.ID && (len(m.ActionFor) != 1 || m.ActionFor[0] != keep.ID) {
+				t.Errorf("boot %d: action on m2 for %v, want Alex", boot, m.ActionFor)
+			}
+		}
+		got, _, _ := s.GetItem(ctx, ws.ID, it.ID)
+		if got.AssigneeID == nil || *got.AssigneeID != keep.ID || count(s, `SELECT COUNT(*) FROM items WHERE id = ? AND created_by = ?`, it.ID, keep.ID) != 1 {
+			t.Errorf("boot %d: item = %+v, want created by and assigned to Alex", boot, got)
+		}
+		if count(s, `SELECT COUNT(*) FROM item_comments WHERE id = ? AND author_id = ?`, c.ID, keep.ID) != 1 {
+			t.Errorf("boot %d: the comment didn't move to Alex", boot)
+		}
+		if n := count(s, `SELECT COUNT(*) FROM events WHERE actor_id IN (?, ?)`, phone.ID, laptop.ID); n != 0 {
+			t.Errorf("boot %d: %d events still name the merged participants", boot, n)
+		}
+		s.Close()
+	}
+
+	// One participant per account from now on.
+	raw, _ = openRaw(dsn)
+	defer raw.Close()
+	if _, err := raw.Exec(rebind(raw.pg, `UPDATE participants SET user_id = ? WHERE id = ?`), u.ID, ada.ID); err == nil {
+		t.Error("a second participant for the account was allowed")
+	}
+}

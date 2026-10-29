@@ -177,7 +177,99 @@ func (d db) applySchema(lock, schema string) error {
 	if err := d.addParticipantColumns(t); err != nil {
 		return err
 	}
+	if err := d.mergeAccountParticipants(t); err != nil {
+		return fmt.Errorf("merging each account's participants: %w", err)
+	}
 	return t.Commit()
+}
+
+// participantRefs are the columns that point at a participant, other than
+// reactions and message_actions (unique per participant; merged separately).
+var participantRefs = []struct{ table, column string }{
+	{"messages", "author_id"},
+	{"items", "assignee_id"},
+	{"items", "created_by"},
+	{"item_comments", "author_id"},
+	{"item_prs", "added_by"},
+	{"webhooks", "created_by"},
+	{"agent_passes", "participant_id"},
+	{"events", "actor_id"},
+}
+
+// mergeAccountParticipants gives every account a single participant per
+// workspace (#99). Before sign-in was the way to join on each device, an
+// account could end up with several (one per device), and the server acted
+// as whichever was seen last. For each (workspace, account) with more than
+// one, the oldest stays: everything the others did moves to it (a reaction
+// or an action both had is kept once; an action either marked done stays
+// done), it keeps the latest last-seen time, and the others are deleted
+// (their participant tokens stop working). A unique index then keeps it to
+// one. Idempotent: once merged there is nothing to do.
+func (d db) mergeAccountParticipants(t *sql.Tx) error {
+	rows, err := t.Query(`SELECT p.id, k.keep FROM participants p
+		JOIN (SELECT workspace_id, user_id, MIN(id) AS keep FROM participants
+			WHERE user_id IS NOT NULL GROUP BY workspace_id, user_id HAVING COUNT(*) > 1) k
+		ON k.workspace_id = p.workspace_id AND k.user_id = p.user_id
+		WHERE p.id <> k.keep ORDER BY p.id`)
+	if err != nil {
+		return err
+	}
+	type merge struct{ dup, keep int64 }
+	var merges []merge
+	for rows.Next() {
+		var m merge
+		if err := rows.Scan(&m.dup, &m.keep); err != nil {
+			rows.Close()
+			return err
+		}
+		merges = append(merges, m)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, m := range merges {
+		if err := d.mergeParticipant(t, m.dup, m.keep); err != nil {
+			return fmt.Errorf("participant %d into %d: %w", m.dup, m.keep, err)
+		}
+	}
+	_, err = t.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS participants_user_once ON participants(workspace_id, user_id) WHERE user_id IS NOT NULL`)
+	return err
+}
+
+// mergeParticipant moves everything participant dup did to keep and
+// deletes dup (see mergeAccountParticipants).
+func (d db) mergeParticipant(t *sql.Tx, dup, keep int64) error {
+	var stmts []struct {
+		q    string
+		args []any
+	}
+	add := func(q string, args ...any) {
+		stmts = append(stmts, struct {
+			q    string
+			args []any
+		}{q, args})
+	}
+	for _, r := range participantRefs {
+		add(`UPDATE `+r.table+` SET `+r.column+` = ? WHERE `+r.column+` = ?`, keep, dup)
+	}
+	add(`DELETE FROM reactions WHERE participant_id = ? AND EXISTS (SELECT 1 FROM reactions r
+		WHERE r.message_id = reactions.message_id AND r.emoji = reactions.emoji AND r.participant_id = ?)`, dup, keep)
+	add(`UPDATE reactions SET participant_id = ? WHERE participant_id = ?`, keep, dup)
+	add(`UPDATE message_actions SET done_at = (SELECT a.done_at FROM message_actions a
+		WHERE a.message_id = message_actions.message_id AND a.participant_id = ?)
+		WHERE participant_id = ? AND done_at IS NULL`, dup, keep)
+	add(`DELETE FROM message_actions WHERE participant_id = ? AND message_id IN
+		(SELECT message_id FROM message_actions WHERE participant_id = ?)`, dup, keep)
+	add(`UPDATE message_actions SET participant_id = ? WHERE participant_id = ?`, keep, dup)
+	add(`UPDATE participants SET last_seen_at = (SELECT MAX(last_seen_at) FROM participants WHERE id IN (?, ?)) WHERE id = ?`, keep, dup, keep)
+	add(`DELETE FROM participants WHERE id = ?`, dup)
+	for _, s := range stmts {
+		if _, err := t.Exec(rebind(d.pg, s.q), s.args...); err != nil {
+			return fmt.Errorf("%.60s…: %w", strings.Join(strings.Fields(s.q), " "), err)
+		}
+	}
+	return nil
 }
 
 // addedColumns are columns added to tables after they were first deployed,

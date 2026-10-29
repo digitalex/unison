@@ -62,13 +62,13 @@ func ensureMembership(t *tx, log *eventLog, wsID string, userID, actor int64) er
 	return log.add(wsID, "member.added", actor, memberEvent{UserID: userID, DisplayName: name})
 }
 
-// usersParticipant returns the user's most recently active participant in
-// the workspace, with its token, or ErrNotFound.
+// usersParticipant returns the user's participant in the workspace (there is
+// at most one, #99), with its token, or ErrNotFound.
 func usersParticipant(t *tx, wsID string, userID int64) (*Participant, string, error) {
 	var token string
 	var p Participant
 	err := t.QueryRow(`SELECT id, name, emoji, status, created_at, last_seen_at, token FROM participants
-		WHERE workspace_id = ? AND user_id = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1`, wsID, userID).
+		WHERE workspace_id = ? AND user_id = ?`, wsID, userID).
 		Scan(&p.ID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &token)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, "", ErrNotFound
@@ -81,7 +81,7 @@ func usersParticipant(t *tx, wsID string, userID int64) (*Participant, string, e
 }
 
 // JoinAsUser joins a signed-in user. If the user already has a participant
-// in the workspace (the most recently active one), it is returned with its
+// in the workspace, it is returned with its
 // existing token instead of creating a duplicate (existing = true);
 // otherwise a new participant is created linked to the user. Either way the
 // user is (or becomes) a member.
@@ -195,8 +195,8 @@ func (s *Store) RemoveMember(ctx context.Context, wsID string, byUserID, userID 
 // ask IsMember.
 func (s *Store) MemberParticipant(ctx context.Context, wsID string, userID int64) (bool, *Participant, error) {
 	p, err := scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants
-		WHERE workspace_id = ? AND user_id = ? AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id = participants.workspace_id AND m.user_id = participants.user_id)
-		ORDER BY last_seen_at DESC, id DESC LIMIT 1`, wsID, userID))
+		WHERE workspace_id = ? AND user_id = ? AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id = participants.workspace_id AND m.user_id = participants.user_id)`,
+		wsID, userID))
 	if err == nil {
 		return true, p, nil
 	}
@@ -207,9 +207,9 @@ func (s *Store) MemberParticipant(ctx context.Context, wsID string, userID int64
 	return member, nil, err
 }
 
-// UserParticipant returns the user's most recently active participant in the
-// workspace (the one their account acts as there), or ErrNotFound.
+// UserParticipant returns the user's participant in the workspace (the one
+// their account acts as there; at most one, #99), or ErrNotFound.
 func (s *Store) UserParticipant(ctx context.Context, wsID string, userID int64) (*Participant, error) {
 	return scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants
-		WHERE workspace_id = ? AND user_id = ? ORDER BY last_seen_at DESC, id DESC LIMIT 1`, wsID, userID))
+		WHERE workspace_id = ? AND user_id = ?`, wsID, userID))
 }

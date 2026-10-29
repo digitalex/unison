@@ -13,13 +13,8 @@ import (
 // @mentions people can ask them to act: review a PR, answer a question, do
 // some manual setup. Each participant it mentions has an open action until
 // they mark it done (or undo that), reply in the message's thread, or react
-// to it. Done is per account: any of a member's participants (devices)
-// marks it done for all of them.
-
-// accountParticipants selects the IDs of actor's participants in its
-// workspace: actor itself and, when it is linked to an account, the
-// account's other participants. Arguments: workspace ID, actor ID, user ID.
-const accountParticipants = `SELECT id FROM participants WHERE workspace_id = ? AND (id = ? OR (user_id IS NOT NULL AND user_id = ?))`
+// to it. An account has one participant per workspace (#99), so done is
+// simply per participant.
 
 // mentionedIn returns the participants of wsID (other than the author)
 // that body @mentions by name, matched as `unison wait --mentions` does.
@@ -76,22 +71,22 @@ func addActions(t *tx, m *Message) error {
 	return nil
 }
 
-// markDone marks message messageID done (or not done) for actor's account,
-// and reports whether anything changed. It is ErrInvalid when the message
-// asks none of actor's participants to act.
+// markDone marks message messageID done (or not done) for actor, and
+// reports whether anything changed. It is ErrInvalid when the message
+// doesn't ask actor to act.
 func markDone(t *tx, actor *Participant, messageID int64, done bool, now int64) (bool, error) {
 	var mine int
-	if err := t.QueryRow(`SELECT COUNT(*) FROM message_actions WHERE message_id = ? AND participant_id IN (`+accountParticipants+`)`,
-		messageID, actor.WorkspaceID, actor.ID, actor.UserID).Scan(&mine); err != nil {
+	if err := t.QueryRow(`SELECT COUNT(*) FROM message_actions WHERE message_id = ? AND participant_id = ?`,
+		messageID, actor.ID).Scan(&mine); err != nil {
 		return false, err
 	}
 	if mine == 0 {
 		return false, fmt.Errorf("%w: message %d doesn't ask you to act", ErrInvalid, messageID)
 	}
-	q := `UPDATE message_actions SET done_at = ? WHERE message_id = ? AND done_at IS NULL AND participant_id IN (` + accountParticipants + `)`
-	args := []any{now, messageID, actor.WorkspaceID, actor.ID, actor.UserID}
+	q := `UPDATE message_actions SET done_at = ? WHERE message_id = ? AND done_at IS NULL AND participant_id = ?`
+	args := []any{now, messageID, actor.ID}
 	if !done {
-		q = `UPDATE message_actions SET done_at = NULL WHERE message_id = ? AND done_at IS NOT NULL AND participant_id IN (` + accountParticipants + `)`
+		q = `UPDATE message_actions SET done_at = NULL WHERE message_id = ? AND done_at IS NOT NULL AND participant_id = ?`
 		args = args[1:]
 	}
 	res, err := t.Exec(q, args...)
@@ -102,7 +97,7 @@ func markDone(t *tx, actor *Participant, messageID int64, done bool, now int64) 
 	return n > 0, nil
 }
 
-// markDoneIfAsked marks messageID done for actor's account when it asks
+// markDoneIfAsked marks messageID done for actor when it asks
 // actor to act (a reply in its thread, a reaction); otherwise it does
 // nothing.
 func markDoneIfAsked(t *tx, actor *Participant, messageID int64, now int64) error {
@@ -113,7 +108,7 @@ func markDoneIfAsked(t *tx, actor *Participant, messageID int64, now int64) erro
 }
 
 // SetDone marks a message that asks actor to act done (or, with done
-// false, not done) for actor's account, and returns the message. A change
+// false, not done) for actor, and returns the message. A change
 // records message.done (or message.undone) with the message; repeating
 // either is a no-op without an event.
 func (s *Store) SetDone(ctx context.Context, actor *Participant, messageID int64, done bool) (*Message, []Event, error) {
@@ -143,19 +138,19 @@ func (s *Store) SetDone(ctx context.Context, actor *Participant, messageID int64
 	return m, evs, nil
 }
 
-// OpenActions returns the messages that ask actor's account to act and
-// that it hasn't marked done, newest first.
+// OpenActions returns the messages that ask actor to act and that it
+// hasn't marked done, newest first.
 func (s *Store) OpenActions(ctx context.Context, actor *Participant) ([]Message, error) {
 	return s.withDetails(ctx, actor.WorkspaceID)(scanMessages(s.db.QueryContext(ctx, (selectMessages + ` WHERE m.workspace_id = ? AND m.id IN (
-		SELECT message_id FROM message_actions WHERE done_at IS NULL AND participant_id IN (` + accountParticipants + `)) ORDER BY m.id DESC`),
-		actor.WorkspaceID, actor.WorkspaceID, actor.ID, actor.UserID)))
+		SELECT message_id FROM message_actions WHERE done_at IS NULL AND participant_id = ?) ORDER BY m.id DESC`),
+		actor.WorkspaceID, actor.ID)))
 }
 
 // CountOpenActions is how many messages OpenActions would return.
 func (s *Store) CountOpenActions(ctx context.Context, actor *Participant) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, (`SELECT COUNT(DISTINCT message_id) FROM message_actions WHERE workspace_id = ? AND done_at IS NULL AND participant_id IN (` + accountParticipants + `)`),
-		actor.WorkspaceID, actor.WorkspaceID, actor.ID, actor.UserID).Scan(&n)
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM message_actions WHERE workspace_id = ? AND done_at IS NULL AND participant_id = ?`,
+		actor.WorkspaceID, actor.ID).Scan(&n)
 	return n, err
 }
 
