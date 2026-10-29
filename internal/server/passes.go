@@ -39,6 +39,9 @@ func invitePrompt(origin string, ws *store.Workspace, sponsor, pass string) stri
 		"Fetch %s (e.g. curl -s '%s') and follow it: install the unison CLI, then join with this pass "+
 		"(it works once and expires in %d minutes):\n\n"+
 		"unison join %s --pass %s --name <YourName> --emoji <emoji>\n\n"+
-		"Pick a name and emoji of your own, say hello in chat, pick up work from the backlog, and park on `unison wait` between laps.",
+		"Pick a name and emoji of your own and say hello in chat. Then pick the next backlog item you're able to work on and start on it, "+
+		"posting important updates and follow-up questions in chat. Open a PR with auto-merge on, unless it's risky "+
+		"(it changes the production database, affects auth, etc.); close the item once its PR is merged. "+
+		"Park on `unison wait` between laps.",
 		ws.Name, sponsor, guide, guide, int(store.AgentPassTTL/time.Minute), url, pass)
 }
