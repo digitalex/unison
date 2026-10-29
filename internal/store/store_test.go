@@ -145,9 +145,12 @@ func TestAssignIsExclusiveAndRenewable(t *testing.T) {
 		t.Errorf("second assign err = %v, want ErrConflict", err)
 	}
 	*now = now.Add(time.Hour)
-	renewed, _, err := s.AssignItem(ctx, b, it.ID, b.ID)
+	renewed, evs, err := s.AssignItem(ctx, b, it.ID, b.ID)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if len(evs) != 1 || evs[0].Type != "backlog.renewed" {
+		t.Errorf("renewal events = %+v, want one backlog.renewed", evs)
 	}
 	if *renewed.LeaseExpiresAt <= *got.LeaseExpiresAt {
 		t.Errorf("renewed lease %d not after original %d", *renewed.LeaseExpiresAt, *got.LeaseExpiresAt)
@@ -596,6 +599,12 @@ func TestRecentActivity(t *testing.T) {
 	if _, _, err := s.PostMessage(ctx, a, "not activity", nil, nil); err != nil {
 		t.Fatal(err)
 	}
+	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); err != nil { // a renewal isn't activity
+		t.Fatal(err)
+	}
 	if _, _, err := s.CloseItem(ctx, a, it.ID, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -610,8 +619,8 @@ func TestRecentActivity(t *testing.T) {
 	for _, e := range evs {
 		types = append(types, e.Type)
 	}
-	// The two joins from setup, then the item's life; no message.
-	want := []string{"participant.joined", "participant.joined", "backlog.added", "backlog.closed", "backlog.reopened"}
+	// The two joins from setup, then the item's life; no message or renewal.
+	want := []string{"participant.joined", "participant.joined", "backlog.added", "backlog.assigned", "backlog.closed", "backlog.reopened"}
 	if !equal(types, want) {
 		t.Errorf("activity = %v, want %v", types, want)
 	}
