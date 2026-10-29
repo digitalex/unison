@@ -30,9 +30,16 @@ const ACTIVITY_TYPES = ["backlog.added", "backlog.assigned", "backlog.closed", "
 
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
-  // A message about an item changes the item's message count; one that asks
-  // you to act (or is done) changes your count of open actions (on /me).
-  if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog", "me", "participants"] : ["messages", "me", "participants"];
+  // Message events carry the message: it is applied to the list as is
+  // (applyMessageEvent), so only what it changes elsewhere is reloaded. One
+  // about an item changes the item's message count; one that asks people to
+  // act (or is marked done) changes counts of open actions (on /me).
+  if (type.startsWith("message.")) {
+    if (!data?.id) return ["messages", "me"];
+    const reloads = data.item_id ? ["backlog"] : [];
+    if (type === "message.done" || type === "message.undone" || data.action_required) reloads.push("me");
+    return reloads;
+  }
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) {
     return ACTIVITY_TYPES.includes(type) ? ["backlog", "participants", "activity"] : ["backlog", "participants"];
   }
@@ -45,6 +52,14 @@ function collectionFor({ type, data }) {
   if (type.startsWith("member.")) return ["members"];
   if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
   return [];
+}
+
+// withMessage returns list (oldest first) with message m in it: replacing
+// the one with its id, or added in order.
+function withMessage(list, m) {
+  if (list.some((x) => x.id === m.id)) return list.map((x) => (x.id === m.id ? m : x));
+  const out = [...list, m];
+  return list.length && list[list.length - 1].id > m.id ? out.sort((a, b) => a.id - b.id) : out;
 }
 
 // The server's refusals that mean "you can't see this workspace" (as
@@ -116,16 +131,37 @@ export default function Workspace({ id, view, navigate, account }) {
     Object.keys(loaders).forEach(reload);
   }, [id, token, account.ready, joins]);
 
-  // Live updates: every event refreshes the collection it touches. Holding
-  // the stream open also keeps us present in the roster.
+  // Live updates: message events are applied as they come (#103); other
+  // events refresh the collection they touch. After a dropped connection
+  // everything is reloaded, since events may have been missed. Holding the
+  // stream open also keeps us present in the roster.
+  const messagesNow = useRef(messages);
+  messagesNow.current = messages;
+  const applyMessageEvent = ({ type, data }) => {
+    if (!type.startsWith("message.") || !data?.id) return;
+    setMessages((list) => withMessage(list, data));
+    // A reply can mark its thread's first message done, which has no event
+    // of its own: refetch just that message when it asks people to act.
+    const parent = type === "message.created" && data.parent_id && messagesNow.current.find((m) => m.id === data.parent_id);
+    if (parent?.action_required) {
+      call("GET", `/messages/${parent.id}`).then((m) => setMessages((list) => withMessage(list, m)), refused);
+      reload("me");
+    }
+  };
   useEffect(() => {
     if (!account.ready || gate) return;
     const src = new EventSource(`/api/workspaces/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`);
-    src.onopen = () => setLive(true);
+    let opened = false;
+    src.onopen = () => {
+      setLive(true);
+      if (opened) Object.keys(loaders).forEach(reload);
+      opened = true;
+    };
     src.onerror = () => setLive(false);
     src.onmessage = (msg) => {
       const event = JSON.parse(msg.data);
       notify(event);
+      applyMessageEvent(event);
       collectionFor(event).forEach(reload);
     };
     const roster = setInterval(() => reload("participants"), 30000);
