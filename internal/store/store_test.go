@@ -624,3 +624,27 @@ func TestRecentActivity(t *testing.T) {
 		t.Errorf("limited activity = %+v, want closed then reopened", evs)
 	}
 }
+
+// TestAssignRecordsRenewalApart: taking an item records backlog.assigned
+// (shown in chat as starting on it); renewing the lease records
+// backlog.renewed, which isn't activity (#97).
+func TestAssignRecordsRenewalApart(t *testing.T) {
+	s, _, a, b := setup(t)
+	ctx := context.Background()
+	it, _, _ := s.AddItem(ctx, a, "Ship it", "", 0)
+	_, evs, err := s.AssignItem(ctx, b, it.ID, b.ID)
+	if err != nil || len(evs) != 1 || evs[0].Type != "backlog.assigned" {
+		t.Fatalf("assign: events %v, %v", eventTypes(evs), err)
+	}
+	_, evs, err = s.AssignItem(ctx, b, it.ID, b.ID)
+	if err != nil || len(evs) != 1 || evs[0].Type != "backlog.renewed" {
+		t.Fatalf("renew: events %v, %v", eventTypes(evs), err)
+	}
+	act, err := s.RecentActivity(ctx, a.WorkspaceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n := len(act); n == 0 || act[n-1].Type != "backlog.assigned" || act[n-2].Type != "backlog.added" {
+		t.Errorf("activity = %v, want it to end with added, assigned (no renewal)", eventTypes(act))
+	}
+}

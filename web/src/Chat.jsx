@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Reply, RotateCcw, Undo2, UserMinus, UserPlus, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, CirclePlay, Ellipsis, ListChecks, ListPlus, MessageSquare, Reply, RotateCcw, Undo2, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -179,6 +179,7 @@ function byTime(messages, events) {
 
 const ACTIVITY_ICONS = {
   "backlog.added": ListPlus,
+  "backlog.assigned": CirclePlay,
   "backlog.closed": CircleCheck,
   "backlog.reopened": RotateCcw,
   "participant.joined": UserPlus,
@@ -194,6 +195,11 @@ function activityText(event, participants) {
   switch (event.type) {
     case "backlog.added":
       return [name(actor), "added", d];
+    case "backlog.assigned":
+      // Taking an item is starting on it (#97); assigning someone else puts them on it.
+      return d.assignee_id === event.actor_id
+        ? [name(actor), "started working on", d]
+        : [name(actor), `put ${name(participants.find((p) => p.id === d.assignee_id))} on`, d];
     case "backlog.closed":
       return [name(actor), "closed", d];
     case "backlog.reopened":
