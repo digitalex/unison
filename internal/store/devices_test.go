@@ -133,9 +133,8 @@ func TestPushRecipients(t *testing.T) {
 		}
 	}
 	check("mention", f.bob, "hi @alex", nil, nil, []int64{alexU})
-	check("both of alex's participants", f.bob, "@Alex @AlexLaptop", nil, nil, []int64{alexU})
-	check("own account", f.laptop, "@Alex look", nil, nil, nil)
-	check("action wins", f.bob, "@Alex @AlexLaptop do it", []int64{f.laptop.ID}, []int64{alexU}, nil)
+	check("own account", f.alex, "@Alex look", nil, nil, nil)
+	check("action wins", f.bob, "@Alex do it", []int64{f.alex.ID}, []int64{alexU}, nil)
 	check("action and mention", f.alex, "@Bob please, cc @nobody", []int64{f.bob.ID}, []int64{bobU}, nil)
 	check("agent author notifies its sponsor", f.wren, "@Alex done", nil, nil, []int64{alexU})
 	check("agents have no account", f.alex, "@Wren go", nil, nil, nil)

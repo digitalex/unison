@@ -10,12 +10,12 @@ import (
 )
 
 type actionFixture struct {
-	s                       *Store
-	ws                      *Workspace
-	alex, laptop, bob, wren *Participant
+	s               *Store
+	ws              *Workspace
+	alex, bob, wren *Participant
 }
 
-// newActionFixture: Alex (two devices, one account) and Bob are members;
+// newActionFixture: Alex and Bob are members (one participant each, #99);
 // Wren is Alex's agent.
 func newActionFixture(t *testing.T) *actionFixture {
 	t.Helper()
@@ -29,11 +29,6 @@ func newActionFixture(t *testing.T) *actionFixture {
 	}
 	f := &actionFixture{s: s, ws: ws}
 	f.alex, _, _, _, _ = s.JoinAsUser(ctx, ws.ID, alex.ID, "Alex", "")
-	f.laptop, _, _, _ = s.Join(ctx, ws.ID, "AlexLaptop", "")
-	if _, err := s.db.ExecContext(ctx, `UPDATE participants SET user_id = ? WHERE id = ?`, alex.ID, f.laptop.ID); err != nil {
-		t.Fatal(err)
-	}
-	f.laptop.UserID = alex.ID
 	f.bob, _, _, _, _ = s.JoinAsUser(ctx, ws.ID, bob.ID, "Bob", "")
 	pass, _, _ := s.MintPass(ctx, ws.ID, alex.ID)
 	if f.wren, _, _, err = s.JoinWithPass(ctx, ws.ID, pass, "Wren", ""); err != nil {
@@ -95,15 +90,15 @@ func TestActionRequired(t *testing.T) {
 	}
 }
 
-// TestActionDone: open actions are per account (any of Alex's devices sees
-// and clears them); done can be undone; only those asked can mark it.
+// TestActionDone: open actions are per participant; done can be undone;
+// only those asked can mark it.
 func TestActionDone(t *testing.T) {
 	f := newActionFixture(t)
 	ctx := context.Background()
 	m, _, _ := f.s.Post(ctx, f.wren, NewMessage{Body: "@Alex please set the APNS secrets", ActionRequired: true})
 	both, _, _ := f.s.Post(ctx, f.wren, NewMessage{Body: "@Alex @Bob which name do you prefer?", ActionRequired: true})
-	if got := f.open(t, f.laptop); !slices.Equal(got, []int64{both.ID, m.ID}) {
-		t.Errorf("Alex's laptop: open = %v, want both, newest first", got)
+	if got := f.open(t, f.alex); !slices.Equal(got, []int64{both.ID, m.ID}) {
+		t.Errorf("Alex: open = %v, want both, newest first", got)
 	}
 	if got := f.open(t, f.bob); !slices.Equal(got, []int64{both.ID}) {
 		t.Errorf("Bob: open = %v", got)
@@ -112,7 +107,7 @@ func TestActionDone(t *testing.T) {
 		t.Errorf("Wren (the asker): open = %v", got)
 	}
 
-	done, evs, err := f.s.SetDone(ctx, f.laptop, m.ID, true)
+	done, evs, err := f.s.SetDone(ctx, f.alex, m.ID, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,7 +115,7 @@ func TestActionDone(t *testing.T) {
 		t.Errorf("done = %+v, events %+v", done, evs)
 	}
 	if got := f.open(t, f.alex); !slices.Equal(got, []int64{both.ID}) {
-		t.Errorf("after done on the laptop, Alex: open = %v", got)
+		t.Errorf("after done, Alex: open = %v", got)
 	}
 	if _, evs, _ := f.s.SetDone(ctx, f.alex, m.ID, true); len(evs) != 0 {
 		t.Errorf("done twice: events = %+v, want none", evs)
@@ -154,7 +149,7 @@ func TestActionDoneByReplyOrReaction(t *testing.T) {
 	if got := f.open(t, f.alex); len(got) != 1 {
 		t.Errorf("the asker's reply cleared Alex's action: %v", got)
 	}
-	reply, _, _ := f.s.PostMessage(ctx, f.laptop, "Yes, go", &m.ID, nil)
+	reply, _, _ := f.s.PostMessage(ctx, f.alex, "Yes, go", &m.ID, nil)
 	if got := f.open(t, f.alex); len(got) != 0 {
 		t.Errorf("after Alex replied: open = %v", got)
 	}
