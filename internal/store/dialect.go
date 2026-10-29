@@ -266,6 +266,20 @@ func (d db) begin(ctx context.Context) (*tx, error) {
 	return w, nil
 }
 
+// beginRead starts a read-only transaction: a consistent snapshot that,
+// unlike begin, doesn't take the write lock on Postgres.
+func (d db) beginRead(ctx context.Context) (*tx, error) {
+	var opts *sql.TxOptions
+	if d.pg {
+		opts = &sql.TxOptions{ReadOnly: true}
+	}
+	t, err := d.BeginTx(ctx, opts)
+	if err != nil {
+		return nil, err
+	}
+	return &tx{Tx: t, pg: d.pg}, nil
+}
+
 const sqliteSchema = `
 CREATE TABLE IF NOT EXISTS workspaces (
 	id TEXT PRIMARY KEY,

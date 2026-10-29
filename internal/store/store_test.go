@@ -157,6 +157,32 @@ func TestAssignIsExclusiveAndRenewable(t *testing.T) {
 	}
 }
 
+// Reading the backlog releases expired leases (in a write transaction),
+// and is a plain read otherwise (#106).
+func TestBacklogReadExpiresLeases(t *testing.T) {
+	s, now, a, b := setup(t)
+	ctx := context.Background()
+	it, _, _ := s.AddItem(ctx, a, "task", "", 0)
+	if _, _, err := s.AssignItem(ctx, b, it.ID, b.ID); err != nil {
+		t.Fatal(err)
+	}
+	list, evs, err := s.ListBacklog(ctx, a.WorkspaceID, "")
+	if err != nil || len(evs) != 0 || len(list) != 1 || list[0].Status != StatusAssigned {
+		t.Fatalf("live lease: list = %+v, events = %+v, err = %v", list, evs, err)
+	}
+	*now = now.Add(LeaseDuration + time.Second)
+	got, evs, err := s.GetItem(ctx, a.WorkspaceID, it.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != StatusOpen || len(evs) != 1 || evs[0].Type != "backlog.lease_expired" {
+		t.Fatalf("expired lease: item = %+v, events = %+v", got, evs)
+	}
+	if _, evs, _ := s.ListBacklog(ctx, a.WorkspaceID, ""); len(evs) != 0 {
+		t.Errorf("second read events = %+v, want none", evs)
+	}
+}
+
 func TestLeaseExpires(t *testing.T) {
 	s, now, a, b := setup(t)
 	ctx := context.Background()
