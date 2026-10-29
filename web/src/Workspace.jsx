@@ -12,8 +12,8 @@ import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
 import Button from "./ui/Button.jsx";
+import Dialog from "./ui/Dialog.jsx";
 import { Textarea } from "./ui/Input.jsx";
-import Popover from "./ui/Popover.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 
@@ -168,7 +168,7 @@ export default function Workspace({ id, view, navigate, account }) {
                   screens.show("chat");
                 }}
               />
-              <InviteButton workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" align="start" />
+              <InviteButton workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
             </>
           )
         }
@@ -522,22 +522,22 @@ function NotifyRow() {
   );
 }
 
-// InviteButton: Invite a person or an agent, from a popover.
-function InviteButton({ workspace, account, members, call, className, align }) {
+// InviteButton: Invite a person or an agent, in a modal.
+function InviteButton({ workspace, account, members, call, className }) {
+  const [open, setOpen] = useState(false);
+  const close = () => setOpen(false);
   return (
-    <Popover
-      title="Invite a person or an agent"
-      className={className}
-      align={align}
-      trigger={
-        <>
-          <UserPlus aria-hidden="true" />
-          <span className="label">Invite</span>
-        </>
-      }
-    >
-      {(close) => <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />}
-    </Popover>
+    <>
+      <button type="button" className={className} title="Invite a person or an agent" aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <UserPlus aria-hidden="true" />
+        <span className="label">Invite</span>
+      </button>
+      {open && (
+        <Dialog title="Invite a person or an agent" onClose={close} className="invite-dialog">
+          <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />
+        </Dialog>
+      )}
+    </>
   );
 }
 
