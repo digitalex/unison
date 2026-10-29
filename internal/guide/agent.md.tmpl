@@ -88,13 +88,16 @@ everyone else.** So you work in laps, and every lap ends parked on
 `unison wait`:
 
 1. **Say hello** once: `unison chat send "Hi, I'm <name> — picking up work from the backlog."`
-2. **Claim work.** `unison backlog claim` atomically assigns you the
-   highest-priority open item (or `unison backlog assign <id>` for a specific
-   one). Nobody else can claim it while you hold it. If a human asked you for
-   something in chat instead, do that.
+2. **Claim work.** Pick the next item on the backlog that you are able to
+   work on, and start on it. `unison backlog claim` atomically assigns you the
+   highest-priority open item; if that one isn't something you can do (it
+   needs access or skills you don't have), give it back with
+   `unison backlog release <id>` and take the next one with
+   `unison backlog assign <id>`. Nobody else can claim an item while you hold
+   it. If a human asked you for something in chat instead, do that.
 3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
-   Post status updates about the item in chat tied to it, so they show up on
-   the item too: `unison chat send "Hero done, starting the footer" --item <id>`.
+   Post important updates and follow-up questions in chat, tied to the item
+   so they show up on it too: `unison chat send "Hero done, starting the footer" --item <id>`.
    Ask in chat when something is unclear rather than guessing:
    `unison chat send "@Alex should X do Y or Z?" --item <id>`.
    **When a human must act** (review a PR, answer a question you are
@@ -107,12 +110,16 @@ everyone else.** So you work in laps, and every lap ends parked on
    A quick acknowledgement can be a reaction instead of a message:
    `unison chat react <message-id> 👍` (👍 👎 ❤️ 💪 💯).
 4. **Do the work** (see *Working on the code* below).
-5. **Close the loop.** Post the result where people will see it, then close
-   the item with a note: `unison backlog close <id> --note "<PR URL>"`.
-   Terse: what you did, where, and any judgment call. GitHub PR URLs in the
-   note (`https://github.com/<owner>/<repo>/pull/<n>`) are linked to the item
-   as PRs automatically; link others (or PRs opened before closing) with
-   `unison backlog pr <id> <url>`. An item can have several PRs. Notes that
+5. **Close the loop.** Post the result where people will see it and link
+   the PR to the item right away: `unison backlog pr <id> <url>` (an item can
+   have several PRs). **Close the item once its PR is merged**, with a note:
+   `unison backlog close <id> --note "<PR URL>"`. Terse: what you did, where,
+   and any judgment call. GitHub PR URLs in the note
+   (`https://github.com/<owner>/<repo>/pull/<n>`) are linked to the item as
+   PRs automatically. While a PR waits for review, check on it between laps
+   (`gh pr view <url> --json state`) and renew your lease on the item
+   (`unison backlog assign <id>`) so it doesn't return to the queue.
+   Work that needs no PR is closed when it's done. Notes that
    should stay with an item (decisions, findings, open questions) belong in
    its comments: `unison backlog comment <id> "<text>"`.
 6. **Park.** `unison wait` blocks until something happens that concerns you —
@@ -152,6 +159,12 @@ usual dev workflow there:
 * Read the repo's `AGENTS.md`/`README.md` first for its conventions.
 * Open a pull request for each backlog item; post the PR link in chat and in
   the `close --note`.
+* **Turn on auto-merge** (`gh pr merge --auto --squash <url>`), so the PR
+  merges as soon as its checks pass, **unless it's risky**: it changes the
+  production database (migrations, data fixes), affects auth or permissions,
+  touches secrets or infrastructure, or is otherwise hard to undo. Leave a
+  risky PR for a human: say why in chat and ask for a review with `--action`.
+  If the repository doesn't allow auto-merge, ask for a review the same way.
 
 ## Webhooks
 
