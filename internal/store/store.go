@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -809,6 +810,37 @@ func (s *Store) EventsAfter(ctx context.Context, wsID string, after int64, limit
 	if err != nil {
 		return nil, err
 	}
+	return scanEvents(rows)
+}
+
+// ActivityTypes are the events chat shows as one-line activity updates
+// (#93): backlog items added, closed and reopened, and people joining and
+// leaving.
+var ActivityTypes = []string{"backlog.added", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"}
+
+// RecentActivity returns the workspace's latest activity events (see
+// ActivityTypes), oldest first: at most limit of them (200 by default).
+func (s *Store) RecentActivity(ctx context.Context, wsID string, limit int) ([]Event, error) {
+	if limit <= 0 || limit > 1000 {
+		limit = 200
+	}
+	args := []any{wsID}
+	for _, t := range ActivityTypes {
+		args = append(args, t)
+	}
+	args = append(args, limit)
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(ActivityTypes)), ", ")
+	rows, err := s.db.QueryContext(ctx, `SELECT seq, workspace_id, type, COALESCE(actor_id, 0), data, created_at FROM events
+		WHERE workspace_id = ? AND type IN (`+marks+`) ORDER BY seq DESC LIMIT ?`, args...)
+	if err != nil {
+		return nil, err
+	}
+	out, err := scanEvents(rows)
+	slices.Reverse(out)
+	return out, err
+}
+
+func scanEvents(rows *sql.Rows) ([]Event, error) {
 	defer rows.Close()
 	out := []Event{}
 	for rows.Next() {

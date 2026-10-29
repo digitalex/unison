@@ -585,3 +585,42 @@ func BenchmarkRenumber(b *testing.B) {
 		})
 	}
 }
+
+func TestRecentActivity(t *testing.T) {
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+	it, _, err := s.AddItem(ctx, a, "Ship it", "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.PostMessage(ctx, a, "not activity", nil, nil); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.CloseItem(ctx, a, it.ID, ""); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.ReopenItem(ctx, a, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	evs, err := s.RecentActivity(ctx, a.WorkspaceID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var types []string
+	for _, e := range evs {
+		types = append(types, e.Type)
+	}
+	// The two joins from setup, then the item's life; no message.
+	want := []string{"participant.joined", "participant.joined", "backlog.added", "backlog.closed", "backlog.reopened"}
+	if !equal(types, want) {
+		t.Errorf("activity = %v, want %v", types, want)
+	}
+	// The limit keeps the newest, still oldest first.
+	evs, err = s.RecentActivity(ctx, a.WorkspaceID, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(evs) != 2 || evs[0].Type != "backlog.closed" || evs[1].Type != "backlog.reopened" {
+		t.Errorf("limited activity = %+v, want closed then reopened", evs)
+	}
+}

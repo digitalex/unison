@@ -24,16 +24,24 @@ function isDormant(g, now) {
   return g.all.every((q) => agentStatus(q, now) || !q.last_seen_at || now - q.last_seen_at >= DORMANT_WINDOW_MS);
 }
 
+// The events chat shows as one-line activity updates (#93); the server's
+// store.ActivityTypes.
+const ACTIVITY_TYPES = ["backlog.added", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"];
+
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
   // A message about an item changes the item's message count; one that asks
   // you to act (or is done) changes your count of open actions (on /me).
   if (type.startsWith("message.")) return data?.item_id ? ["messages", "backlog", "me", "participants"] : ["messages", "me", "participants"];
-  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) return ["backlog", "participants"];
+  if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) {
+    return ACTIVITY_TYPES.includes(type) ? ["backlog", "participants", "activity"] : ["backlog", "participants"];
+  }
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
+  if (type === "participant.joined") return ["participants", "members", "activity"];
   if (type.startsWith("participant.")) return ["participants", "members"];
+  if (type === "member.removed") return ["members", "activity"];
   if (type.startsWith("member.")) return ["members"];
   if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
   return [];
@@ -63,6 +71,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [me, setMe] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
+  const [activity, setActivity] = useState([]);
   const [backlog, setBacklog] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
   const [members, setMembers] = useState({ members: [] });
@@ -80,6 +89,7 @@ export default function Workspace({ id, view, navigate, account }) {
     workspace: () => call("GET").then(setWorkspace),
     participants: () => call("GET", "/participants").then(setParticipants),
     messages: () => call("GET", "/messages?limit=500").then(setMessages),
+    activity: () => call("GET", "/activity").then(setActivity),
     backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     members: () => call("GET", "/members").then(setMembers),
@@ -199,6 +209,7 @@ export default function Workspace({ id, view, navigate, account }) {
           ) : view === "chat" ? (
             <Chat
               messages={messages}
+              activity={activity}
               updateMessages={setMessages}
               newAfter={newAfter}
               mention={mention}
