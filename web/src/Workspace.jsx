@@ -50,6 +50,7 @@ function collectionFor({ type, data }) {
     return reloads;
   }
   if (type.startsWith("webhook.")) return ["webhooks"];
+  if (type.startsWith("schedule.")) return ["schedules"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
@@ -107,6 +108,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [activity, setActivity] = useState([]);
   const [backlog, setBacklog] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
+  const [schedules, setSchedules] = useState([]);
   const [members, setMembers] = useState({ members: [] });
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
@@ -128,6 +130,7 @@ export default function Workspace({ id, view, navigate, account }) {
     // Open and assigned items, after events that renumber them (#105).
     queued: () => call("GET", "/backlog").then((queued) => setBacklog((list) => withQueued(list, queued))),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
+    schedules: () => call("GET", "/schedules").then(setSchedules),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
@@ -314,7 +317,7 @@ export default function Workspace({ id, view, navigate, account }) {
               error={errorBar}
             />
           ) : (
-            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
+            <Backlog items={backlog} schedules={schedules} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
           )}
         </main>
       )}

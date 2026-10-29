@@ -3,6 +3,7 @@ import { GitPullRequest, MessagesSquare, Pencil, Trash2, X } from "lucide-react"
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter } from "./backlogFormat.js";
 import Markdown from "./Markdown.jsx";
 import { messageLink } from "./nav.js";
+import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
@@ -55,6 +56,7 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
         <>
           <span className={`status ${item.status}`} title={STATUS_LABELS[item.status]} />
           <span className="item-id">#{item.id}</span>
+          <RecurringMarker item={item} />
           <span className="dialog-title-text">{item.title}</span>
         </>
       }
