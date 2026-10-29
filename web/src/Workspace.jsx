@@ -3,7 +3,7 @@ import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, Lis
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
-import Chat, { myParticipants } from "./Chat.jsx";
+import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
@@ -20,8 +20,8 @@ import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const DORMANT_WINDOW_MS = 15 * 60 * 1000;
 
-function isDormant(g, now) {
-  return g.all.every((q) => agentStatus(q, now) || !q.last_seen_at || now - q.last_seen_at >= DORMANT_WINDOW_MS);
+function isDormant(p, now) {
+  return agentStatus(p, now) || !p.last_seen_at || now - p.last_seen_at >= DORMANT_WINDOW_MS;
 }
 
 // The events chat shows as one-line activity updates (#93); the server's
@@ -112,7 +112,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
-  const { unread, newAfter } = useChatUnread(id, messages, myParticipants(me, participants), view === "chat");
+  const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat");
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
@@ -356,7 +356,7 @@ function useScreens(id, view, navigate) {
 // useChatUnread counts the messages from others that arrived since you last
 // had the chat screen open (remembered across reloads). newAfter is the
 // newest message you had seen when you opened it: later ones are new to you.
-function useChatUnread(workspaceId, messages, mine, active) {
+function useChatUnread(workspaceId, messages, me, active) {
   const seenKey = `unison.chat.seen.${workspaceId}`;
   const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
   const [seenAtOpen, setSeenAtOpen] = useState(null);
@@ -370,8 +370,8 @@ function useChatUnread(workspaceId, messages, mine, active) {
     }
   }, [active, latestId, seenId, seenKey]);
   return {
-    // Your own messages, from any of your devices, are never unread.
-    unread: messages.filter((m) => m.id > seenId && !mine.has(m.author_id)).length,
+    // Your own messages are never unread.
+    unread: messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length,
     newAfter: seenAtOpen ?? seenId,
   };
 }
@@ -472,7 +472,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
   const peopleOpen = userPeopleOpen !== null ? userPeopleOpen : !isLowHeight;
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
 
-  const peopleCount = participants ? rosterGroups(participants).length : null;
+  const peopleCount = participants ? participants.length : null;
   const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
 
   return (
@@ -802,33 +802,14 @@ function InviteAgent({ call }) {
   );
 }
 
-// rosterGroups folds the participants linked to one account into a single
-// entry, in a stable order (by name) so the list doesn't reshuffle as people
-// come and go. An entry is shown with its first participant (the oldest:
-// its name doesn't change with the device used last) and the status of its
-// most recently active one (the list arrives most recently active first).
-// Unlinked participants are their own entries.
-function rosterGroups(participants) {
-  const groups = [];
-  const byUser = new Map();
-  for (const p of participants) {
-    if (p.user_id && byUser.has(p.user_id)) {
-      byUser.get(p.user_id).all.push(p);
-      continue;
-    }
-    const g = { key: p.user_id ? `u${p.user_id}` : `p${p.id}`, all: [p] };
-    if (p.user_id) byUser.set(p.user_id, g);
-    groups.push(g);
-  }
-  for (const g of groups) {
-    g.primary = g.all.reduce((a, b) => (b.id < a.id ? b : a));
-    g.status = g.all.find((q) => q.status)?.status || "";
-  }
-  return groups.sort((a, b) => a.primary.name.localeCompare(b.primary.name, undefined, { sensitivity: "base" }) || a.primary.id - b.primary.id);
+// byName sorts participants in a stable order (by name), so the roster
+// doesn't reshuffle as people come and go.
+function byName(participants) {
+  return [...participants].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id - b.id);
 }
 
-// People: who's here, one row per person (participants linked to the same
-// account are grouped), with a presence dot and their status. Inactive users
+// People: who's here, one row per participant (an account has one per
+// workspace, #99), with a presence dot and their status. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
 // at the end of the list. Your own row sets your status; anyone else's starts a
 // chat message to them (@Name).
@@ -848,28 +829,25 @@ function People({ participants, me, call, onError, onMention }) {
     return () => clearInterval(timer);
   }, []);
 
-  const groups = rosterGroups(participants);
-  const activeGroups = [];
-  const dormantGroups = [];
-  for (const g of groups) {
-    if (isDormant(g, now)) {
-      dormantGroups.push(g);
+  const activePeople = [];
+  const dormantPeople = [];
+  for (const p of byName(participants)) {
+    if (isDormant(p, now)) {
+      dormantPeople.push(p);
     } else {
-      activeGroups.push(g);
+      activePeople.push(p);
     }
   }
 
   return (
     <ul className="nav-list people" aria-label="Who's here">
-      {activeGroups.map((g) => {
-        const p = g.primary;
+      {activePeople.map((p) => {
         // Logged-out (or revoked) agents are never shown as active.
-        const active = g.all.some((q) => now - q.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(q, now));
-        const mine = me && g.all.some((q) => q.id === me.id);
-        const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
+        const active = now - p.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(p, now);
+        const mine = me && p.id === me.id;
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-        const status = g.status || (active ? "active" : "away");
-        const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — ${status}`;
+        const status = p.status || (active ? "active" : "away");
+        const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — ${status}`;
         const content = (
           <>
             <span className={active ? "avatar active" : "avatar"} aria-hidden="true">
@@ -877,11 +855,11 @@ function People({ participants, me, call, onError, onMention }) {
               <span className="dot" />
             </span>
             <span className="person-name">{p.name}</span>
-            {g.status && <span className="person-status">{g.status}</span>}
+            {p.status && <span className="person-status">{p.status}</span>}
           </>
         );
         return (
-          <li key={g.key}>
+          <li key={p.id}>
             {mine ? (
               <button type="button" className="nav-link person" title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
                 {content}
@@ -894,18 +872,16 @@ function People({ participants, me, call, onError, onMention }) {
           </li>
         );
       })}
-      {dormantGroups.length > 0 && (
-        <li className={activeGroups.length > 0 ? "dormant-row with-sep" : "dormant-row"} key="dormant">
+      {dormantPeople.length > 0 && (
+        <li className={activePeople.length > 0 ? "dormant-row with-sep" : "dormant-row"} key="dormant">
           <div className="dormant-stack" aria-label="Inactive users">
-            {dormantGroups.map((g) => {
-              const p = g.primary;
-              const mine = me && g.all.some((q) => q.id === me.id);
-              const also = g.all.length > 1 ? ` (also ${g.all.slice(1).map((q) => q.name).join(", ")})` : "";
+            {dormantPeople.map((p) => {
+              const mine = me && p.id === me.id;
               const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-              const label = `${p.name}${agentOf}${also}${mine ? " (you)" : ""} — inactive`;
+              const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — inactive`;
               return (
                 <button
-                  key={g.key}
+                  key={p.id}
                   type="button"
                   className="dormant-chip"
                   title={mine ? `${label} · set status` : `${label} · message @${p.name}`}

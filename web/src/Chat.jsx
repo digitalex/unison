@@ -54,7 +54,6 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   const roots = messages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
   const log = byTime(roots, activity);
   const thread = threadId ? byId.get(threadId) : null;
-  const mine = myParticipants(me, participants);
 
   useOpenShownThread(shown, byId, setThreadId);
   useEffect(() => {
@@ -89,7 +88,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   // setDone marks a message that asks you to act done (or not), at once;
   // a failed call puts it back.
   const setDone = async (m, done) => {
-    const show = (on) => updateMessages((list) => list.map((x) => (x.id === m.id ? { ...x, done_by: withDone(x, mine, on) } : x)));
+    const show = (on) => updateMessages((list) => list.map((x) => (x.id === m.id ? { ...x, done_by: withDone(x, me?.id, on) } : x)));
     show(done);
     try {
       await call(done ? "POST" : "DELETE", `/messages/${m.id}/done`);
@@ -100,7 +99,6 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   };
   const messageProps = (m, root) => ({
     message: m,
-    mine,
     onDone: (done) => setDone(m, done),
     isNew: m.id > newAfter,
     participants,
@@ -130,7 +128,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
                   <ThreadSummary
                     replies={replies.get(m.id)}
                     participants={participants}
-                    mine={mine}
+                    me={me}
                     newAfter={newAfter}
                     open={threadId === m.id}
                     onOpen={() => setThreadId(threadId === m.id ? null : m.id)}
@@ -243,15 +241,6 @@ function ActivityLine({ event, participants }) {
   );
 }
 
-// myParticipants is the set of your participant IDs: you on any of your
-// account's devices (each can be a participant of its own). Your messages
-// from any of them are never new to you; actions are per account.
-export function myParticipants(me, participants) {
-  const mine = new Set(participants.filter((p) => p.id === me?.id || (me?.user_id && p.user_id === me.user_id)).map((p) => p.id));
-  if (me) mine.add(me.id);
-  return mine;
-}
-
 function countLabel(n) {
   return n === 1 ? "1 reply" : `${n} replies`;
 }
@@ -260,10 +249,10 @@ function countLabel(n) {
 // log: how many replies, who replied, and when the last one came. It
 // stands out when the thread has replies new to you; clicking it opens (or
 // closes) the thread.
-function ThreadSummary({ replies, participants, mine, newAfter, open, onOpen }) {
+function ThreadSummary({ replies, participants, me, newAfter, open, onOpen }) {
   const last = replies[replies.length - 1];
   const authors = [...new Set(replies.map((r) => r.author_id))].slice(0, 4).map((id) => participants.find((p) => p.id === id)).filter(Boolean);
-  const fresh = replies.filter((r) => r.id > newAfter && !mine.has(r.author_id)).length;
+  const fresh = replies.filter((r) => r.id > newAfter && r.author_id !== me?.id).length;
   const at = new Date(last.created_at);
   return (
     <button type="button" className={["thread-summary", fresh && "has-new", open && "open"].filter(Boolean).join(" ")} aria-expanded={open} onClick={onOpen}>
@@ -439,11 +428,11 @@ function useShowMessage(shown, messages) {
   return flashed;
 }
 
-function Message({ message, mine, onDone, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
+function Message({ message, onDone, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
   const author = participants.find((p) => p.id === message.author_id);
-  const asksMe = (message.action_for || []).some((id) => mine.has(id));
-  const needsMe = asksMe && (message.action_for || []).some((id) => mine.has(id) && !(message.done_by || []).includes(id));
-  const mentioned = isNew && me && !mine.has(message.author_id) && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
+  const asksMe = Boolean(me) && (message.action_for || []).includes(me.id);
+  const needsMe = asksMe && !(message.done_by || []).includes(me.id);
+  const mentioned = isNew && me && message.author_id !== me.id && new RegExp(`@(${me.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}|all|everyone)\\b`, "i").test(message.body);
   const created = new Date(message.created_at);
   const isReply = Boolean(message.parent_id);
   return (
@@ -530,11 +519,11 @@ function ActionLine({ message, participants, asksMe, needsMe, onDone }) {
   );
 }
 
-// withDone returns message m's done_by with your participants (mine) that
-// it asks to act marked done (on) or not.
-function withDone(m, mine, on) {
-  const done = (m.done_by || []).filter((id) => !mine.has(id));
-  return on ? [...done, ...(m.action_for || []).filter((id) => mine.has(id))] : done;
+// withDone returns message m's done_by with you (myId) marked done (on, if
+// it asks you to act) or not.
+function withDone(m, myId, on) {
+  const done = (m.done_by || []).filter((id) => id !== myId);
+  return on && (m.action_for || []).includes(myId) ? [...done, myId] : done;
 }
 
 // withReaction returns reactions with participant id's reaction emoji on or

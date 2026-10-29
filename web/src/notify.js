@@ -76,19 +76,16 @@ function preview(text) {
 }
 
 // notification turns a workspace event into {title, body, tag, message} to
-// show, or null when it isn't for you. mine is the set of your participant
-// IDs (all of your account's devices).
-export function notification(event, me, mine, participants) {
-  if (!me || mine.has(event.actor_id)) return null;
+// show, or null when it isn't for you.
+export function notification(event, me, participants) {
+  if (!me || event.actor_id === me.id) return null;
   const who = participants.find((p) => p.id === event.actor_id);
   const name = who ? `${who.emoji ? `${who.emoji} ` : ""}${who.name}` : "Someone";
   const d = event.data || {};
   if (event.type === "message.created") {
-    const asksMe = d.action_required && (d.action_for || []).some((id) => mine.has(id));
+    const asksMe = d.action_required && (d.action_for || []).includes(me.id);
     if (asksMe) return { title: `${name} needs you`, body: preview(d.body), tag: `msg-${d.id}`, message: d.id };
-    const myNames = new Set(participants.filter((p) => mine.has(p.id)).map((p) => p.name));
-    if (me?.name) myNames.add(me.name);
-    if (me?.user?.display_name) myNames.add(me.user.display_name);
+    const myNames = new Set([me.name, me.user?.display_name].filter(Boolean));
     if (mentionsAny(d.body, myNames)) return { title: `${name} mentioned you`, body: preview(d.body), tag: `msg-${d.id}`, message: d.id };
     return null;
   }
@@ -123,10 +120,7 @@ export function useNotifier(me, participants, view) {
     if (document.visibilityState === "visible" && document.hasFocus() && event.type === "participant.joined") return;
 
     const participants = [...latest.current.participants, ...joined.current];
-    const myUserId = me?.user_id || me?.user?.id;
-    const mine = new Set(participants.filter((p) => p.id === me?.id || (myUserId && p.user_id === myUserId)).map((p) => p.id));
-    if (me?.id) mine.add(me.id);
-    const n = notification(event, me, mine, participants);
+    const n = notification(event, me, participants);
     if (!n) return;
     try {
       const shown = new Notification(n.title, { body: n.body, tag: n.tag, icon: "/apple-touch-icon.png" });
