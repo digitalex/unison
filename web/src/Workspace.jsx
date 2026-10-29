@@ -26,7 +26,7 @@ function isDormant(g, now) {
 
 // The events chat shows as one-line activity updates (#93); the server's
 // store.ActivityTypes.
-const ACTIVITY_TYPES = ["backlog.added", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"];
+const ACTIVITY_TYPES = ["backlog.added", "backlog.assigned", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"];
 
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {

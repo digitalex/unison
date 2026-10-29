@@ -317,11 +317,16 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 
 // AssignItem atomically assigns an item to assigneeID with a fresh lease.
 // It succeeds only if the item is open, its lease has expired, or it is
-// already assigned to the same participant (which renews the lease).
+// already assigned to the same participant (which renews the lease). A
+// renewal records "backlog.renewed" rather than "backlog.assigned", so the
+// chat shows only fresh assignments.
 func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assigneeID int64) (*Item, []Event, error) {
-	return s.mutateItem(ctx, actor, id, "backlog.assigned", func(t *tx, log *eventLog, it *Item) error {
-		now := log.now
-		return assign(t, it, assigneeID, now)
+	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
+		eventType := "backlog.assigned"
+		if it.Status == StatusAssigned {
+			eventType = "backlog.renewed"
+		}
+		return eventType, assign(t, it, assigneeID, log.now)
 	})
 }
 
@@ -488,6 +493,13 @@ func unlinkMessages(t *tx, log *eventLog, actor *Participant, itemID int64) erro
 // mutateItem loads an item (after expiring stale leases), applies fn, then
 // reloads it and records an event of the given type.
 func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, eventType string, fn func(*tx, *eventLog, *Item) error) (*Item, []Event, error) {
+	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
+		return eventType, fn(t, log, it)
+	})
+}
+
+// mutateItemAs is mutateItem with the event type chosen by fn.
+func (s *Store) mutateItemAs(ctx context.Context, actor *Participant, id int64, fn func(*tx, *eventLog, *Item) (string, error)) (*Item, []Event, error) {
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		if err := expireLeases(t, log, actor.WorkspaceID); err != nil {
@@ -497,7 +509,8 @@ func (s *Store) mutateItem(ctx context.Context, actor *Participant, id int64, ev
 		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
 			return err
 		}
-		if err := fn(t, log, it); err != nil {
+		eventType, err := fn(t, log, it)
+		if err != nil {
 			return err
 		}
 		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
