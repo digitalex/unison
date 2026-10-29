@@ -3,7 +3,7 @@ import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, Lis
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
-import Chat from "./Chat.jsx";
+import Chat, { myParticipants } from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
@@ -79,7 +79,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
-  const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat");
+  const { unread, newAfter } = useChatUnread(id, messages, myParticipants(me, participants), view === "chat");
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
@@ -266,7 +266,7 @@ function useScreens(id, view, navigate) {
 // useChatUnread counts the messages from others that arrived since you last
 // had the chat screen open (remembered across reloads). newAfter is the
 // newest message you had seen when you opened it: later ones are new to you.
-function useChatUnread(workspaceId, messages, me, active) {
+function useChatUnread(workspaceId, messages, mine, active) {
   const seenKey = `unison.chat.seen.${workspaceId}`;
   const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
   const [seenAtOpen, setSeenAtOpen] = useState(null);
@@ -280,7 +280,8 @@ function useChatUnread(workspaceId, messages, me, active) {
     }
   }, [active, latestId, seenId, seenKey]);
   return {
-    unread: messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length,
+    // Your own messages, from any of your devices, are never unread.
+    unread: messages.filter((m) => m.id > seenId && !mine.has(m.author_id)).length,
     newAfter: seenAtOpen ?? seenId,
   };
 }
