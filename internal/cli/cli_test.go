@@ -129,6 +129,11 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("double assign: exit %d, stderr %q", code, errOut)
 	}
 
+	// The items the human added wake the agent, even with --mentions (#90).
+	if out := e.ok(agent, "wait", "--mentions", "--timeout", "10"); !strings.Contains(out, `added #1 "Second"`) || !strings.Contains(out, `added #2 "First"`) {
+		t.Errorf("wait = %q, want the new items", out)
+	}
+
 	// The human's message wakes the parked agent.
 	done := make(chan string)
 	go func() {
@@ -184,6 +189,21 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if !strings.Contains(out, `commented on #1 "Second"`) || !strings.Contains(out, "still needed?") {
 		t.Errorf("wait = %q, want the comment", out)
+	}
+
+	// A new backlog item wakes `wait --mentions` too: it is work to pick up (#90).
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		var out, errOut bytes.Buffer
+		Run([]string{"--server", e.url, "--workspace", ws.ID, "--token", tokenOf(t, human), "backlog", "add", "Third"}, &out, &errOut)
+		done <- errOut.String()
+	}()
+	out = e.ok(agent, "wait", "--mentions", "--timeout", "10")
+	if errOut := <-done; errOut != "" {
+		t.Fatalf("backlog add: %s", errOut)
+	}
+	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog claim") {
+		t.Errorf("wait = %q, want the new item", out)
 	}
 	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
 		t.Errorf("comment = %q", out)
