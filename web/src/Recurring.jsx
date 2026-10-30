@@ -1,15 +1,17 @@
-import { useState } from "react";
-import { ChevronDown, ChevronRight, Play, Plus, Repeat, Trash2 } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { submitOnModEnter } from "./backlogFormat.js";
+import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Select, Textarea } from "./ui/Input.jsx";
+import ScreenHead from "./ui/ScreenHead.jsx";
 
-// Recurring tasks (#113): schedules that add a backlog item at the top of the
-// queue every day, or every week on a given day, at 00:00 server time (the
-// server makes the runs, #112). The section lists them with their next run;
-// a row opens the schedule to edit or delete it.
+// Recurring tasks (#113, #120): a top-level screen listing the schedules that
+// add a backlog item at the top of the queue every day, or every week on a
+// given day, at 00:00 server time (the server makes the runs, #112). Clicking
+// a row opens the schedule to edit, run now, or delete it.
 
 const WEEKDAYS = [
   ["mon", "Monday"],
@@ -42,45 +44,84 @@ export function RecurringMarker({ item }) {
   );
 }
 
-// RecurringSection is the backlog's Recurring group: collapsible, like Done.
-export default function RecurringSection({ schedules, run, onRan }) {
-  const [open, setOpen] = useState(false);
-  const [editing, setEditing] = useState(null); // A schedule, or "new".
+export default function Recurring({ schedules, call, onError, head, error }) {
+  const [editing, setEditing] = useState(null); // A schedule id, or "new".
+  const [ran, setRan] = useState(null); // Last Run now result: { item, added }.
+  const run = (method, suffix, payload) => call(method, suffix, payload).catch((e) => onError(e.message));
+  const activeSchedule = editing && editing !== "new" ? schedules.find((s) => s.id === editing) : null;
+
+  useEffect(() => {
+    if (editing !== null && editing !== "new" && !activeSchedule) setEditing(null);
+  }, [editing, activeSchedule]);
+
+  useEffect(() => {
+    if (!ran) return;
+    const t = setTimeout(() => setRan(null), 6000);
+    return () => clearTimeout(t);
+  }, [ran]);
+
   return (
-    <>
-      <button type="button" className="group-head" aria-expanded={open} onClick={() => setOpen(!open)}>
-        {open ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-        <Repeat aria-hidden="true" className="group-icon" />
-        Recurring
-        <span className="count">{schedules.length}</span>
-      </button>
-      {open && (
-        <>
-          {schedules.map((s) => (
-            <div key={s.id} className="item recurring">
-              <div className="row" onClick={() => setEditing(s)}>
-                <span className="rank" />
-                <span className="recurring-marker" aria-hidden="true">
-                  <Repeat />
-                </span>
-                <button type="button" className="row-title" aria-haspopup="dialog">
-                  {s.title}
-                </button>
-                <span className="chip">{cadenceLabel(s)}</span>
-                <span className="meta" title={new Date(s.next_due_at).toLocaleString()}>
-                  next {nextRun(s.next_due_at)}
-                </span>
+    <section className="screen" aria-label="Recurring">
+      <ScreenHead title="Recurring">
+        {head}
+        <Button variant="primary" size="small" onClick={() => setEditing("new")} aria-haspopup="dialog">
+          <Plus aria-hidden="true" />
+          <span className="label">New task</span>
+        </Button>
+      </ScreenHead>
+      {error}
+      <div className="screen-body">
+        {ran && (
+          <p role="status" className="error-bar notice-bar">
+            <span>
+              {ran.added ? (
+                <>
+                  Added <a {...itemLink(ran.item.id)}>#{ran.item.id}</a> to the top of the backlog.
+                </>
+              ) : (
+                <>
+                  <a {...itemLink(ran.item.id)}>#{ran.item.id}</a> from this recurring task is still open, so the run was noted on it.
+                </>
+              )}
+            </span>
+            <Button variant="ghost" onClick={() => setRan(null)}>
+              dismiss
+            </Button>
+          </p>
+        )}
+        {schedules.length === 0 ? (
+          <p className="recurring-empty">No recurring tasks yet.</p>
+        ) : (
+          <div className="recurring-list">
+            {schedules.map((s) => (
+              <div key={s.id} className="item recurring">
+                <div
+                  className="row"
+                  onClick={(e) => {
+                    e.currentTarget.querySelector(".row-title").focus();
+                    setEditing(s.id);
+                  }}
+                >
+                  <span className="recurring-marker" aria-hidden="true">
+                    <Repeat />
+                  </span>
+                  <button type="button" className="row-title" aria-haspopup="dialog">
+                    {s.title}
+                  </button>
+                  <span className="chip">{cadenceLabel(s)}</span>
+                  <span className="meta" title={new Date(s.next_due_at).toLocaleString()}>
+                    next {nextRun(s.next_due_at)}
+                  </span>
+                </div>
               </div>
-            </div>
-          ))}
-          <button type="button" className="add-row" onClick={() => setEditing("new")}>
-            <Plus aria-hidden="true" />
-            Add recurring task
-          </button>
-        </>
+            ))}
+          </div>
+        )}
+      </div>
+      {(editing === "new" || activeSchedule) && (
+        <ScheduleDialog key={editing} schedule={activeSchedule} run={run} onRan={setRan} onClose={() => setEditing(null)} />
       )}
-      {editing && <ScheduleDialog schedule={editing === "new" ? null : editing} run={run} onRan={onRan} onClose={() => setEditing(null)} />}
-    </>
+    </section>
   );
 }
 

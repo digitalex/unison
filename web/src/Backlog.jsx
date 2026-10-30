@@ -3,18 +3,18 @@ import { ChevronDown, ChevronRight, GitPullRequest, GripVertical, MessageSquare,
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { meta, name, prLabel } from "./backlogFormat.js";
 import { OPEN_ITEM } from "./nav.js";
-import RecurringSection, { RecurringMarker } from "./Recurring.jsx";
+import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The prioritized backlog, grouped into In progress (assigned), Open, the
-// recurring tasks that add items to it (#113), and Done.
+// The prioritized backlog, grouped into In progress (assigned), Open, and
+// Done.
 // Queued items (open + assigned) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
-export default function Backlog({ items, schedules, participants, me, workspace, call, onError, head, error }) {
+export default function Backlog({ items, participants, me, workspace, call, onError, head, error }) {
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
@@ -68,12 +68,6 @@ export default function Backlog({ items, schedules, participants, me, workspace,
   useEffect(() => {
     if (pendingRows.length < adding.length) setAdding(pendingRows);
   }, [pendingRows.length, adding.length]);
-  // Run now (#116): a new item is revealed like one just added; if the last
-  // run is still open, the run was noted on it instead.
-  const onRan = ({ item, added }) => {
-    if (added) setCreated(item.id);
-    else setNotice(`#${item.id} from this recurring task is still open, so the run was noted on it.`);
-  };
 
   return (
     <section className="screen" aria-label="Backlog">
@@ -110,8 +104,6 @@ export default function Backlog({ items, schedules, participants, me, workspace,
         {pendingRows.map((x) => (
           <PendingRow key={x.id} title={x.title} />
         ))}
-
-        <RecurringSection schedules={schedules} run={run} onRan={onRan} />
 
         <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
           {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}

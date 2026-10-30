@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
@@ -9,6 +9,7 @@ import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { agentStatus } from "./agents.js";
 import { ago } from "./backlogFormat.js";
+import Recurring from "./Recurring.jsx";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -106,8 +107,8 @@ function isGateError(e) {
 
 // Workspace is a workspace's page. A sidebar (a tab bar at the bottom on
 // phones) switches between its screens, and the current one fills the main
-// pane: view is "backlog", "chat" or "settings". They all share the
-// data and live updates.
+// pane: view is "backlog", "recurring", "chat" or "settings". They all share
+// the data and live updates.
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
@@ -247,7 +248,7 @@ export default function Workspace({ id, view, navigate, account }) {
   if (gate) return <GatePage gate={gate} account={account} workspaceId={id} onJoined={onJoined} />;
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
-  const counts = { backlog: backlog.filter((it) => it.status !== "done").length, chat: unread, actions: me?.open_actions || 0 };
+  const counts = { backlog: backlog.filter((it) => it.status !== "done").length, recurring: schedules.length, chat: unread, actions: me?.open_actions || 0 };
   // The screen header's controls on phones: Invite and the account menu.
   const headExtras = (
     <HeadExtras workspace={workspace} call={call} account={account} members={members} settingsLink={screens.link("settings")} />
@@ -331,8 +332,10 @@ export default function Workspace({ id, view, navigate, account }) {
               head={headExtras}
               error={errorBar}
             />
+          ) : view === "recurring" ? (
+            <Recurring schedules={schedules} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : (
-            <Backlog items={backlog} schedules={schedules} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
+            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
           )}
         </main>
       )}
@@ -459,6 +462,7 @@ function useShownMessage(show) {
 
 const SCREENS = [
   { id: "backlog", label: "Backlog", Icon: ListTodo },
+  { id: "recurring", label: "Recurring", Icon: Repeat },
   { id: "chat", label: "Chat", Icon: MessageCircle },
 ];
 
