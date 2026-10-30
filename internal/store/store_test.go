@@ -130,22 +130,22 @@ func TestBacklogOrdering(t *testing.T) {
 	}
 }
 
-func TestAssignIsExclusiveAndRenewable(t *testing.T) {
+func TestStartIsExclusiveAndRenewable(t *testing.T) {
 	s, now, a, b := setup(t)
 	ctx := context.Background()
 	it, _, _ := s.AddItem(ctx, a, "task", "", 0)
-	got, _, err := s.AssignItem(ctx, b, it.ID, b.ID)
+	got, evs, err := s.StartItem(ctx, b, it.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.Status != StatusAssigned || *got.AssigneeID != b.ID {
-		t.Fatalf("assigned item = %+v", got)
+	if got.Status != StatusInProgress || *got.AssigneeID != b.ID || len(evs) != 1 || evs[0].Type != "backlog.started" {
+		t.Fatalf("started item = %+v, evs = %+v", got, evs)
 	}
-	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); !errors.Is(err, ErrConflict) {
-		t.Errorf("second assign err = %v, want ErrConflict", err)
+	if _, _, err := s.StartItem(ctx, a, it.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("second start err = %v, want ErrConflict", err)
 	}
 	*now = now.Add(time.Hour)
-	renewed, evs, err := s.AssignItem(ctx, b, it.ID, b.ID)
+	renewed, evs, err := s.StartItem(ctx, b, it.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,17 +157,85 @@ func TestAssignIsExclusiveAndRenewable(t *testing.T) {
 	}
 }
 
+func TestAssignmentDecoupledFromProgress(t *testing.T) {
+	s, now, a, b := setup(t)
+	ctx := context.Background()
+
+	// Create an item already assigned to a: stays open with no lease, and
+	// does not expire after LeaseDuration.
+	assigned, _, err := s.AddItemAssigned(ctx, b, "a's task", "body", 0, a.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if assigned.Status != StatusOpen || assigned.AssigneeID == nil || *assigned.AssigneeID != a.ID || assigned.LeaseExpiresAt != nil {
+		t.Fatalf("AddItemAssigned = %+v", assigned)
+	}
+	*now = now.Add(2 * LeaseDuration)
+	if got, _, err := s.GetItem(ctx, a.WorkspaceID, assigned.ID); err != nil || got.Status != StatusOpen || got.AssigneeID == nil || *got.AssigneeID != a.ID {
+		t.Fatalf("assigned open item after 24h = %+v, %v", got, err)
+	}
+
+	// ClaimNext by b skips a's assigned item, and StartItem by b conflicts.
+	if _, _, err := s.ClaimNext(ctx, b); !errors.Is(err, ErrNotFound) {
+		t.Errorf("ClaimNext by b with only a's assigned item: err = %v, want ErrNotFound", err)
+	}
+	if _, _, err := s.StartItem(ctx, b, assigned.ID); !errors.Is(err, ErrConflict) {
+		t.Errorf("StartItem by b on a's assigned item: err = %v, want ErrConflict", err)
+	}
+
+	// ClaimNext by a picks up a's assigned item and starts progress.
+	started, _, err := s.ClaimNext(ctx, a)
+	if err != nil || started.ID != assigned.ID || started.Status != StatusInProgress || started.LeaseExpiresAt == nil {
+		t.Fatalf("ClaimNext by a = %+v, %v", started, err)
+	}
+	origLease := *started.LeaseExpiresAt
+
+	// Reassigning an in-progress item keeps status and lease as-is and updates assignee only.
+	reassigned, evs, err := s.AssignItem(ctx, a, assigned.ID, b.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reassigned.Status != StatusInProgress || reassigned.AssigneeID == nil || *reassigned.AssigneeID != b.ID || *reassigned.LeaseExpiresAt != origLease || len(evs) != 1 || evs[0].Type != "backlog.assigned" {
+		t.Fatalf("reassigned in-progress = %+v, evs = %+v", reassigned, evs)
+	}
+
+	// StopItem moves back to open and clears lease while keeping assignee b.
+	stopped, _, err := s.StopItem(ctx, b, assigned.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped.Status != StatusOpen || stopped.AssigneeID == nil || *stopped.AssigneeID != b.ID || stopped.LeaseExpiresAt != nil {
+		t.Fatalf("StopItem = %+v", stopped)
+	}
+
+	// AssignItem(..., 0) clears assignee on an open item.
+	unassigned, evs, err := s.AssignItem(ctx, b, assigned.ID, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unassigned.Status != StatusOpen || unassigned.AssigneeID != nil || len(evs) != 1 || evs[0].Type != "backlog.unassigned" {
+		t.Fatalf("unassign = %+v, evs = %+v", unassigned, evs)
+	}
+
+	// ReleaseItem clears assignee on an assigned open item too.
+	s.AssignItem(ctx, a, assigned.ID, a.ID)
+	released, _, err := s.ReleaseItem(ctx, a, assigned.ID)
+	if err != nil || released.Status != StatusOpen || released.AssigneeID != nil {
+		t.Fatalf("ReleaseItem on assigned open = %+v, %v", released, err)
+	}
+}
+
 // Reading the backlog releases expired leases (in a write transaction),
 // and is a plain read otherwise (#106).
 func TestBacklogReadExpiresLeases(t *testing.T) {
 	s, now, a, b := setup(t)
 	ctx := context.Background()
 	it, _, _ := s.AddItem(ctx, a, "task", "", 0)
-	if _, _, err := s.AssignItem(ctx, b, it.ID, b.ID); err != nil {
+	if _, _, err := s.StartItem(ctx, b, it.ID); err != nil {
 		t.Fatal(err)
 	}
 	list, evs, err := s.ListBacklog(ctx, a.WorkspaceID, "")
-	if err != nil || len(evs) != 0 || len(list) != 1 || list[0].Status != StatusAssigned {
+	if err != nil || len(evs) != 0 || len(list) != 1 || list[0].Status != StatusInProgress {
 		t.Fatalf("live lease: list = %+v, events = %+v, err = %v", list, evs, err)
 	}
 	*now = now.Add(LeaseDuration + time.Second)
@@ -187,7 +255,7 @@ func TestLeaseExpires(t *testing.T) {
 	s, now, a, b := setup(t)
 	ctx := context.Background()
 	it, _, _ := s.AddItem(ctx, a, "task", "", 0)
-	if _, _, err := s.AssignItem(ctx, b, it.ID, b.ID); err != nil {
+	if _, _, err := s.StartItem(ctx, b, it.ID); err != nil {
 		t.Fatal(err)
 	}
 	*now = now.Add(LeaseDuration + time.Second)
@@ -202,8 +270,8 @@ func TestLeaseExpires(t *testing.T) {
 	if got.Status != StatusOpen || got.AssigneeID != nil {
 		t.Errorf("after expiry item = %+v, want open and unassigned", got)
 	}
-	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); err != nil {
-		t.Errorf("assign after expiry: %v", err)
+	if _, _, err := s.StartItem(ctx, a, it.ID); err != nil {
+		t.Errorf("start after expiry: %v", err)
 	}
 }
 
@@ -211,7 +279,7 @@ func TestLeaseExpiryIsLazy(t *testing.T) {
 	s, now, a, b := setup(t)
 	ctx := context.Background()
 	it, _, _ := s.AddItem(ctx, a, "task", "", 0)
-	s.AssignItem(ctx, b, it.ID, b.ID)
+	s.StartItem(ctx, b, it.ID)
 	*now = now.Add(LeaseDuration)
 	// No sweeper ran, but the claim must still see the lease as expired.
 	got, _, err := s.ClaimNext(ctx, a)
@@ -628,7 +696,16 @@ func TestRecentActivity(t *testing.T) {
 	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err := s.AssignItem(ctx, a, it.ID, a.ID); err != nil { // a renewal isn't activity
+	if _, _, err := s.StartItem(ctx, a, it.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := s.StartItem(ctx, a, it.ID); err != nil { // a renewal isn't activity
+		t.Fatal(err)
+	}
+	if _, _, err := s.StopItem(ctx, a, it.ID); err != nil { // stopping isn't activity
+		t.Fatal(err)
+	}
+	if _, _, err := s.AssignItem(ctx, a, it.ID, 0); err != nil { // unassigning isn't activity
 		t.Fatal(err)
 	}
 	if _, _, err := s.CloseItem(ctx, a, it.ID, ""); err != nil {
@@ -645,8 +722,8 @@ func TestRecentActivity(t *testing.T) {
 	for _, e := range evs {
 		types = append(types, e.Type)
 	}
-	// The two joins from setup, then the item's life; no message or renewal.
-	want := []string{"participant.joined", "participant.joined", "backlog.added", "backlog.assigned", "backlog.closed", "backlog.reopened"}
+	// The two joins from setup, then the item's life; no message, stop, unassign or renewal.
+	want := []string{"participant.joined", "participant.joined", "backlog.added", "backlog.assigned", "backlog.started", "backlog.closed", "backlog.reopened"}
 	if !equal(types, want) {
 		t.Errorf("activity = %v, want %v", types, want)
 	}

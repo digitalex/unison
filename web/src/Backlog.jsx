@@ -7,9 +7,8 @@ import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The prioritized backlog, grouped into In progress (assigned), Open, and
-// Done.
-// Queued items (open + assigned) share one priority order (the position
+// The prioritized backlog, grouped into In progress, Open, and Done.
+// Queued items (open + in_progress) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
@@ -28,7 +27,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
     if (position !== item.position) run("POST", `/backlog/${item.id}/move`, { position });
   };
   const queued = items.filter((it) => it.status !== "done");
-  const groups = { assigned: queued.filter((it) => it.status === "assigned"), open: queued.filter((it) => it.status === "open") };
+  const groups = { in_progress: queued.filter((it) => it.status === "in_progress"), open: queued.filter((it) => it.status === "open") };
   // Most recently closed first (items closed live are added at the end).
   const done = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
   const reorder = useReorder(groups, moveTo);
@@ -49,18 +48,19 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         onOpen={() => openItem(it.id)}
       />
     ));
-  const create = async ({ title, body }) => {
+  const create = async ({ title, body, assignee_id }) => {
     setCreating(false);
-    const temp = { id: `pending-${Date.now()}`, title, body };
+    const temp = { id: `pending-${Date.now()}`, title, body, assignee_id };
     setAdding((list) => [...list, temp]);
-    const item = await run("POST", "/backlog", { title, body });
+    const payload = assignee_id ? { title, body, assignee_id } : { title, body };
+    const item = await run("POST", "/backlog", payload);
     if (item) {
       setAdding((list) => list.map((x) => (x === temp ? { ...x, realId: item.id } : x)));
       setCreated(item.id);
     } else {
       // Failed (the error bar says why): give the text back to try again.
       setAdding((list) => list.filter((x) => x !== temp));
-      setCreating({ title, body });
+      setCreating({ title, body, assignee_id });
     }
   };
   const ids = new Set(items.map((it) => it.id));
@@ -95,14 +95,14 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
           {reorder.announcement}
         </p>
 
-        <GroupHead status="assigned" label="In progress" count={groups.assigned.length} />
-        {rows("assigned", groups.assigned)}
+        <GroupHead status="in_progress" label="In progress" count={groups.in_progress.length} />
+        {rows("in_progress", groups.in_progress)}
 
         <GroupHead status="open" label="Open" count={groups.open.length} />
         {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
         {rows("open", groups.open)}
         {pendingRows.map((x) => (
-          <PendingRow key={x.id} title={x.title} />
+          <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
         ))}
 
         <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
@@ -114,7 +114,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         {showDone && rows("done", done)}
       </div>
 
-      {creating && <NewItemDialog initial={creating === true ? null : creating} onClose={() => setCreating(false)} onCreate={create} />}
+      {creating && <NewItemDialog initial={creating === true ? null : creating} participants={participants} onClose={() => setCreating(false)} onCreate={create} />}
       {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
     </section>
   );
@@ -132,7 +132,7 @@ function GroupHead({ status, label, count }) {
 
 // PendingRow is an item on its way to the server (#128): its title, dimmed,
 // without the controls that need its number.
-function PendingRow({ title }) {
+function PendingRow({ title, assigneeId, participants }) {
   return (
     <div className="item open item-pending" aria-busy="true">
       <div className="row">
@@ -140,6 +140,7 @@ function PendingRow({ title }) {
         <span className="status open" />
         <span className="item-id">#…</span>
         <span className="row-title">{title}</span>
+        {assigneeId > 0 && <span className="chip">{name(participants, assigneeId)}</span>}
         <span className="meta">adding…</span>
       </div>
     </div>
@@ -148,6 +149,7 @@ function PendingRow({ title }) {
 
 function BacklogRow({ item, list, highlight, participants, me, repos, run, reorder, hintId, onOpen }) {
   const queued = item.status !== "done";
+  const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
   const classes = ["item", item.status, ...reorder.classesFor(item)];
   if (highlight) classes.push("item-created");
   const open = (e) => {
@@ -194,10 +196,10 @@ function BacklogRow({ item, list, highlight, participants, me, repos, run, reord
         )}
         {item.assignee_id && <span className="chip">{name(participants, item.assignee_id)}</span>}
         <span className="meta">{meta(item)}</span>
-        {item.status === "open" && me && (
+        {canStart && (
           <span className="row-actions" onClick={(e) => e.stopPropagation()}>
-            <Button title="Assign to me" onClick={() => run("POST", `/backlog/${item.id}/assign`)}>
-              Claim
+            <Button title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${item.id}/start`)}>
+              Start
             </Button>
           </span>
         )}

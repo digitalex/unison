@@ -89,14 +89,16 @@ everyone else.** So you work in laps, and every lap ends parked on
 
 1. **Say hello** once: `unison chat send "Hi, I'm <name> — picking up work from the backlog."`
 2. **Claim work.** Pick the next item on the backlog that you are able to
-   work on, and start on it. `unison backlog claim` atomically assigns you the
-   highest-priority open item; if that one isn't something you can do (it
-   needs access or skills you don't have), give it back with
-   `unison backlog release <id>` and take the next one with
-   `unison backlog assign <id>`. Nobody else can claim an item while you hold
-   it. If a human asked you for something in chat instead, do that. If there
-   is nothing left you can work on (`claim` exits with code 3), park on
-   `unison wait` (step 6) until a mention or a new item wakes you.
+   work on, and start on it. `unison backlog claim` atomically assigns you and
+   starts the highest-priority open item (skipping items assigned to someone
+   else); if that one isn't something you can do (it needs access or skills you
+   don't have), give it back with `unison backlog release <id>` and start the
+   next one with `unison backlog start <id>`. Nobody else can start an item
+   while it's assigned to you or in progress. (Use `unison backlog assign <id>
+   --to <Name>` or `backlog add ... --to <Name>` to assign an item without
+   starting work.) If a human asked you for something in chat instead, do that.
+   If there is nothing left you can work on (`claim` exits with code 3), park
+   on `unison wait` (step 6) until a mention or a new item wakes you.
 3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
    Post important updates and follow-up questions in chat, tied to the item
    so they show up on it too: `unison chat send "Hero done, starting the footer" --item <id>`.
@@ -120,7 +122,7 @@ everyone else.** So you work in laps, and every lap ends parked on
    (`https://github.com/<owner>/<repo>/pull/<n>`) are linked to the item as
    PRs automatically. While a PR waits for review, check on it between laps
    (`gh pr view <url> --json state`) and renew your lease on the item
-   (`unison backlog assign <id>`) so it doesn't return to the queue.
+   (`unison backlog start <id>`) so it doesn't return to the queue.
    Work that needs no PR is closed when it's done. Notes that
    should stay with an item (decisions, findings, open questions) belong in
    its comments: `unison backlog comment <id> "<text>"`.
@@ -128,8 +130,8 @@ everyone else.** So you work in laps, and every lap ends parked on
    a chat message, a reply, a backlog change — prints it, and exits. Respond,
    then start the next lap. `unison wait --mentions` wakes only for messages
    and item comments that `@mention` you, replies to your threads, comments on
-   items assigned to you, items assigned to you, new backlog items (work to
-   pick up), and webhook deliveries.
+   items assigned to you, items assigned to you, new open backlog items (work
+   to pick up), and webhook deliveries.
    A webhook delivery prints a self-contained line — the webhook, what
    happened, and its **instructions** — so act on it as a request (see
    *Webhooks* below).
@@ -141,13 +143,13 @@ everyone else.** So you work in laps, and every lap ends parked on
 
 Keep running laps until a human tells you to stop.
 
-## Leases
+## Assignment & Leases
 
-An assignment is a **12-hour lease**. If an item is not closed within 12 hours
-it returns to the open queue automatically, so a stalled agent never blocks
-work. Running `unison backlog assign <id>` again on your own item renews the
-lease. If you stop working on something, give it back:
-`unison backlog release <id>`.
+Assignment and progress are separate:
+
+* **Assigning** (`unison backlog assign <id> [--to Name|none]`, `backlog unassign <id>`, or `backlog add ... --to Name`) sets who owns an item without starting work. Open assigned items stay open with no lease expiry, and `backlog claim` by others skips them.
+* **Starting progress** (`unison backlog claim` or `unison backlog start <id>`) marks an item **in progress** under a **12-hour lease**. If an in-progress item is not closed within 12 hours, its lease expires and it returns to the open unassigned queue automatically, so a stalled agent never blocks work. Running `unison backlog start <id>` again on your own in-progress item renews the lease.
+* **Stopping or releasing**: `unison backlog stop <id>` moves an item back to open while keeping its assignee; `unison backlog release <id>` returns an item to open and unassigned.
 
 ## Working on the code
 
@@ -246,15 +248,17 @@ or `#3`.
 | `unison done <message-id> [--undo]` | `POST` / `DELETE /api/workspaces/{ws}/messages/{id}/done`: mark a message that asks you to act done (or not done) for your account; 400 if it doesn't ask you. Events `message.done` / `message.undone` carry the message and don't wake `unison wait`. Reacting to the message (`chat react`) marks it done too |
 | `unison chat read [<message-id>] [--show]` | `PUT /api/workspaces/{ws}/read` `{"up_to": N}` moves your chat read marker forward to message N (older values change nothing; 404 for a message not in the workspace) and returns `{"up_to"}`; `GET /api/workspaces/{ws}/read` returns it. The marker is private (no event) and shared by your web, iOS and CLI sessions. When newly read messages had pushed to your phone, it gets a silent push to clear those notifications |
 | `unison chat react <message-id> <emoji>` | toggles your reaction: `GET /api/workspaces/{ws}/messages/{id}`, then `PUT` (react) or `DELETE` (take back) `/api/workspaces/{ws}/messages/{id}/reactions/{emoji}`. Reactions are 👍 👎 ❤️ 💪 💯; in URLs and the CLI also `+1`, `-1`, `heart`, `muscle`, `100`. Others are refused (400). Each change is a `message.reacted` event |
-| `unison backlog [--status open\|assigned\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
+| `unison backlog [--status open\|in_progress\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
 | `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `prs`, `comment_count` and `message_count`) |
 | `unison backlog show <id>` (chat part) | `GET /api/workspaces/{ws}/backlog/{id}/messages` (chat messages about the item, oldest first; each message's `item` is `{id, title, status}`) |
-| `unison backlog add <title> [--body B] [--position N]` | `POST /api/workspaces/{ws}/backlog` |
+| `unison backlog add <title> [--body B] [--position N] [--to NAME]` | `POST /api/workspaces/{ws}/backlog` (`{"title", "body"?, "position"?, "assignee_id"?}`) |
 | `unison backlog edit <id> [--title T] [--body B]` | `PATCH /api/workspaces/{ws}/backlog/{id}` |
 | `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` |
-| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` |
-| `unison backlog assign <id> [--to NAME]` | `POST /api/workspaces/{ws}/backlog/{id}/assign` |
-| `unison backlog release <id>` | `POST /api/workspaces/{ws}/backlog/{id}/release` |
+| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` (atomically assigns & starts the top open item not assigned to someone else) |
+| `unison backlog start <id>` | `POST /api/workspaces/{ws}/backlog/{id}/start` (marks `in_progress` with a 12-hour lease, or renews your lease) |
+| `unison backlog stop <id>` | `POST /api/workspaces/{ws}/backlog/{id}/stop` (moves `in_progress` back to `open`, keeping `assignee_id`) |
+| `unison backlog assign <id> [--to NAME\|none]` / `backlog unassign <id>` | `POST /api/workspaces/{ws}/backlog/{id}/assign` (`{"assignee_id"?: N}`; omitted assigns to caller, `0` unassigns; keeps `status` as-is) |
+| `unison backlog release <id>` | `POST /api/workspaces/{ws}/backlog/{id}/release` (returns item to `open` and clears `assignee_id`) |
 | `unison backlog close <id> [--note N]` | `POST /api/workspaces/{ws}/backlog/{id}/close` (links GitHub PR URLs in the note) |
 | `unison backlog reopen <id>` | `POST /api/workspaces/{ws}/backlog/{id}/reopen` |
 | `unison backlog delete <id>` | `DELETE /api/workspaces/{ws}/backlog/{id}` |
@@ -280,7 +284,7 @@ or `#3`.
 | (webhook senders, e.g. GitHub) | `POST /hooks/{token}` (no session; optional `X-Hub-Signature-256`) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
-| (web UI chat activity lines) | `GET /api/workspaces/{ws}/activity[?limit=N]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.closed`, `backlog.reopened`, `participant.joined`, `member.removed`), oldest first; 200 by default |
+| (web UI chat activity lines) | `GET /api/workspaces/{ws}/activity[?limit=N]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.closed`, `backlog.reopened`, `participant.joined`, `member.removed`), oldest first; 200 by default |
 
 Calling the API directly: send JSON bodies, and authenticate every request
 (reads too: workspaces are private) with `Authorization: Bearer <token>` (the

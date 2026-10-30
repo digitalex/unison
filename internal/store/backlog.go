@@ -125,11 +125,11 @@ func insertAt(t *tx, wsID string, id int64, position int) error {
 	return renumber(t, ordered)
 }
 
-// expireLeases releases assigned items whose lease has run out, recording
+// expireLeases releases in-progress items whose lease has run out, recording
 // a backlog.lease_expired event for each.
 func expireLeases(t *tx, log *eventLog, wsID string) error {
 	query := `SELECT ` + itemCols + ` FROM items WHERE status = ? AND lease_expires_at <= ?`
-	args := []any{StatusAssigned, log.now}
+	args := []any{StatusInProgress, log.now}
 	if wsID != "" {
 		query += ` AND workspace_id = ?`
 		args = append(args, wsID)
@@ -169,7 +169,7 @@ func (s *Store) ExpireLeases(ctx context.Context) ([]Event, error) {
 	return s.tx(ctx, func(t *tx, log *eventLog) error { return expireLeases(t, log, "") })
 }
 
-// ListBacklog returns items with the given status ("" = open and assigned,
+// ListBacklog returns items with the given status ("" = open and in_progress,
 // "all" = everything). Queued items come in priority order; done items come
 // most recently closed first.
 func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, []Event, error) {
@@ -186,6 +186,9 @@ func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, [
 }
 
 func listItems(t *tx, wsID, status string) ([]Item, error) {
+	if status == "assigned" {
+		status = StatusInProgress // Legacy CLI/API query compatibility (#146).
+	}
 	query := `SELECT ` + itemCols + ` FROM items WHERE workspace_id = ?`
 	args := []any{wsID}
 	switch status {
@@ -193,11 +196,11 @@ func listItems(t *tx, wsID, status string) ([]Item, error) {
 		query += ` AND status != ?`
 		args = append(args, StatusDone)
 	case "all":
-	case StatusOpen, StatusAssigned, StatusDone:
+	case StatusOpen, StatusInProgress, StatusDone:
 		query += ` AND status = ?`
 		args = append(args, status)
 	default:
-		return nil, fmt.Errorf("%w: unknown status %q (want open, assigned, done or all)", ErrInvalid, status)
+		return nil, fmt.Errorf("%w: unknown status %q (want open, in_progress, done or all)", ErrInvalid, status)
 	}
 	query += ` ORDER BY status = 'done', position, closed_at DESC, id`
 	rows, err := t.Query(query, args...)
@@ -248,7 +251,7 @@ func (s *Store) GetItem(ctx context.Context, wsID string, id int64) (*Item, []Ev
 func (s *Store) readBacklog(ctx context.Context, wsID string, read func(*tx) error) ([]Event, error) {
 	var expired bool
 	if err := s.db.QueryRowContext(ctx, `SELECT EXISTS (SELECT 1 FROM items WHERE workspace_id = ? AND status = ? AND lease_expires_at <= ?)`,
-		wsID, StatusAssigned, s.nowMillis()).Scan(&expired); err != nil {
+		wsID, StatusInProgress, s.nowMillis()).Scan(&expired); err != nil {
 		return nil, err
 	}
 	if expired {
@@ -267,16 +270,32 @@ func (s *Store) readBacklog(ctx context.Context, wsID string, read func(*tx) err
 	return nil, read(t)
 }
 
-// AddItem adds a backlog item at the 1-based position (<= 0: bottom).
+// AddItem adds an unassigned backlog item at the 1-based position (<= 0: bottom).
 func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body string, position int) (*Item, []Event, error) {
+	return s.AddItemAssigned(ctx, actor, title, body, position, 0)
+}
+
+// AddItemAssigned adds an open backlog item at position (<= 0: bottom),
+// optionally assigned to assigneeID (> 0) without starting progress (#146).
+func (s *Store) AddItemAssigned(ctx context.Context, actor *Participant, title, body string, position int, assigneeID int64) (*Item, []Event, error) {
 	title = strings.TrimSpace(title)
 	if title == "" {
 		return nil, nil, fmt.Errorf("%w: item title is required", ErrInvalid)
 	}
+	if assigneeID < 0 {
+		return nil, nil, fmt.Errorf("%w: assignee_id must be >= 0", ErrInvalid)
+	}
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		var assignee *int64
+		if assigneeID > 0 {
+			if err := checkParticipant(t, actor.WorkspaceID, assigneeID); err != nil {
+				return err
+			}
+			assignee = &assigneeID
+		}
 		var err error
-		it, err = addItem(t, log, actor, title, body, position, nil)
+		it, err = addItem(t, log, actor, title, body, position, assignee, nil)
 		return err
 	})
 	if err != nil {
@@ -286,11 +305,11 @@ func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body str
 }
 
 // addItem inserts an open item at position (<= 0: bottom) and records
-// backlog.added. title must already be validated. scheduleID marks a
-// schedule's run (#112); nil for other items.
-func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int, scheduleID *int64) (*Item, error) {
-	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, created_by, created_at, updated_at, schedule_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?)`, "id",
-		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, actor.ID, log.now, log.now, scheduleID)
+// backlog.added. title and assignee must already be validated. scheduleID
+// marks a schedule's run (#112); nil for other items.
+func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int, assignee *int64, scheduleID *int64) (*Item, error) {
+	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, assignee_id, created_by, created_at, updated_at, schedule_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`, "id",
+		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, assignee, actor.ID, log.now, log.now, scheduleID)
 	if err != nil {
 		return nil, err
 	}
@@ -352,51 +371,82 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 	})
 }
 
-// AssignItem atomically assigns an item to assigneeID with a fresh lease.
-// It succeeds only if the item is open, its lease has expired, or it is
-// already assigned to the same participant (which renews the lease). A
-// renewal records "backlog.renewed" rather than "backlog.assigned", so the
-// chat shows only fresh assignments.
-func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assigneeID int64) (*Item, []Event, error) {
-	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
-		eventType := "backlog.assigned"
-		if it.Status == StatusAssigned {
-			eventType = "backlog.renewed"
-		}
-		return eventType, assign(t, it, assigneeID, log.now)
-	})
-}
-
-func assign(t *tx, it *Item, assigneeID, now int64) error {
+func checkParticipant(t *tx, wsID string, participantID int64) error {
 	var exists int
-	if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ? AND workspace_id = ?`, assigneeID, it.WorkspaceID).Scan(&exists); err != nil {
+	if err := t.QueryRow(`SELECT COUNT(*) FROM participants WHERE id = ? AND workspace_id = ?`, participantID, wsID).Scan(&exists); err != nil {
 		return err
 	}
 	if exists == 0 {
-		return fmt.Errorf("participant %d: %w", assigneeID, ErrNotFound)
+		return fmt.Errorf("participant %d: %w", participantID, ErrNotFound)
+	}
+	return nil
+}
+
+// AssignItem sets (assigneeID > 0) or clears (assigneeID == 0) an item's
+// assignee without changing its status or lease (#146): open items stay open
+// with no lease, and in-progress items stay in progress.
+func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assigneeID int64) (*Item, []Event, error) {
+	if assigneeID < 0 {
+		return nil, nil, fmt.Errorf("%w: assignee_id must be >= 0", ErrInvalid)
+	}
+	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
+		if it.Status == StatusDone {
+			return "", fmt.Errorf("%w: item #%d is done", ErrConflict, it.ID)
+		}
+		if assigneeID == 0 {
+			_, err := t.Exec(`UPDATE items SET assignee_id = NULL, updated_at = ? WHERE id = ?`, log.now, it.ID)
+			return "backlog.unassigned", err
+		}
+		if err := checkParticipant(t, it.WorkspaceID, assigneeID); err != nil {
+			return "", err
+		}
+		_, err := t.Exec(`UPDATE items SET assignee_id = ?, updated_at = ? WHERE id = ?`, assigneeID, log.now, it.ID)
+		return "backlog.assigned", err
+	})
+}
+
+// StartItem marks an item in progress by actor with a fresh 12-hour lease
+// (#146), assigning it to actor if unassigned. Calling StartItem again on an
+// item already in progress by actor renews the lease ("backlog.renewed").
+func (s *Store) StartItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
+	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
+		eventType := "backlog.started"
+		if it.Status == StatusInProgress {
+			eventType = "backlog.renewed"
+		}
+		return eventType, startItem(t, it, actor.ID, log.now)
+	})
+}
+
+func startItem(t *tx, it *Item, actorID, now int64) error {
+	if err := checkParticipant(t, it.WorkspaceID, actorID); err != nil {
+		return err
 	}
 	switch {
 	case it.Status == StatusDone:
 		return fmt.Errorf("%w: item #%d is done", ErrConflict, it.ID)
-	case it.Status == StatusAssigned && *it.AssigneeID != assigneeID:
-		return fmt.Errorf("%w: item #%d is already assigned to participant %d", ErrConflict, it.ID, *it.AssigneeID)
+	case it.AssigneeID != nil && *it.AssigneeID != actorID:
+		if it.Status == StatusInProgress {
+			return fmt.Errorf("%w: item #%d is already in progress by participant %d", ErrConflict, it.ID, *it.AssigneeID)
+		}
+		return fmt.Errorf("%w: item #%d is assigned to participant %d", ErrConflict, it.ID, *it.AssigneeID)
 	}
 	lease := now + LeaseDuration.Milliseconds()
 	res, err := t.Exec(`UPDATE items SET status = ?, assignee_id = ?, lease_expires_at = ?, updated_at = ?
-		WHERE id = ? AND (status = ? OR (status = ? AND assignee_id = ?))`,
-		StatusAssigned, assigneeID, lease, now, it.ID, StatusOpen, StatusAssigned, assigneeID)
+		WHERE id = ? AND status != ? AND (assignee_id IS NULL OR assignee_id = ?)`,
+		StatusInProgress, actorID, lease, now, it.ID, StatusDone, actorID)
 	if err != nil {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
 		return fmt.Errorf("%w: item #%d was claimed concurrently", ErrConflict, it.ID)
 	}
-	it.Status, it.AssigneeID, it.LeaseExpiresAt = StatusAssigned, &assigneeID, &lease
+	it.Status, it.AssigneeID, it.LeaseExpiresAt = StatusInProgress, &actorID, &lease
 	return nil
 }
 
-// ClaimNext atomically assigns the highest-priority open item to the actor.
-// It returns ErrNotFound if no item is open.
+// ClaimNext atomically claims and starts the highest-priority open item that
+// is unassigned or already assigned to actor. It returns ErrNotFound if none.
 func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Event, error) {
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
@@ -404,22 +454,24 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 			return err
 		}
 		var err error
-		it, err = scanItem(t.QueryRow(`SELECT `+itemCols+` FROM items WHERE workspace_id = ? AND status = ? ORDER BY position, id LIMIT 1`,
-			actor.WorkspaceID, StatusOpen))
+		it, err = scanItem(t.QueryRow(`SELECT `+itemCols+` FROM items
+			WHERE workspace_id = ? AND status = ? AND (assignee_id IS NULL OR assignee_id = ?)
+			ORDER BY position, id LIMIT 1`,
+			actor.WorkspaceID, StatusOpen, actor.ID))
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("%w: no open backlog items", ErrNotFound)
 		}
 		if err != nil {
 			return err
 		}
-		if err := assign(t, it, actor.ID, log.now); err != nil {
+		if err := startItem(t, it, actor.ID, log.now); err != nil {
 			return err
 		}
 		if err := attachExtras(t, actor.WorkspaceID, []*Item{it}); err != nil {
 			return err
 		}
 		it.UpdatedAt = log.now
-		return log.add(actor.WorkspaceID, "backlog.assigned", actor.ID, it)
+		return log.add(actor.WorkspaceID, "backlog.started", actor.ID, it)
 	})
 	if err != nil {
 		return nil, nil, err
@@ -427,15 +479,27 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 	return it, evs, nil
 }
 
-// ReleaseItem returns an assigned item to the open queue.
+// StopItem moves an in-progress item back to open and clears its lease,
+// keeping its assignee (#146).
+func (s *Store) StopItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
+	return s.mutateItem(ctx, actor, id, "backlog.stopped", func(t *tx, log *eventLog, it *Item) error {
+		if it.Status != StatusInProgress {
+			return fmt.Errorf("%w: item #%d is %s, not in progress", ErrConflict, it.ID, it.Status)
+		}
+		it.Status, it.LeaseExpiresAt = StatusOpen, nil
+		_, err := t.Exec(`UPDATE items SET status = ?, lease_expires_at = NULL, updated_at = ? WHERE id = ?`, StatusOpen, log.now, it.ID)
+		return err
+	})
+}
+
+// ReleaseItem returns an in-progress or assigned item to the unassigned open queue.
 func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
 	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *tx, log *eventLog, it *Item) error {
-		now := log.now
-		if it.Status != StatusAssigned {
-			return fmt.Errorf("%w: item #%d is %s, not assigned", ErrConflict, it.ID, it.Status)
+		if it.Status == StatusDone || (it.Status == StatusOpen && it.AssigneeID == nil) {
+			return fmt.Errorf("%w: item #%d is %s, not assigned or in progress", ErrConflict, it.ID, it.Status)
 		}
 		it.Status, it.AssigneeID, it.LeaseExpiresAt = StatusOpen, nil, nil
-		_, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?`, StatusOpen, now, it.ID)
+		_, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?`, StatusOpen, log.now, it.ID)
 		return err
 	})
 }

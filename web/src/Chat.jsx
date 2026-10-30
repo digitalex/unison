@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { Textarea } from "./ui/Input.jsx";
@@ -205,6 +205,7 @@ function byTime(messages, events) {
 const ACTIVITY_ICONS = {
   "backlog.added": ListPlus,
   "backlog.assigned": UserCheck,
+  "backlog.started": Play,
   "backlog.closed": CircleCheck,
   "backlog.reopened": RotateCcw,
   "participant.joined": UserPlus,
@@ -218,15 +219,22 @@ function activityText(event, participants) {
   const actor = participants.find((p) => p.id === event.actor_id);
   const name = (p) => (p ? `${p.emoji ? `${p.emoji} ` : ""}${p.name}` : "Someone");
   switch (event.type) {
-    case "backlog.added":
+    case "backlog.added": {
       // A recurring task's run is added by the system (#112).
       if (isRecurringRun(event)) return ["Recurring task", "added", d];
+      if (d.assignee_id) {
+        const assignee = participants.find((p) => p.id === d.assignee_id);
+        return [name(actor), `added (for ${name(assignee)})`, d];
+      }
       return [name(actor), "added", d];
+    }
     case "backlog.assigned": {
-      if (d.assignee_id === event.actor_id) return [name(actor), "started working on", d];
+      if (d.assignee_id === event.actor_id) return [name(actor), "assigned to themselves", d];
       const assignee = participants.find((p) => p.id === d.assignee_id);
       return [name(actor), `assigned ${name(assignee)} to`, d];
     }
+    case "backlog.started":
+      return [name(actor), "started working on", d];
     case "backlog.closed":
       return [name(actor), "closed", d];
     case "backlog.reopened":

@@ -293,7 +293,7 @@ func runOnce(t *tx, log *eventLog, sc *Schedule, missNote string) (*Item, bool, 
 	case !errors.Is(err, sql.ErrNoRows):
 		return nil, false, err
 	}
-	it, err := addItem(t, log, creator, sc.Title, sc.Body, 1, &sc.ID)
+	it, err := addItem(t, log, creator, sc.Title, sc.Body, 1, nil, &sc.ID)
 	return it, true, err
 }
 

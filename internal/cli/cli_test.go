@@ -121,12 +121,12 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("backlog not in priority order:\n%s", out)
 	}
 
-	// The agent claims the top item; the human can no longer take it.
-	if out := e.ok(agent, "backlog", "claim"); !strings.Contains(out, "First") || !strings.Contains(out, "Ada") {
+	// The agent claims the top item; the human can no longer start it.
+	if out := e.ok(agent, "backlog", "claim"); !strings.Contains(out, "First") || !strings.Contains(out, "in progress → 🦊 Ada") {
 		t.Errorf("claim = %q", out)
 	}
-	if _, errOut, code := e.run(human, "backlog", "assign", "2"); code == 0 || !strings.Contains(errOut, "already assigned") {
-		t.Errorf("double assign: exit %d, stderr %q", code, errOut)
+	if _, errOut, code := e.run(human, "backlog", "start", "2"); code == 0 || !strings.Contains(errOut, "already in progress") {
+		t.Errorf("double start: exit %d, stderr %q", code, errOut)
 	}
 
 	// The items the human added wake the agent, even with --mentions (#90).
@@ -407,5 +407,55 @@ func TestCLIMentions(t *testing.T) {
 		if got := mentions(tt.body, tt.name); got != tt.want {
 			t.Errorf("mentions(%q, %q) = %v, want %v", tt.body, tt.name, got, tt.want)
 		}
+	}
+}
+
+func TestBacklogAssignmentCLI(t *testing.T) {
+	e := newTestEnv(t)
+	human, agent := t.TempDir(), t.TempDir()
+
+	e.login("Alex", "")
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+	invite := e.url + "/w/" + ws.ID
+	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑", "--account")
+	e.ok(agent, "join", invite, "--pass", e.passFor(human), "--name", "Ada", "--emoji", "🦊")
+
+	// Adding an item assigned to Alex keeps it open and does not wake Ada's --mentions wait.
+	if out := e.ok(human, "backlog", "add", "For Alex", "--to", "Alex"); !strings.Contains(out, "[open → 🧑 Alex]") {
+		t.Fatalf("backlog add --to Alex = %q", out)
+	}
+	if _, _, code := e.run(agent, "wait", "--mentions", "--timeout", "1"); code != 2 {
+		t.Errorf("wait --mentions after item added for someone else: exit = %d, want 2", code)
+	}
+	if _, _, code := e.run(agent, "backlog", "claim"); code != 3 {
+		t.Errorf("claim with only Alex's assigned item: exit = %d, want 3", code)
+	}
+
+	// Reassigning to Ada keeps it open and wakes Ada's --mentions wait.
+	if out := e.ok(human, "backlog", "assign", "1", "--to", "@Ada"); !strings.Contains(out, "[open → 🦊 Ada]") {
+		t.Fatalf("backlog assign --to @Ada = %q", out)
+	}
+	if out := e.ok(agent, "wait", "--mentions", "--timeout", "5"); !strings.Contains(out, `assigned #1 "For Alex" → 🦊 Ada`) {
+		t.Errorf("wait --mentions after assign to Ada = %q", out)
+	}
+
+	// Ada starts progress, Alex reassigns back while in progress, Alex stops, then unassigns.
+	if out := e.ok(agent, "backlog", "start", "1"); !strings.Contains(out, "[in progress → 🦊 Ada, lease") {
+		t.Fatalf("backlog start = %q", out)
+	}
+	if out := e.ok(agent, "backlog", "--status", "in_progress"); !strings.Contains(out, "For Alex") {
+		t.Errorf("backlog --status in_progress = %q", out)
+	}
+	if out := e.ok(agent, "backlog", "assign", "1", "--to", "Alex"); !strings.Contains(out, "[in progress → 🧑 Alex, lease") {
+		t.Fatalf("reassign in progress = %q", out)
+	}
+	if out := e.ok(human, "backlog", "stop", "1"); !strings.Contains(out, "[open → 🧑 Alex]") {
+		t.Fatalf("backlog stop = %q", out)
+	}
+	if out := e.ok(human, "backlog", "unassign", "1"); !strings.Contains(out, "[open]") {
+		t.Fatalf("backlog unassign = %q", out)
 	}
 }

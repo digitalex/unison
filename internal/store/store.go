@@ -137,12 +137,12 @@ type MessageItem struct {
 
 // Backlog item statuses.
 const (
-	StatusOpen     = "open"
-	StatusAssigned = "assigned"
-	StatusDone     = "done"
+	StatusOpen       = "open"
+	StatusInProgress = "in_progress"
+	StatusDone       = "done"
 )
 
-// Item is a backlog item. Open and assigned items are ordered by Position
+// Item is a backlog item. Open and in-progress items are ordered by Position
 // (1 = highest priority); done items have Position 0.
 type Item struct {
 	ID             int64  `json:"id"`
@@ -855,9 +855,9 @@ func (s *Store) EventsAfter(ctx context.Context, wsID string, after int64, limit
 }
 
 // ActivityTypes are the events chat shows as one-line activity updates
-// (#93, #97): backlog items added, assigned (not renewed), closed and
-// reopened, and people joining and leaving.
-var ActivityTypes = []string{"backlog.added", "backlog.assigned", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"}
+// (#93, #97, #146): backlog items added, assigned, started (not renewed),
+// closed and reopened, and people joining and leaving.
+var ActivityTypes = []string{"backlog.added", "backlog.assigned", "backlog.started", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"}
 
 // RecentActivity returns the workspace's latest activity events (see
 // ActivityTypes), oldest first: at most limit of them (200 by default).

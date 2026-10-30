@@ -139,7 +139,7 @@ func TestMoveAcrossAssignedItems(t *testing.T) {
 		it, _, _ := s.AddItem(ctx, a, title, "", 0)
 		ids = append(ids, it.ID)
 	}
-	s.AssignItem(ctx, a, ids[2], a.ID) // "three" (position 3) is in progress.
+	s.StartItem(ctx, a, ids[2]) // "three" (position 3) is in progress.
 	// Move "four" (4) up past the assigned item, onto "two"'s position (2).
 	if _, _, err := s.MoveItem(ctx, a, ids[3], 2); err != nil {
 		t.Fatal(err)
