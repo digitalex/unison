@@ -17,12 +17,12 @@ export function ago(ms) {
 }
 
 export function meta(item) {
-  if (item.status === "assigned") return `lease ${hoursLeft(item.lease_expires_at)}h left`;
+  if (item.status === "in_progress" && item.lease_expires_at) return `lease ${hoursLeft(item.lease_expires_at)}h left`;
   if (item.status === "open") return `added ${ago(item.created_at)}`;
   return item.close_note || "done";
 }
 
-export const STATUS_LABELS = { open: "Open", assigned: "In progress", done: "Done" };
+export const STATUS_LABELS = { open: "Open", in_progress: "In progress", done: "Done" };
 
 const GITHUB_PR = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 const GITHUB_REPO = /github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i;

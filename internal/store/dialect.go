@@ -180,6 +180,11 @@ func (d db) applySchema(lock, schema string) error {
 	if err := d.mergeAccountParticipants(t); err != nil {
 		return fmt.Errorf("merging each account's participants: %w", err)
 	}
+	// Assignment was decoupled from progress (#146): items being worked on
+	// now have status "in_progress" instead of "assigned".
+	if _, err := t.Exec(`UPDATE items SET status = 'in_progress' WHERE status = 'assigned'`); err != nil {
+		return fmt.Errorf("migrating assigned items to in_progress: %w", err)
+	}
 	return t.Commit()
 }
 

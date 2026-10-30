@@ -149,6 +149,8 @@ func (s *Server) routes() {
 	h("DELETE "+ws+"/backlog/{id}", s.auth(s.deleteItem))
 	h("POST "+ws+"/backlog/{id}/move", s.auth(s.moveItem))
 	h("POST "+ws+"/backlog/{id}/assign", s.auth(s.assignItem))
+	h("POST "+ws+"/backlog/{id}/start", s.auth(s.startItem))
+	h("POST "+ws+"/backlog/{id}/stop", s.auth(s.stopItem))
 	h("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
 	h("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	h("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
@@ -619,14 +621,15 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) addItem(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Title    string `json:"title"`
-		Body     string `json:"body"`
-		Position int    `json:"position"`
+		Title      string `json:"title"`
+		Body       string `json:"body"`
+		Position   int    `json:"position"`
+		AssigneeID int64  `json:"assignee_id"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	it, evs, err := s.store.AddItem(r.Context(), actor(r), req.Title, req.Body, req.Position)
+	it, evs, err := s.store.AddItemAssigned(r.Context(), actor(r), req.Title, req.Body, req.Position, req.AssigneeID)
 	s.respond(w, http.StatusCreated, it, evs, err)
 }
 
@@ -663,16 +666,42 @@ func (s *Server) moveItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) assignItem(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
-	var req struct {
-		AssigneeID int64 `json:"assignee_id"`
-	}
-	if !ok || !decode(w, r, &req) {
+	var raw map[string]json.RawMessage
+	if !ok || !decode(w, r, &raw) {
 		return
 	}
-	if req.AssigneeID == 0 {
-		req.AssigneeID = actor(r).ID
+	target := actor(r).ID
+	if v, hasKey := raw["assignee_id"]; hasKey {
+		var assigneeID *int64
+		if err := json.Unmarshal(v, &assigneeID); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid assignee_id")
+			return
+		}
+		if assigneeID == nil {
+			target = 0
+		} else {
+			target = *assigneeID
+		}
 	}
-	it, evs, err := s.store.AssignItem(r.Context(), actor(r), id, req.AssigneeID)
+	it, evs, err := s.store.AssignItem(r.Context(), actor(r), id, target)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) startItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.StartItem(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) stopItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.StopItem(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 

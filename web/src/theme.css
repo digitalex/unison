@@ -228,6 +228,7 @@
   --mention-edge: #ffa344;
   --danger: var(--error);
   --status-open: var(--neutral-6);
+  --status-in-progress: var(--accent);
   --status-assigned: var(--accent);
   --status-done: var(--success);
   --presence-active: #22a06b;
@@ -1504,9 +1505,10 @@ a.ws-mark:hover {
   border: 1.5px solid var(--status-open);
 }
 
+.status.in_progress,
 .status.assigned {
-  border-color: var(--status-assigned);
-  background: conic-gradient(var(--status-assigned) 0 50%, transparent 0);
+  border-color: var(--status-in-progress);
+  background: conic-gradient(var(--status-in-progress) 0 50%, transparent 0);
 }
 
 .status.done {

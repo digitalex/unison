@@ -9,16 +9,17 @@ import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Select, Textarea } from "./ui/Input.jsx";
 
-// NewItemDialog writes a backlog item: a title and a roomy description,
-// starting from initial ({title, body}) if given, e.g. after a failed add.
-// ⌘/Ctrl+Enter submits; onCreate gets {title, body} and adds it, so the
-// dialog closes at once (#128).
-export function NewItemDialog({ initial, onClose, onCreate }) {
+// NewItemDialog writes a backlog item: a title, description, and optional
+// assignee (#146), starting from initial ({title, body, assignee_id}) if
+// given, e.g. after a failed add. ⌘/Ctrl+Enter submits; onCreate gets
+// {title, body, assignee_id} and adds it, so the dialog closes at once (#128).
+export function NewItemDialog({ initial, participants = [], onClose, onCreate }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [body, setBody] = useState(initial?.body || "");
+  const [assigneeId, setAssigneeId] = useState(initial?.assignee_id || 0);
   const create = (e) => {
     e.preventDefault();
-    onCreate({ title, body });
+    onCreate({ title, body, assignee_id: assigneeId });
   };
   return (
     <Dialog title="New backlog item" onClose={onClose} className="item-dialog">
@@ -28,6 +29,16 @@ export function NewItemDialog({ initial, onClose, onCreate }) {
         </Field>
         <Field label="Description">
           <Textarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Details, acceptance criteria, links… (Markdown)" />
+        </Field>
+        <Field label="Assignee">
+          <Select value={assigneeId} onChange={(e) => setAssigneeId(Number(e.target.value))}>
+            <option value={0}>Unassigned</option>
+            {participants.map((p) => (
+              <option key={p.id} value={p.id}>
+                {p.emoji} {p.name}
+              </option>
+            ))}
+          </Select>
         </Field>
         <div className="actions-row dialog-actions">
           <span className="muted dialog-hint">⌘/Ctrl+Enter to create</span>
@@ -112,7 +123,7 @@ function EditForm({ item, path, run, onDone }) {
 function ItemFacts({ item, participants }) {
   const facts = [["Status", STATUS_LABELS[item.status]]];
   if (item.assignee_id) facts.push([item.status === "done" ? "Done by" : "Assignee", name(participants, item.assignee_id)]);
-  if (item.status === "assigned") facts.push(["Lease", `${hoursLeft(item.lease_expires_at)}h left`]);
+  if (item.status === "in_progress" && item.lease_expires_at) facts.push(["Lease", `${hoursLeft(item.lease_expires_at)}h left`]);
   if (item.status === "done" && item.close_note) facts.push(["Note", item.close_note]);
   facts.push(["Created", `${ago(item.created_at)} by ${name(participants, item.created_by)}`]);
   return (
@@ -129,10 +140,10 @@ function ItemFacts({ item, participants }) {
 
 function ItemActions({ item, path, participants, me, run, onDeleted }) {
   const [closing, setClosing] = useState(false);
-  const assignTo = (e) => {
+  const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
+  const changeAssignee = (e) => {
     const id = Number(e.target.value);
-    e.target.value = "";
-    if (id) run("POST", `${path}/assign`, { assignee_id: id });
+    if (id !== (item.assignee_id || 0)) run("POST", `${path}/assign`, { assignee_id: id });
   };
   const remove = async () => {
     if (window.confirm(`Delete #${item.id}? This can't be undone.`) && (await run("DELETE", path))) onDeleted();
@@ -140,14 +151,16 @@ function ItemActions({ item, path, participants, me, run, onDeleted }) {
   if (closing) return <CloseForm path={path} run={run} onDone={() => setClosing(false)} />;
   return (
     <div className="item-actions">
-      {item.status === "open" && me && (
-        <Button variant="primary" onClick={() => run("POST", `${path}/assign`)}>
-          Claim
+      {canStart && (
+        <Button variant="primary" onClick={() => run("POST", `${path}/start`)}>
+          Start
         </Button>
       )}
-      {item.status === "open" && (
-        <Select defaultValue="" onChange={assignTo} aria-label="Assign to">
-          <option value="">Assign to…</option>
+      {item.status === "in_progress" && <Button onClick={() => run("POST", `${path}/stop`)}>Move to open</Button>}
+      {item.status === "in_progress" && <Button onClick={() => run("POST", `${path}/release`)}>Release</Button>}
+      {item.status !== "done" && (
+        <Select value={item.assignee_id || 0} onChange={changeAssignee} aria-label="Assignee">
+          <option value={0}>Unassigned</option>
           {participants.map((p) => (
             <option key={p.id} value={p.id}>
               {p.emoji} {p.name}
@@ -155,7 +168,6 @@ function ItemActions({ item, path, participants, me, run, onDeleted }) {
           ))}
         </Select>
       )}
-      {item.status === "assigned" && <Button onClick={() => run("POST", `${path}/release`)}>Release</Button>}
       {item.status !== "done" ? (
         <Button onClick={() => setClosing(true)}>Close…</Button>
       ) : (

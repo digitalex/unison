@@ -143,15 +143,20 @@ Actions (chat messages sent with --action that ask you to act):
                                      reacting to it does too); --undo reopens it
 
 Backlog (#1 is the highest priority):
-  backlog [list] [--status open|assigned|done|all]
+  backlog [list] [--status open|in_progress|done|all]
   backlog show <id>                  the item, its comments and the chat
                                      messages about it
-  backlog add <title> [--body B] [--position N]
+  backlog add <title> [--body B] [--position N] [--to NAME]
   backlog edit <id> [--title T] [--body B]
   backlog move <id> <position>
-  backlog claim                      atomically assign yourself the top open item
-  backlog assign <id> [--to NAME]    take (or renew) a 12-hour lease on an item
-  backlog release <id>               give an item back to the queue
+  backlog claim                      atomically assign & start the top open item
+  backlog start <id>                 start working on an item (or renew your
+                                     12-hour lease)
+  backlog stop <id>                  move back to open, keeping the assignee
+  backlog assign <id> [--to NAME|none]
+                                     set or clear assignee without starting work
+  backlog unassign <id>              clear the assignee
+  backlog release <id>               return an item to open and unassigned
   backlog close <id> [--note N]      mark done (GitHub PR URLs in the note are
                                      also linked to the item as PRs)
   backlog reopen <id>
@@ -1347,6 +1352,12 @@ func (a *app) backlog(args []string) error {
 		return a.printItemDetail(&it)
 	case "assign":
 		return a.backlogAssign(args)
+	case "unassign":
+		return a.itemCommand(args, "POST", "/assign", map[string]int64{"assignee_id": 0}, true)
+	case "start":
+		return a.itemCommand(args, "POST", "/start", nil, true)
+	case "stop":
+		return a.itemCommand(args, "POST", "/stop", nil, true)
 	case "release":
 		return a.itemCommand(args, "POST", "/release", nil, true)
 	case "close":
@@ -1395,7 +1406,7 @@ func (a *app) itemCommand(args []string, method, suffix string, body any, auth b
 
 func (a *app) backlogList(args []string) error {
 	fs := flag.NewFlagSet("backlog list", flag.ContinueOnError)
-	status := fs.String("status", "", "open, assigned, done or all (default: open and assigned)")
+	status := fs.String("status", "", "open, in_progress, done or all (default: open and in_progress)")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
 	}
@@ -1426,9 +1437,16 @@ func itemLine(people map[int64]store.Participant, it *store.Item) string {
 
 func itemState(people map[int64]store.Participant, it *store.Item) string {
 	switch it.Status {
-	case store.StatusAssigned:
-		left := max(time.Until(time.UnixMilli(*it.LeaseExpiresAt)).Round(time.Minute), 0)
-		return fmt.Sprintf("[assigned → %s, lease %dh%02dm left]", label(people, *it.AssigneeID), int(left.Hours()), int(left.Minutes())%60)
+	case store.StatusInProgress:
+		who := ""
+		if it.AssigneeID != nil {
+			who = " → " + label(people, *it.AssigneeID)
+		}
+		if it.LeaseExpiresAt != nil {
+			left := max(time.Until(time.UnixMilli(*it.LeaseExpiresAt)).Round(time.Minute), 0)
+			return fmt.Sprintf("[in progress%s, lease %dh%02dm left]", who, int(left.Hours()), int(left.Minutes())%60)
+		}
+		return fmt.Sprintf("[in progress%s]", who)
 	case store.StatusDone:
 		s := "[done"
 		if it.AssigneeID != nil {
@@ -1438,6 +1456,9 @@ func itemState(people map[int64]store.Participant, it *store.Item) string {
 			s += ": " + it.CloseNote
 		}
 		return s + "]"
+	}
+	if it.AssigneeID != nil {
+		return fmt.Sprintf("[open → %s]", label(people, *it.AssigneeID))
 	}
 	return "[open]"
 }
@@ -1621,6 +1642,7 @@ func (a *app) backlogAdd(args []string) error {
 	fs := flag.NewFlagSet("backlog add", flag.ContinueOnError)
 	body := fs.String("body", "", "description")
 	position := fs.Int("position", 0, "priority position (1 = top; default bottom)")
+	to := fs.String("to", "", "participant name to assign to (without starting work)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -1628,8 +1650,15 @@ func (a *app) backlogAdd(args []string) error {
 	if len(pos) == 0 {
 		return fmt.Errorf("%w: backlog add <title>", errUsage)
 	}
-	var it store.Item
 	req := map[string]any{"title": strings.Join(pos, " "), "body": *body, "position": *position}
+	if *to != "" {
+		assigneeID, err := a.resolveAssignee(*to, false)
+		if err != nil {
+			return err
+		}
+		req["assignee_id"] = assigneeID
+	}
+	var it store.Item
 	if ok, err := a.call("POST", "/backlog", req, &it, true); !ok {
 		return err
 	}
@@ -1650,28 +1679,36 @@ func (a *app) backlogEdit(args []string) error {
 
 func (a *app) backlogAssign(args []string) error {
 	fs := flag.NewFlagSet("backlog assign", flag.ContinueOnError)
-	to := fs.String("to", "", "participant name (default: yourself)")
+	to := fs.String("to", "", "participant name, or none to unassign (default: yourself)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	body := map[string]int64{}
-	if *to != "" {
-		people, err := a.participants()
-		if err != nil {
-			return err
-		}
-		name := strings.TrimPrefix(*to, "@")
-		for _, p := range people {
-			if strings.EqualFold(p.Name, name) {
-				body["assignee_id"] = p.ID
-			}
-		}
-		if body["assignee_id"] == 0 {
-			return fmt.Errorf("no participant named %q in this workspace (see `unison who`)", name)
+	if *to == "" {
+		return a.itemCommand(pos, "POST", "/assign", nil, true)
+	}
+	assigneeID, err := a.resolveAssignee(*to, true)
+	if err != nil {
+		return err
+	}
+	return a.itemCommand(pos, "POST", "/assign", map[string]int64{"assignee_id": assigneeID}, true)
+}
+
+func (a *app) resolveAssignee(to string, allowNone bool) (int64, error) {
+	name := strings.TrimPrefix(strings.TrimSpace(to), "@")
+	if allowNone && (strings.EqualFold(name, "none") || strings.EqualFold(name, "unassigned")) {
+		return 0, nil
+	}
+	people, err := a.participants()
+	if err != nil {
+		return 0, err
+	}
+	for _, p := range people {
+		if strings.EqualFold(p.Name, name) {
+			return p.ID, nil
 		}
 	}
-	return a.itemCommand(pos, "POST", "/assign", body, true)
+	return 0, fmt.Errorf("no participant named %q in this workspace (see `unison who`)", name)
 }
 
 // ---- webhooks ----
@@ -1982,12 +2019,19 @@ func (f *eventFilter) relevant(e store.Event) bool {
 	case e.Type == "comment.deleted", strings.HasPrefix(e.Type, "pr."):
 		return !f.mentionsOnly
 	case strings.HasPrefix(e.Type, "backlog."):
-		// A new item is work to pick up: it wakes even --mentions (#90).
-		if !f.mentionsOnly || e.Type == "backlog.added" {
+		if !f.mentionsOnly {
 			return true
 		}
 		var it store.Item
-		return json.Unmarshal(e.Data, &it) == nil && e.Type == "backlog.assigned" && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
+		if json.Unmarshal(e.Data, &it) != nil {
+			return false
+		}
+		if e.Type == "backlog.added" {
+			// An unassigned item is work to pick up (#90); an item added for
+			// someone else wakes only that assignee (#146).
+			return it.AssigneeID == nil || *it.AssigneeID == f.me.ID
+		}
+		return (e.Type == "backlog.assigned" || e.Type == "backlog.started") && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
 	case e.Type == "webhook.received":
 		// Webhooks are instructions for agents: they wake even --mentions,
 		// except GitHub's setup ping.
@@ -2066,11 +2110,17 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			return fmt.Sprintf("📋 the lease on #%d %q expired; it is open again", it.ID, it.Title)
 		}
 		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, it.ID, it.Title)
-		if e.Type == "backlog.added" {
-			line += " (pick it up with `unison backlog claim` if you're free)"
-		}
-		if e.Type == "backlog.assigned" && it.AssigneeID != nil {
-			line += " → " + label(people, *it.AssigneeID)
+		switch e.Type {
+		case "backlog.added":
+			if it.AssigneeID != nil {
+				line += " → " + label(people, *it.AssigneeID)
+			} else {
+				line += " (pick it up with `unison backlog claim` if you're free)"
+			}
+		case "backlog.assigned":
+			if it.AssigneeID != nil {
+				line += " → " + label(people, *it.AssigneeID)
+			}
 		}
 		return line
 	case e.Type == "participant.joined":

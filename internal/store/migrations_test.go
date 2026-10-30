@@ -79,3 +79,52 @@ func TestDropRemovedMetricsTable(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestMigrateAssignedItemsToInProgress(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+	p, _, _, _ := s.Join(ctx, ws.ID, "Ada", "")
+	item, _, err := s.StartItem(ctx, p, mustAddItem(t, s, p, "Legacy assigned"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(rebind(raw.pg, `UPDATE items SET status = 'assigned' WHERE id = ?`), item.ID); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		got, _, err := s.GetItem(ctx, ws.ID, item.ID)
+		if err != nil {
+			t.Fatalf("boot %d GetItem: %v", boot, err)
+		}
+		if got.Status != StatusInProgress || got.AssigneeID == nil || *got.AssigneeID != p.ID || got.LeaseExpiresAt == nil {
+			t.Errorf("boot %d: item = %+v, want status=in_progress with assignee and lease preserved", boot, got)
+		}
+		s.Close()
+	}
+}
+
+func mustAddItem(t *testing.T, s *Store, p *Participant, title string) int64 {
+	t.Helper()
+	it, _, err := s.AddItem(context.Background(), p, title, "", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return it.ID
+}
