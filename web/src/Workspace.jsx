@@ -582,7 +582,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
           </a>
         )}
         <ThemeSwitch />
-        {account.user && <AccountMenu account={account} showName menuExtra={() => <ThemeRow />} />}
+        {account.user && <AccountMenu account={account} showName menuExtra={() => <AccountMenuExtra />} />}
       </div>
     </nav>
   );
@@ -605,16 +605,10 @@ function TabBar({ view, counts, screens }) {
   );
 }
 
-function ThemeRow() {
-  return (
-    <>
-      <div className="account-theme">
-        <span className="muted">Theme</span>
-        <ThemeSwitch />
-      </div>
-      {notifySupported && <NotifyRow />}
-    </>
-  );
+// AccountMenuExtra is what the account menu adds in a workspace. The theme
+// isn't here: the sidebar (and the header on phones) has the switch (#131).
+function AccountMenuExtra() {
+  return notifySupported && <NotifyRow />;
 }
 
 // NotifyRow turns desktop notifications on or off (see notify.js).
@@ -674,7 +668,7 @@ function HeadExtras({ workspace, call, account, members, settingsLink }) {
             account={account}
             menuExtra={(close) => (
               <>
-                <ThemeRow />
+                <AccountMenuExtra />
                 <a className="button button-secondary" href={settingsLink.href} onClick={(e) => {
                     close();
                     settingsLink.onClick(e);
