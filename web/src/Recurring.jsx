@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { submitOnModEnter } from "./backlogFormat.js";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
@@ -43,7 +43,7 @@ export function RecurringMarker({ item }) {
 }
 
 // RecurringSection is the backlog's Recurring group: collapsible, like Done.
-export default function RecurringSection({ schedules, run }) {
+export default function RecurringSection({ schedules, run, onRan }) {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState(null); // A schedule, or "new".
   return (
@@ -79,13 +79,15 @@ export default function RecurringSection({ schedules, run }) {
           </button>
         </>
       )}
-      {editing && <ScheduleDialog schedule={editing === "new" ? null : editing} run={run} onClose={() => setEditing(null)} />}
+      {editing && <ScheduleDialog schedule={editing === "new" ? null : editing} run={run} onRan={onRan} onClose={() => setEditing(null)} />}
     </>
   );
 }
 
-// ScheduleDialog adds a schedule (schedule null) or edits/deletes one.
-function ScheduleDialog({ schedule, run, onClose }) {
+// ScheduleDialog adds a schedule (schedule null) or edits/deletes one, or
+// runs it now (#116): exactly what a due run does, without moving the next
+// run. onRan gets the server's {item, added}.
+function ScheduleDialog({ schedule, run, onRan, onClose }) {
   const [title, setTitle] = useState(schedule?.title || "");
   const [body, setBody] = useState(schedule?.body || "");
   const [cadence, setCadence] = useState(schedule?.cadence || "daily");
@@ -99,6 +101,15 @@ function ScheduleDialog({ schedule, run, onClose }) {
     const ok = await run(schedule ? "PATCH" : "POST", path, payload);
     setBusy(false);
     if (ok) onClose();
+  };
+  const runNow = async () => {
+    setBusy(true);
+    const result = await run("POST", `${path}/run`);
+    setBusy(false);
+    if (result) {
+      onClose();
+      onRan(result);
+    }
   };
   const remove = async () => {
     if (window.confirm(`Delete the recurring task "${schedule.title}"? Items it already added stay.`) && (await run("DELETE", path)) !== undefined) onClose();
@@ -143,6 +154,12 @@ function ScheduleDialog({ schedule, run, onClose }) {
             </Button>
           )}
           <span className="spacer" />
+          {schedule && (
+            <Button type="button" onClick={runNow} disabled={busy} title="Add this task to the top of the backlog now; the schedule stays as it is">
+              <Play aria-hidden="true" />
+              Run now
+            </Button>
+          )}
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
