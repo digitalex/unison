@@ -12,7 +12,7 @@ func TestDeleteAccount(t *testing.T) {
 	ada, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Ada", Email: "ada@example.com", EmailVerified: true})
 	bo, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "2", Name: "Bo"})
 	adaTok, adaSession, _ := s.CreateSession(ctx, ada.ID, SessionCLI, "")
-	if _, err := s.RegisterDevice(ctx, ada.ID, adaSession.ID, "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90", "iPhone"); err != nil {
+	if _, err := s.RegisterDevice(ctx, ada.ID, adaSession.ID, "a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90", "iPhone", ""); err != nil {
 		t.Fatal(err)
 	}
 
