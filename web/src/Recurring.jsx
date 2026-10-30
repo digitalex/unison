@@ -34,6 +34,12 @@ function nextRun(ms) {
   return new Date(ms).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
+// withSchedule returns the list with sc added or replaced, in the server's
+// order (next run first).
+function withSchedule(list, sc) {
+  return [...list.filter((x) => x.id !== sc.id), sc].sort((a, b) => a.next_due_at - b.next_due_at || a.id - b.id);
+}
+
 // RecurringMarker marks a backlog item that a schedule added.
 export function RecurringMarker({ item }) {
   if (!item.schedule_id) return null;
@@ -44,10 +50,23 @@ export function RecurringMarker({ item }) {
   );
 }
 
-export default function Recurring({ schedules, call, onError, head, error }) {
+export default function Recurring({ schedules, setSchedules, call, onError, head, error }) {
   const [editing, setEditing] = useState(null); // A schedule id, or "new".
   const [ran, setRan] = useState(null); // Last Run now result: { item, added }.
+  // Schedules you added that the server hasn't confirmed yet (#144): shown at
+  // once, at the bottom, until the response arrives or the call fails.
+  const [adding, setAdding] = useState([]);
   const run = (method, suffix, payload) => call(method, suffix, payload).catch((e) => onError(e.message));
+  // Saves apply their response at once rather than waiting for the event.
+  const add = async (payload) => {
+    const temp = { ...payload, id: `pending-${Date.now()}` };
+    setAdding((list) => [...list, temp]);
+    const sc = await run("POST", "/schedules", payload);
+    if (sc) setSchedules((list) => withSchedule(list, sc));
+    setAdding((list) => list.filter((x) => x !== temp));
+  };
+  const saved = (sc) => setSchedules((list) => withSchedule(list, sc));
+  const removed = (id) => setSchedules((list) => list.filter((x) => x.id !== id));
   const activeSchedule = editing && editing !== "new" ? schedules.find((s) => s.id === editing) : null;
 
   useEffect(() => {
@@ -89,7 +108,7 @@ export default function Recurring({ schedules, call, onError, head, error }) {
             </Button>
           </p>
         )}
-        {schedules.length === 0 ? (
+        {schedules.length === 0 && adding.length === 0 ? (
           <p className="recurring-empty">No recurring tasks yet.</p>
         ) : (
           <div className="recurring-list">
@@ -115,11 +134,29 @@ export default function Recurring({ schedules, call, onError, head, error }) {
                 </div>
               </div>
             ))}
+            {adding.map((s) => (
+              <div key={s.id} className="item recurring item-pending" aria-busy="true">
+                <div className="row">
+                  <span className="recurring-marker" aria-hidden="true">
+                    <Repeat />
+                  </span>
+                  <span className="row-title">{s.title}</span>
+                  <span className="chip">{cadenceLabel(s)}</span>
+                  <span className="meta">adding…</span>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </div>
       {(editing === "new" || activeSchedule) && (
-        <ScheduleDialog key={editing} schedule={activeSchedule} run={run} onRan={setRan} onClose={() => setEditing(null)} />
+        <ScheduleDialog
+          key={editing}
+          schedule={activeSchedule}
+          {...{ run, add, saved, removed }}
+          onRan={setRan}
+          onClose={() => setEditing(null)}
+        />
       )}
     </section>
   );
@@ -127,8 +164,10 @@ export default function Recurring({ schedules, call, onError, head, error }) {
 
 // ScheduleDialog adds a schedule (schedule null) or edits/deletes one, or
 // runs it now (#116): exactly what a due run does, without moving the next
-// run. onRan gets the server's {item, added}.
-function ScheduleDialog({ schedule, run, onRan, onClose }) {
+// run. onRan gets the server's {item, added}. A new schedule is handed to
+// add and the dialog closes at once; saved and removed apply an edit or a
+// delete.
+function ScheduleDialog({ schedule, run, add, saved, removed, onRan, onClose }) {
   const [title, setTitle] = useState(schedule?.title || "");
   const [body, setBody] = useState(schedule?.body || "");
   const [cadence, setCadence] = useState(schedule?.cadence || "daily");
@@ -137,11 +176,18 @@ function ScheduleDialog({ schedule, run, onRan, onClose }) {
   const path = schedule ? `/schedules/${schedule.id}` : "/schedules";
   const save = async (e) => {
     e.preventDefault();
-    setBusy(true);
     const payload = { title, body, cadence, weekday: cadence === "weekly" ? weekday : "" };
-    const ok = await run(schedule ? "PATCH" : "POST", path, payload);
+    if (!schedule) {
+      onClose();
+      return add(payload);
+    }
+    setBusy(true);
+    const sc = await run("PATCH", path, payload);
     setBusy(false);
-    if (ok) onClose();
+    if (sc) {
+      saved(sc);
+      onClose();
+    }
   };
   const runNow = async () => {
     setBusy(true);
@@ -153,7 +199,10 @@ function ScheduleDialog({ schedule, run, onRan, onClose }) {
     }
   };
   const remove = async () => {
-    if (window.confirm(`Delete the recurring task "${schedule.title}"? Items it already added stay.`) && (await run("DELETE", path)) !== undefined) onClose();
+    if (window.confirm(`Delete the recurring task "${schedule.title}"? Items it already added stay.`) && (await run("DELETE", path)) !== undefined) {
+      removed(schedule.id);
+      onClose();
+    }
   };
   return (
     <Dialog title={schedule ? "Recurring task" : "New recurring task"} onClose={onClose} className="item-dialog">
