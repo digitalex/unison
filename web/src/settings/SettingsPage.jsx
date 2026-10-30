@@ -5,14 +5,14 @@ import DangerZone from "./DangerZone.jsx";
 import General from "./General.jsx";
 import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
-import Notifications from "./Notifications.jsx";
 import Repositories from "./Repositories.jsx";
 import Webhooks from "./Webhooks.jsx";
 
-// The sections, in order. Deep links: /w/{ws}/settings#<id>.
+// The sections, in order. Deep links: /w/{ws}/settings#<id>. Only the
+// workspace's own settings: personal ones (theme, desktop notifications)
+// are in your profile (/me) and the account menu (#131).
 const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name and its isocan design canvas." },
-  { id: "notifications", title: "Notifications", description: "Desktop notifications for mentions, actions, and participants joining." },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. Every member is equal." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
@@ -59,7 +59,6 @@ export default function SettingsPage({ workspace, members, invites, participants
 
   const body = {
     general: <General workspace={workspace} call={call} onError={onError} />,
-    notifications: <Notifications />,
     members: <Members members={members} invites={invites} account={account} call={call} onError={onError} />,
     invites: <Invites invites={invites} account={account} call={call} onError={onError} />,
     repositories: <Repositories repos={workspace.repos || []} call={call} onError={onError} />,
