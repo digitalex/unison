@@ -279,6 +279,12 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("schedule run while the last run is open = %q", out)
 	}
 	e.ok(agent, "schedule", "remove", "1")
+	if out := e.ok(agent, "chat", "read"); !strings.HasPrefix(out, "Read up to #") {
+		t.Errorf("chat read = %q", out)
+	}
+	if out := e.ok(agent, "chat", "read", "--show"); !strings.HasPrefix(out, "Read up to #") || strings.Contains(out, "#0.") {
+		t.Errorf("chat read --show = %q", out)
+	}
 	if out := e.ok(agent, "schedule", "list"); !strings.Contains(out, "No recurring tasks yet") {
 		t.Errorf("schedule list after remove = %q", out)
 	}

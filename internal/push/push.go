@@ -47,11 +47,26 @@ type Notification struct {
 	ParentID    int64 // thread root, for replies
 	ItemID      int64
 	CommentID   int64
-	Kind        string // "action", "mention" or "comment_mention"
+	Kind        string // "action", "mention", "comment_mention" or KindRead
+	// ReadUpTo is, for KindRead, the newest chat message the account's
+	// participant in WorkspaceID has read.
+	ReadUpTo int64
 }
+
+// KindRead is a silent background push (#122): the user has read chat up to
+// ReadUpTo elsewhere, so the app can clear the notifications that covers.
+const KindRead = "read"
 
 // Payload returns the APNs JSON payload for n.
 func (n Notification) Payload() ([]byte, error) {
+	if n.Kind == KindRead {
+		return json.Marshal(map[string]any{
+			"aps":          map[string]any{"content-available": 1},
+			"workspace_id": n.WorkspaceID,
+			"kind":         n.Kind,
+			"read_up_to":   n.ReadUpTo,
+		})
+	}
 	p := map[string]any{
 		"aps": map[string]any{
 			"alert":     map[string]string{"title": n.Title, "body": n.Body},
@@ -194,7 +209,13 @@ func (c *Client) Send(ctx context.Context, deviceToken string, n Notification) e
 		return errors.New("apns: building request failed")
 	}
 	req.Header.Set("apns-topic", c.cfg.Topic)
-	req.Header.Set("apns-push-type", "alert")
+	if n.Kind == KindRead {
+		// Background pushes must be type background, priority 5.
+		req.Header.Set("apns-push-type", "background")
+		req.Header.Set("apns-priority", "5")
+	} else {
+		req.Header.Set("apns-push-type", "alert")
+	}
 	req.Header.Set("authorization", "bearer "+jwt)
 	req.Header.Set("content-type", "application/json")
 	resp, err := c.HTTP.Do(req)

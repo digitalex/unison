@@ -126,6 +126,8 @@ func (s *Server) routes() {
 	h("GET "+ws+"/participants", s.listParticipants)
 	h("GET "+ws+"/messages", s.listMessages)
 	h("POST "+ws+"/messages", s.auth(s.postMessage))
+	h("GET "+ws+"/read", s.auth(s.getRead))
+	h("PUT "+ws+"/read", s.auth(s.markRead))
 	h("GET "+ws+"/actions", s.auth(s.listActions))
 	h("GET "+ws+"/messages/{id}", s.getMessage)
 	h("PUT "+ws+"/messages/{id}/reactions/{emoji}", s.auth(s.react(true)))
@@ -452,6 +454,28 @@ func (s *Server) runSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	it, added, evs, err := s.store.RunSchedule(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, map[string]any{"item": it, "added": added}, evs, err)
+}
+
+// ---- Read marker (#124) ----
+
+func (s *Server) getRead(w http.ResponseWriter, r *http.Request) {
+	upTo, err := s.store.ReadUpTo(r.Context(), actor(r))
+	s.respond(w, http.StatusOK, map[string]int64{"up_to": upTo}, nil, err)
+}
+
+func (s *Server) markRead(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		UpTo int64 `json:"up_to"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	p := actor(r)
+	upTo, notified, err := s.store.MarkRead(r.Context(), p, req.UpTo)
+	if err == nil && notified {
+		s.pushRead(p, upTo)
+	}
+	s.respond(w, http.StatusOK, map[string]int64{"up_to": upTo}, nil, err)
 }
 
 // ---- Participants ----

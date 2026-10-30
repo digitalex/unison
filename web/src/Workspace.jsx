@@ -129,7 +129,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [live, setLive] = useState(false);
   const screens = useScreens(id, view, navigate);
   const shownMessage = useShownMessage(screens.show);
-  const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat");
+  const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat", call);
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
   const joined = Boolean(me);
@@ -372,26 +372,63 @@ function useScreens(id, view, navigate) {
 }
 
 // useChatUnread counts the messages from others that arrived since you last
-// had the chat screen open (remembered across reloads). newAfter is the
-// newest message you had seen when you opened it: later ones are new to you.
-function useChatUnread(workspaceId, messages, me, active) {
+// had the chat screen open. How far you have read is kept on the server
+// (#124), shared with your other devices, and cached locally for a fast
+// first paint. newAfter is the newest message you had seen when you opened
+// chat: later ones are new to you.
+function useChatUnread(workspaceId, messages, me, active, call) {
   const seenKey = `unison.chat.seen.${workspaceId}`;
-  const [seenId, setSeenId] = useState(() => Number(localStorage.getItem(seenKey)) || 0);
+  const [seenId, setSeenId] = useState(() => storedNumber(seenKey));
   const [seenAtOpen, setSeenAtOpen] = useState(null);
+  const [serverId, setServerId] = useState(null); // The server's marker, once fetched.
   const latestId = messages.reduce((max, m) => Math.max(max, m.id), 0);
+  // Fetch the server's marker on joining and whenever the tab comes back, so
+  // reading on your phone clears the unread here too.
+  useEffect(() => {
+    if (!me) return;
+    const fetchRead = () =>
+      call("GET", "/read")
+        .then((r) => {
+          if (!r) return;
+          setServerId(r.up_to || 0);
+          setSeenId((s) => Math.max(s, r.up_to || 0));
+        })
+        .catch(() => {});
+    fetchRead();
+    window.addEventListener("focus", fetchRead);
+    return () => window.removeEventListener("focus", fetchRead);
+  }, [call, me?.id]);
   // Before the effect below marks everything seen.
   useEffect(() => setSeenAtOpen(active ? seenId : null), [active]);
   useEffect(() => {
     if (active && latestId > seenId) {
-      localStorage.setItem(seenKey, String(latestId));
+      try {
+        localStorage.setItem(seenKey, String(latestId));
+      } catch {}
       setSeenId(latestId);
     }
   }, [active, latestId, seenId, seenKey]);
+  // Tell the server when you have read further than it knows (this also
+  // uploads what this browser had read before the marker moved there).
+  useEffect(() => {
+    if (me && serverId !== null && seenId > serverId) {
+      setServerId(seenId);
+      call("PUT", "/read", { up_to: seenId }).catch(() => {});
+    }
+  }, [me?.id, serverId, seenId, call]);
   return {
     // Your own messages are never unread.
     unread: messages.filter((m) => m.id > seenId && m.author_id !== me?.id).length,
     newAfter: seenAtOpen ?? seenId,
   };
+}
+
+function storedNumber(key) {
+  try {
+    return Number(localStorage.getItem(key)) || 0;
+  } catch {
+    return 0;
+  }
 }
 
 // messageFromURL reads a deep link to a chat message: #msg-12 or ?msg=12.
