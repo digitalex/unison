@@ -50,6 +50,12 @@ export default function Backlog({ items, schedules, participants, me, workspace,
     setCreating(false);
     setCreated(item.id);
   };
+  // Run now (#116): a new item is revealed like one just added; if the last
+  // run is still open, the run was noted on it instead.
+  const onRan = ({ item, added }) => {
+    if (added) setCreated(item.id);
+    else setNotice(`#${item.id} from this recurring task is still open, so the run was noted on it.`);
+  };
 
   return (
     <section className="screen" aria-label="Backlog">
@@ -84,7 +90,7 @@ export default function Backlog({ items, schedules, participants, me, workspace,
         {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
         {rows("open", groups.open)}
 
-        <RecurringSection schedules={schedules} run={run} />
+        <RecurringSection schedules={schedules} run={run} onRan={onRan} />
 
         <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
           {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
