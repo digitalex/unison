@@ -18,6 +18,9 @@ export default function Backlog({ items, schedules, participants, me, workspace,
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
+  // Items you added that aren't in the list yet (#128): shown at once, at the
+  // bottom of Open, until the server's copy arrives (realId) or the call fails.
+  const [adding, setAdding] = useState([]);
   const [notice, setNotice] = useState("");
   const [openId, openItem, closeItem] = useItemParam();
   const run = (method, suffix, payload) => call(method, suffix, payload).catch((e) => onError(e.message));
@@ -46,10 +49,25 @@ export default function Backlog({ items, schedules, participants, me, workspace,
         onOpen={() => openItem(it.id)}
       />
     ));
-  const onCreated = (item) => {
+  const create = async ({ title, body }) => {
     setCreating(false);
-    setCreated(item.id);
+    const temp = { id: `pending-${Date.now()}`, title, body };
+    setAdding((list) => [...list, temp]);
+    const item = await run("POST", "/backlog", { title, body });
+    if (item) {
+      setAdding((list) => list.map((x) => (x === temp ? { ...x, realId: item.id } : x)));
+      setCreated(item.id);
+    } else {
+      // Failed (the error bar says why): give the text back to try again.
+      setAdding((list) => list.filter((x) => x !== temp));
+      setCreating({ title, body });
+    }
   };
+  const ids = new Set(items.map((it) => it.id));
+  const pendingRows = adding.filter((x) => !ids.has(x.realId));
+  useEffect(() => {
+    if (pendingRows.length < adding.length) setAdding(pendingRows);
+  }, [pendingRows.length, adding.length]);
   // Run now (#116): a new item is revealed like one just added; if the last
   // run is still open, the run was noted on it instead.
   const onRan = ({ item, added }) => {
@@ -87,8 +105,11 @@ export default function Backlog({ items, schedules, participants, me, workspace,
         {rows("assigned", groups.assigned)}
 
         <GroupHead status="open" label="Open" count={groups.open.length} />
-        {queued.length === 0 && <p className="empty-row">Nothing queued.</p>}
+        {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
         {rows("open", groups.open)}
+        {pendingRows.map((x) => (
+          <PendingRow key={x.id} title={x.title} />
+        ))}
 
         <RecurringSection schedules={schedules} run={run} onRan={onRan} />
 
@@ -101,7 +122,7 @@ export default function Backlog({ items, schedules, participants, me, workspace,
         {showDone && rows("done", done)}
       </div>
 
-      {creating && <NewItemDialog run={run} onClose={() => setCreating(false)} onCreated={onCreated} />}
+      {creating && <NewItemDialog initial={creating === true ? null : creating} onClose={() => setCreating(false)} onCreate={create} />}
       {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
     </section>
   );
@@ -114,6 +135,22 @@ function GroupHead({ status, label, count }) {
       {label}
       <span className="count">{count}</span>
     </h3>
+  );
+}
+
+// PendingRow is an item on its way to the server (#128): its title, dimmed,
+// without the controls that need its number.
+function PendingRow({ title }) {
+  return (
+    <div className="item open item-pending" aria-busy="true">
+      <div className="row">
+        <span className="rank" />
+        <span className="status open" />
+        <span className="item-id">#…</span>
+        <span className="row-title">{title}</span>
+        <span className="meta">adding…</span>
+      </div>
+    </div>
   );
 }
 
