@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ChevronRight, Plus, Repeat, Trash2 } from "lucide-react";
+import { ChevronDown, ChevronRight, Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { submitOnModEnter } from "./backlogFormat.js";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
@@ -91,6 +91,7 @@ function ScheduleDialog({ schedule, run, onClose }) {
   const [cadence, setCadence] = useState(schedule?.cadence || "daily");
   const [weekday, setWeekday] = useState(schedule?.weekday || "mon");
   const [busy, setBusy] = useState(false);
+  const [ran, setRan] = useState(null);
   const path = schedule ? `/schedules/${schedule.id}` : "/schedules";
   const save = async (e) => {
     e.preventDefault();
@@ -99,6 +100,18 @@ function ScheduleDialog({ schedule, run, onClose }) {
     const ok = await run(schedule ? "PATCH" : "POST", path, payload);
     setBusy(false);
     if (ok) onClose();
+  };
+  // Run now (#116): exactly what a due run does; the next run stays.
+  const runNow = async () => {
+    setBusy(true);
+    const res = await run("POST", `${path}/run`);
+    setBusy(false);
+    if (res?.item)
+      setRan(
+        res.added
+          ? `Added #${res.item.id} to the top of the backlog.`
+          : `#${res.item.id} is still open, so no new item was added; the run is noted on it.`,
+      );
   };
   const remove = async () => {
     if (window.confirm(`Delete the recurring task "${schedule.title}"? Items it already added stay.`) && (await run("DELETE", path)) !== undefined) onClose();
@@ -135,11 +148,22 @@ function ScheduleDialog({ schedule, run, onClose }) {
           Each run adds this as a new item at the top of the backlog at 00:00 server time. If the last run is still open, it's noted on that item instead.
           {schedule && ` Next run: ${nextRun(schedule.next_due_at)}.`}
         </p>
+        {ran && (
+          <p className="field-description" role="status">
+            {ran}
+          </p>
+        )}
         <div className="actions-row dialog-actions">
           {schedule && (
             <Button type="button" variant="ghost" className="button-danger" onClick={remove}>
               <Trash2 aria-hidden="true" />
               Delete
+            </Button>
+          )}
+          {schedule && (
+            <Button type="button" variant="ghost" onClick={runNow} disabled={busy} title="Do now what a due run does; the next scheduled run stays">
+              <Play aria-hidden="true" />
+              Run now
             </Button>
           )}
           <span className="spacer" />
