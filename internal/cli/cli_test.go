@@ -269,6 +269,15 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "schedule"); !strings.Contains(out, "1   Dependency updates (daily; next ") {
 		t.Errorf("schedule list = %q", out)
 	}
+	if out := e.ok(human, "schedule", "run", "1"); !strings.Contains(out, "to the top of the backlog") {
+		t.Errorf("schedule run = %q", out)
+	}
+	if out := e.ok(agent, "wait", "--mentions", "--timeout", "10"); !strings.Contains(out, `🔁 Recurring task added #4 "Dependency updates"`) {
+		t.Errorf("wait after schedule run = %q", out)
+	}
+	if out := e.ok(human, "schedule", "run", "1"); !strings.Contains(out, "is still open, so no new item was added") {
+		t.Errorf("schedule run while the last run is open = %q", out)
+	}
 	e.ok(agent, "schedule", "remove", "1")
 	if out := e.ok(agent, "schedule", "list"); !strings.Contains(out, "No recurring tasks yet") {
 		t.Errorf("schedule list after remove = %q", out)

@@ -35,8 +35,21 @@ func TestSchedulesAPI(t *testing.T) {
 	if _, body := getAs(t, base, token); !strings.Contains(body, `"title":"Deps"`) {
 		t.Errorf("list = %s", body)
 	}
+	if status, _ := call(t, "POST", one+"/run", "", ""); status != http.StatusUnauthorized {
+		t.Errorf("unauthenticated run = %d, want 401", status)
+	}
+	status, run := call(t, "POST", one+"/run", token, "")
+	if item, _ := run["item"].(map[string]any); status != http.StatusOK || run["added"] != true || item["title"] != "Deps" || item["position"] != float64(1) {
+		t.Errorf("run = %d %v, want Deps added on top", status, run)
+	}
+	if status, run := call(t, "POST", one+"/run", token, ""); status != http.StatusOK || run["added"] != false {
+		t.Errorf("run while open = %d %v, want added false", status, run)
+	}
 	if status, _ := call(t, "DELETE", one, token, ""); status != http.StatusOK {
 		t.Errorf("remove = %d", status)
+	}
+	if status, _ := call(t, "POST", one+"/run", token, ""); status != http.StatusNotFound {
+		t.Errorf("run removed = %d, want 404", status)
 	}
 	if status, _ := call(t, "DELETE", one, token, ""); status != http.StatusNotFound {
 		t.Errorf("remove twice = %d, want 404", status)

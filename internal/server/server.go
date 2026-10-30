@@ -114,6 +114,7 @@ func (s *Server) routes() {
 	h("POST "+ws+"/schedules", s.auth(s.addSchedule))
 	h("PATCH "+ws+"/schedules/{id}", s.auth(s.editSchedule))
 	h("DELETE "+ws+"/schedules/{id}", s.auth(s.removeSchedule))
+	h("POST "+ws+"/schedules/{id}/run", s.auth(s.runSchedule))
 	h("GET "+ws+"/me", s.auth(s.me))
 	h("PATCH "+ws+"/me", s.auth(s.updateMe))
 	h("POST "+ws+"/passes", s.requireUser(s.mintPass))
@@ -442,6 +443,15 @@ func (s *Server) removeSchedule(w http.ResponseWriter, r *http.Request) {
 	}
 	evs, err := s.store.RemoveSchedule(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
+}
+
+func (s *Server) runSchedule(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	it, added, evs, err := s.store.RunSchedule(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"item": it, "added": added}, evs, err)
 }
 
 // ---- Participants ----

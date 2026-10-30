@@ -205,3 +205,44 @@ func TestMaterializeSchedules(t *testing.T) {
 		t.Errorf("%d items from the removed schedule, want 2 (kept)", fromDaily)
 	}
 }
+
+func TestRunSchedule(t *testing.T) {
+	s, _, a, b := setup(t)
+	ctx := context.Background()
+	sc, _, _ := s.AddSchedule(ctx, a, ScheduleInput{Title: "Triage", Body: "Look at new issues", Cadence: CadenceDaily})
+	s.AddItem(ctx, a, "Existing work", "", 0)
+
+	// Run now: a new item on top, by the schedule's creator, as a system event.
+	it, added, evs, err := s.RunSchedule(ctx, b, sc.ID)
+	if err != nil || !added {
+		t.Fatalf("RunSchedule = %v, added %v", err, added)
+	}
+	if got := eventTypes(evs); !equal(got, []string{"backlog.added"}) || evs[0].ActorID != 0 {
+		t.Errorf("events %v by actor %d, want one backlog.added by the system", got, evs[0].ActorID)
+	}
+	if it.Title != "Triage" || it.Position != 1 || it.ScheduleID == nil || *it.ScheduleID != sc.ID || it.CreatedBy != a.ID {
+		t.Errorf("item = %+v, want Triage on top, from schedule %d, by its creator", it, sc.ID)
+	}
+	// The next scheduled run is unchanged.
+	list, _ := s.ListSchedules(ctx, a.WorkspaceID)
+	if list[0].NextDueAt != sc.NextDueAt {
+		t.Errorf("next due moved from %d to %d", sc.NextDueAt, list[0].NextDueAt)
+	}
+
+	// Again while that run is open: no new item, a note on the open one.
+	again, added, evs, err := s.RunSchedule(ctx, b, sc.ID)
+	if err != nil || added || again.ID != it.ID {
+		t.Fatalf("second run = %+v, added %v, %v; want a note on #%d", again, added, err, it.ID)
+	}
+	if got := eventTypes(evs); !equal(got, []string{"comment.added"}) {
+		t.Errorf("second run events %v, want one comment.added", got)
+	}
+	comments, _ := s.ListComments(ctx, a.WorkspaceID, it.ID)
+	if len(comments) != 1 || !strings.Contains(comments[0].Body, b.Name+" ran this recurring task now") {
+		t.Errorf("comments = %+v, want one run-now note", comments)
+	}
+
+	if _, _, _, err := s.RunSchedule(ctx, b, 999); !errors.Is(err, ErrNotFound) {
+		t.Errorf("unknown schedule: %v, want ErrNotFound", err)
+	}
+}

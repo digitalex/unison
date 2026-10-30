@@ -254,35 +254,63 @@ func runSchedule(t *tx, log *eventLog, sc *Schedule, loc *time.Location) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil
 	}
-	// Runs are created as the schedule's creator, like the items they add.
-	creator := &Participant{ID: sc.CreatedBy, WorkspaceID: sc.WorkspaceID}
-	var open int64
-	err = t.QueryRow(`SELECT id FROM items WHERE schedule_id = ? AND status != ? ORDER BY id DESC LIMIT 1`, sc.ID, StatusDone).Scan(&open)
-	switch {
-	case err == nil:
-		return missedRun(t, log, creator, open, time.UnixMilli(sc.NextDueAt).In(loc))
-	case !errors.Is(err, sql.ErrNoRows):
-		return err
-	}
-	_, err = addItem(t, log, creator, sc.Title, sc.Body, 1, &sc.ID)
+	_, _, err = runOnce(t, log, sc, fmt.Sprintf("🔁 Missed the scheduled run due %s: this item was still open, so no new one was added.",
+		time.UnixMilli(sc.NextDueAt).In(loc).Format("Mon 2 Jan 15:04")))
 	return err
 }
 
-// missedRun notes on a schedule's still-open item that a run due at dueAt
-// came and went: a comment, so the count of missed runs is in its history.
-func missedRun(t *tx, log *eventLog, creator *Participant, itemID int64, dueAt time.Time) error {
-	c := &Comment{ItemID: itemID, WorkspaceID: creator.WorkspaceID, AuthorID: creator.ID, CreatedAt: log.now,
-		Body: fmt.Sprintf("🔁 Missed the scheduled run due %s: this item was still open, so no new one was added.", dueAt.Format("Mon 2 Jan 15:04"))}
+// RunSchedule runs a schedule now (#116), doing exactly what a due run does:
+// a new item at the top of the backlog, or, if the previous run is still
+// open, a note on that item. The next scheduled run stays where it was. It
+// returns the item added or noted on, and whether it was added.
+func (s *Store) RunSchedule(ctx context.Context, actor *Participant, id int64) (*Item, bool, []Event, error) {
+	var it *Item
+	var added bool
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		sc, err := getSchedule(t, actor.WorkspaceID, id)
+		if err != nil {
+			return err
+		}
+		it, added, err = runOnce(t, log, sc, fmt.Sprintf("🔁 %s ran this recurring task now, but this item was still open, so no new one was added.", actor.Name))
+		return err
+	})
+	if err != nil {
+		return nil, false, nil, err
+	}
+	return it, added, evs, nil
+}
+
+// runOnce makes one run of sc: a new item, or missNote on its open run.
+func runOnce(t *tx, log *eventLog, sc *Schedule, missNote string) (*Item, bool, error) {
+	// Runs are created as the schedule's creator, like the items they add.
+	creator := &Participant{ID: sc.CreatedBy, WorkspaceID: sc.WorkspaceID}
+	var open int64
+	err := t.QueryRow(`SELECT id FROM items WHERE schedule_id = ? AND status != ? ORDER BY id DESC LIMIT 1`, sc.ID, StatusDone).Scan(&open)
+	switch {
+	case err == nil:
+		it, err := missedRun(t, log, creator, open, missNote)
+		return it, false, err
+	case !errors.Is(err, sql.ErrNoRows):
+		return nil, false, err
+	}
+	it, err := addItem(t, log, creator, sc.Title, sc.Body, 1, &sc.ID)
+	return it, true, err
+}
+
+// missedRun notes on a schedule's still-open item that a run came and went
+// without adding one: a comment, so the count of missed runs is in its history.
+func missedRun(t *tx, log *eventLog, creator *Participant, itemID int64, note string) (*Item, error) {
+	c := &Comment{ItemID: itemID, WorkspaceID: creator.WorkspaceID, AuthorID: creator.ID, CreatedAt: log.now, Body: note}
 	id, err := t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
 		c.ItemID, c.WorkspaceID, c.AuthorID, c.Body, c.CreatedAt)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	c.ID = id
 	it, err := getItem(t, creator.WorkspaceID, itemID)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	// The note is by the creator, the event by the system (see addItem).
-	return log.add(creator.WorkspaceID, "comment.added", 0, CommentEvent{Comment: c, Item: it})
+	return it, log.add(creator.WorkspaceID, "comment.added", 0, CommentEvent{Comment: c, Item: it})
 }
