@@ -56,6 +56,9 @@ type Workspace struct {
 	CanvasURL string `json:"canvas_url"`
 	CreatedAt int64  `json:"created_at"`
 	Repos     []Repo `json:"repos"`
+	// HasGitHubToken says whether a GitHub token is set (#127). The token
+	// itself is never serialized: read it with GitHubToken.
+	HasGitHubToken bool `json:"has_github_token"`
 }
 
 // Participant is a registered human or agent. Unison makes no distinction
@@ -244,17 +247,21 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // ---- Workspaces ----
 
-const workspaceCols = `id, name, repo_url, canvas_url, created_at`
+// workspaceCols are read by scanWorkspace; the last says whether a GitHub
+// token is set without reading it.
+const workspaceCols = `id, name, repo_url, canvas_url, created_at, CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt); err != nil {
+	var hasToken int64
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt, &hasToken); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	w.Repos = []Repo{}
+	w.HasGitHubToken = hasToken == 1
 	return &w, nil
 }
 
@@ -281,7 +288,7 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 	id := "ws_" + randomHex(4)
 	var w *Workspace
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`INSERT INTO workspaces (`+workspaceCols+`) VALUES (?, ?, '', ?, ?)`,
+		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at) VALUES (?, ?, '', ?, ?)`,
 			id, name, strings.TrimSpace(canvasURL), log.now); err != nil {
 			return err
 		}
@@ -349,6 +356,20 @@ func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Wo
 }
 
 // GetWorkspace returns a workspace by ID, with its repositories.
+// GitHubToken is the workspace's GitHub token (#127), "" if none is set.
+// Only the server uses it, to read the workspace repositories' pull
+// requests; no API returns it.
+func (s *Store) GitHubToken(ctx context.Context, id string) (string, error) {
+	var token sql.NullString
+	if err := s.db.QueryRowContext(ctx, `SELECT github_token FROM workspaces WHERE id = ?`, id).Scan(&token); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", ErrNotFound
+		}
+		return "", err
+	}
+	return token.String, nil
+}
+
 func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error) {
 	w, err := scanWorkspace(s.db.QueryRowContext(ctx, `SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, id))
 	if err != nil {
@@ -364,6 +385,9 @@ type WorkspacePatch struct {
 	Name      *string `json:"name"`
 	RepoURL   *string `json:"repo_url"`
 	CanvasURL *string `json:"canvas_url"`
+	// GitHubToken sets the token the server reads pull requests with (#127);
+	// "" removes it.
+	GitHubToken *string `json:"github_token"`
 }
 
 // UpdateWorkspace applies a patch to a workspace.
@@ -385,6 +409,15 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 		}
 		if _, err := t.Exec(`UPDATE workspaces SET name = ?, canvas_url = ? WHERE id = ?`, w.Name, w.CanvasURL, id); err != nil {
 			return err
+		}
+		if p.GitHubToken != nil {
+			var token any // NULL when removed.
+			if v := strings.TrimSpace(*p.GitHubToken); v != "" {
+				token = v
+			}
+			if _, err := t.Exec(`UPDATE workspaces SET github_token = ? WHERE id = ?`, token, id); err != nil {
+				return err
+			}
 		}
 		if p.RepoURL != nil {
 			if err := setPrimaryRepoURL(t, log, id, actor, *p.RepoURL); err != nil {

@@ -973,6 +973,51 @@ html.dialog-open {
   white-space: nowrap;
 }
 
+/* Pending review (#127): "repo#12 Title" rows, and repos that failed. */
+.nav-list-small .pending-pr {
+  height: auto;
+  min-height: 40px;
+  padding-top: 4px;
+  padding-bottom: 4px;
+}
+
+.pending-pr-text {
+  display: grid;
+  min-width: 0;
+  line-height: 1.3;
+}
+
+.pending-pr-ref {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  font-variant-numeric: tabular-nums;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pending-pr.draft .nav-text {
+  color: var(--text-muted);
+}
+
+.nav-empty,
+.pending-error {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-height: 28px;
+  padding: 0 var(--space-s);
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.pending-error .lucide {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--danger);
+}
+
 /* People: who's here, in the sidebar. A long list scrolls on its own. */
 .people {
   max-height: 40vh;
@@ -2674,8 +2719,37 @@ html.reordering * {
   white-space: nowrap;
 }
 
-.repo-form .control[type="url"] {
+.repo-form .control[type="url"],
+.repo-form .control[type="password"] {
   flex: 1;
+}
+
+/* The GitHub token for Pending review (#127), under the repositories. */
+.github-token {
+  display: grid;
+  gap: var(--space-xs);
+  margin-top: var(--space-m);
+  padding-top: var(--space-m);
+  border-top: var(--border-s) solid var(--panel-edge);
+}
+
+.github-token-title {
+  font-size: var(--size-s);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.github-token-set {
+  display: inline-flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--space-xs);
+  color: var(--text-secondary);
+}
+
+.github-token-set .lucide {
+  width: 14px;
+  height: 14px;
+  color: var(--status-done);
 }
 
 /* ---- Webhooks (settings) ---- */

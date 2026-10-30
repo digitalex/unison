@@ -44,6 +44,9 @@ type Server struct {
 	// pusher sends push notifications (push.go); nil when disabled.
 	pusher  push.Sender
 	pushing sync.WaitGroup
+
+	// reviews caches each workspace's Pending review list (reviews.go).
+	reviews reviewCache
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at
@@ -110,6 +113,7 @@ func (s *Server) routes() {
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
 	h("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
+	h("GET "+ws+"/reviews", s.listReviews)
 	h("GET "+ws+"/schedules", s.listSchedules)
 	h("POST "+ws+"/schedules", s.auth(s.addSchedule))
 	h("PATCH "+ws+"/schedules/{id}", s.auth(s.editSchedule))

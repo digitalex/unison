@@ -72,7 +72,10 @@ Workspaces & identity:
   workspace list                     your workspaces (needs login)
   workspace create <name> [--repo URL]... [--canvas URL]
                                      (needs login; you become its first member)
-  workspace set [--name N] [--repo URL] [--canvas URL]   (--repo: the first repo)
+  workspace set [--name N] [--repo URL] [--canvas URL] [--github-token T]
+                                     (--repo: the first repo; --github-token: a PAT
+                                     with PR read access to the repos, for
+                                     "reviews"; "" removes it; never shown again)
   workspace delete [id] --confirm <name>
                                      delete workspace and all data (needs login)
   workspace repos                    the workspace's code repositories
@@ -89,6 +92,8 @@ Workspaces & identity:
   whoami                             your identity in this workspace
   status <text>                      set your status line ("" clears it)
   who                                participants and who is active
+  reviews                            open PRs in the workspace's GitHub repos that
+                                     aren't set to auto-merge (need a person)
 
 Accounts and invites:
   login                              sign in with GitHub or Google via your browser
@@ -285,6 +290,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.status(rest)
 	case "who":
 		return a.who()
+	case "reviews":
+		return a.reviews()
 	case "chat":
 		return a.chat(rest)
 	case "backlog":
@@ -577,6 +584,38 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 		a.printf("%s %s\n", heading, repoLine(r))
 	}
 	a.printf("Canvas     %s\n", firstNonEmpty(ws.CanvasURL, "(not set)"))
+	token := "(not set: Pending review is off)"
+	if ws.HasGitHubToken {
+		token = "set"
+	}
+	a.printf("GitHub     token %s\n", token)
+}
+
+// reviews lists the open pull requests in the workspace's GitHub
+// repositories that aren't set to auto-merge (#127).
+func (a *app) reviews() error {
+	var out server.PendingReviews
+	if ok, err := a.call("GET", "/reviews", nil, &out, false); !ok {
+		return err
+	}
+	if !out.Configured {
+		a.printf("No GitHub token is set. Add one with: unison workspace set --github-token <PAT> (PR read access to the workspace's repos).\n")
+		return nil
+	}
+	if len(out.Pulls) == 0 {
+		a.printf("Nothing pending review.\n")
+	}
+	for _, p := range out.Pulls {
+		draft := ""
+		if p.Draft {
+			draft = " [draft]"
+		}
+		a.printf("%s#%d  %s%s  (by %s, %s)\n    %s\n", p.Repo, p.Number, p.Title, draft, p.Author, ago(p.CreatedAt), p.URL)
+	}
+	for _, e := range out.Errors {
+		a.printf("! %s: %s\n", e.Repo, e.Error)
+	}
+	return nil
 }
 
 func repoLine(r store.Repo) string {
@@ -764,6 +803,7 @@ func (a *app) workspaceSet(args []string) error {
 	fs.Func("name", "workspace name", func(v string) error { patch.Name = &v; return nil })
 	fs.Func("repo", "repository URL", func(v string) error { patch.RepoURL = &v; return nil })
 	fs.Func("canvas", "isocan canvas URL", func(v string) error { patch.CanvasURL = &v; return nil })
+	fs.Func("github-token", "GitHub token for Pending review (\"\" removes it)", func(v string) error { patch.GitHubToken = &v; return nil })
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
 	}
