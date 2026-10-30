@@ -47,12 +47,15 @@ type Server struct {
 
 	// reviews caches each workspace's Pending review list (reviews.go).
 	reviews reviewCache
+	// reviewFails slows down guessing the App Review code (review.go).
+	reviewFails reviewLimiter
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at
 // its root) and may be nil.
 func New(st *store.Store, web fs.FS) *Server {
-	s := &Server{store: st, web: web, mux: http.NewServeMux(), ws: http.NewServeMux(), notify: map[string]chan struct{}{}}
+	s := &Server{store: st, web: web, mux: http.NewServeMux(), ws: http.NewServeMux(), notify: map[string]chan struct{}{},
+		reviewFails: reviewLimiter{retry: reviewRetry}}
 	s.SetAuth(AuthConfig{})
 	s.routes()
 	return s

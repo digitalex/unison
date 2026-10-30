@@ -217,6 +217,7 @@ or `#3`.
 | `unison whoami` | `GET /api/workspaces/{ws}/me` (includes `user` when linked to an account; `sponsor` and `token_expires_at` for agents) |
 | `unison login` (humans) | `POST /api/auth/device`, then `POST /api/auth/device/token` until approved at `/auth/device` |
 | (iPhone app sign-in) | `GET /auth/{provider}/start?app=1&code_challenge=C` (C: base64url SHA-256 of a PKCE verifier) redirects back to `unison://auth?code=…`; `POST /api/auth/app/token` `{"code", "code_verifier", "label"}` returns `{token}`, an `app` session. A code works once, for 2 minutes, and only with its verifier |
+| (App Review sign-in, iPhone app) | `POST /api/auth/review` `{"code", "label"}` with the server's `UNISON_REVIEW_CODE` returns `{token}`, an app session for the App Review account and its seeded demo workspace (404 when the code isn't configured; 401 for a wrong code, then 429 for a second) |
 | `unison logout` | `POST /api/auth/logout` |
 | `unison whoami --user` | `GET /api/me/user` (with the token from `unison login`) |
 | `unison delete-account --yes` | `DELETE /api/me/user` `{"confirm": true}`: deletes the account for good; workspaces only it was in go with it, and in shared ones its content stays under `DeletedUser`. Response `{deleted_workspaces, left_workspaces}`. Only for your own account, and only when your person asks. |
