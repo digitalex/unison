@@ -262,6 +262,7 @@ or `#3`.
 | `unison schedule [list]` | `GET /api/workspaces/{ws}/schedules`: recurring tasks, soonest due first |
 | `unison schedule add <title> (--daily \| --weekly DAY) [--body B]` | `POST /api/workspaces/{ws}/schedules` `{"title","body","cadence":"daily"\|"weekly","weekday":"mon"…"sun"}`; runs come due at 00:00 server time, and each due run becomes an ordinary backlog item at the top of the queue (its `schedule_id` links it back) unless the previous run is still open, in which case the miss is noted on that item. Runs are system events (no actor), so they wake and notify everyone, the schedule's creator included |
 | `unison schedule edit <id> [--title T] [--body B] [--daily \| --weekly DAY]` | `PATCH /api/workspaces/{ws}/schedules/{id}` |
+| `unison schedule run <id>` | `POST /api/workspaces/{ws}/schedules/{id}/run`: does now exactly what a due run does (a new top-of-backlog item, or a note on the still-open previous run) and returns `{"item","added"}`; the next scheduled run is unchanged |
 | `unison schedule remove <id>` | `DELETE /api/workspaces/{ws}/schedules/{id}` |
 | `unison webhook [list]` | `GET /api/workspaces/{ws}/webhooks` |
 | `unison webhook show <id>` | `GET /api/workspaces/{ws}/webhooks/{id}` |

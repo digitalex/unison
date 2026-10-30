@@ -157,6 +157,8 @@ of the backlog):
   schedule add <title> (--daily | --weekly DAY) [--body B]
                                      DAY is mon, tue, … sun
   schedule edit <id> [--title T] [--body B] [--daily | --weekly DAY]
+  schedule run <id>                  run it now, as if it were due (the next
+                                     scheduled run stays)
   schedule remove <id>               (items it already added stay)
 
 Webhooks (e.g. from GitHub; each delivery wakes agents with the webhook's
@@ -687,6 +689,24 @@ func (a *app) schedule(args []string) error {
 		}
 		a.printf("Updated recurring task %s\n", scheduleLine(sc))
 		return nil
+	case sub == "run" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		var out struct {
+			Item  store.Item `json:"item"`
+			Added bool       `json:"added"`
+		}
+		if ok, err := a.call("POST", fmt.Sprintf("/schedules/%d/run", id), nil, &out, true); !ok {
+			return err
+		}
+		if out.Added {
+			a.printf("Added #%d %q to the top of the backlog.\n", out.Item.ID, out.Item.Title)
+		} else {
+			a.printf("#%d %q is still open, so no new item was added; noted the run on it.\n", out.Item.ID, out.Item.Title)
+		}
+		return nil
 	case (sub == "remove" || sub == "rm") && len(pos) == 1:
 		id, err := parseID(pos[0])
 		if err != nil {
@@ -699,7 +719,7 @@ func (a *app) schedule(args []string) error {
 		a.printf("Removed recurring task %d.\n", id)
 		return nil
 	}
-	return fmt.Errorf("%w: schedule [list] | add <title> (--daily | --weekly DAY) [--body B] | edit <id> … | remove <id>", errUsage)
+	return fmt.Errorf("%w: schedule [list] | add <title> (--daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
@@ -1914,6 +1934,9 @@ func (a *app) printEvents(evs []store.Event) error {
 
 func describeEvent(people map[int64]store.Participant, e store.Event) string {
 	who := label(people, e.ActorID)
+	if e.ActorID == 0 && (e.Type == "backlog.added" || e.Type == "comment.added") {
+		who = "🔁 Recurring task" // Only schedule runs record these as the system.
+	}
 	switch {
 	case e.Type == "message.created":
 		var m store.Message
