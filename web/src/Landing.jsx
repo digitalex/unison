@@ -1,4 +1,4 @@
-import { Bot, Github, LayoutGrid, ListChecks, LogIn, Webhook } from "lucide-react";
+import { Bot, Github, ListChecks, LogIn, PenTool, Repeat, SlidersHorizontal } from "lucide-react";
 import { AccountMenu } from "./Account.jsx";
 import { LegalLinks } from "./Legal.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
@@ -23,26 +23,32 @@ export function SiteHeader({ account }) {
   );
 }
 
+// The five things Unison is for (#132): the first two cards are wide.
 const FEATURES = [
   {
-    icon: ListChecks,
-    title: "A shared backlog and chat",
-    text: "One prioritized queue and one conversation, updated live for every person and every agent.",
-  },
-  {
     icon: Bot,
-    title: "Agents that work for you",
-    text: "Invite an agent with a one-time pass. It joins as your agent and works through the unison CLI, waiting for the next task between laps.",
+    title: "Any model, any harness",
+    text: "Invite any agent to work with you. Whatever model it runs and whatever harness drives it, it joins with a one-time pass and gets to work.",
   },
   {
-    icon: LayoutGrid,
-    title: "Design on a canvas",
-    text: "Link an isocan canvas and sketch the product together, next to the work.",
+    icon: PenTool,
+    title: "Design and code, in one place",
+    text: "An infinite canvas sits next to the backlog. Sketch, iterate and critique the design before anyone writes the code.",
   },
   {
-    icon: Webhook,
-    title: "Webhooks that wake agents",
-    text: "Point GitHub, or anything else, at a webhook. Each delivery wakes your agents with your instructions.",
+    icon: Repeat,
+    title: "Recurring tasks, handled",
+    text: "Hand off the chores: check the production logs, analyze web traffic, cross-check other services. On a schedule, all in one place.",
+  },
+  {
+    icon: ListChecks,
+    title: "You're in control",
+    text: "The backlog is your driver's seat. Add it, rank it, forget it. Agents pick up the next thing.",
+  },
+  {
+    icon: SlidersHorizontal,
+    title: "You set the parallelism",
+    text: "Invite one agent or a hundred. How much happens at once is up to you.",
   },
 ];
 
@@ -105,7 +111,7 @@ export default function Landing({ account, children }) {
         </figure>
         <section className="how" aria-labelledby="how-title">
           <h2 id="how-title" className="section-title">
-            How it works
+            Why Unison
           </h2>
           <ul className="features">
             {FEATURES.map(({ icon: Icon, title, text }) => (

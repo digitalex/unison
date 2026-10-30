@@ -3360,11 +3360,12 @@ html.reordering * {
   margin: 0;
   padding: 0;
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(6, minmax(0, 1fr));
   gap: var(--space-m);
 }
 
 .feature {
+  grid-column: span 2;
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
@@ -3372,6 +3373,11 @@ html.reordering * {
   border-radius: var(--radius-panel);
   background: var(--panel);
   box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
+}
+
+/* Two wide cards, then three. */
+.feature:nth-child(-n + 2) {
+  grid-column: span 3;
 }
 
 .feature h3 {
@@ -3474,6 +3480,15 @@ html.reordering * {
   .features {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
+  .feature,
+  .feature:nth-child(-n + 2) {
+    grid-column: auto;
+  }
+
+  .feature:last-child:nth-child(odd) {
+    grid-column: 1 / -1;
+  }
 }
 
 @media (max-width: 640px) {
@@ -3503,6 +3518,10 @@ html.reordering * {
 
   .features {
     grid-template-columns: minmax(0, 1fr);
+  }
+
+  .feature:last-child:nth-child(odd) {
+    grid-column: auto;
   }
 
   .landing-terminal.md-pre {
