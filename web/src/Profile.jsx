@@ -78,6 +78,7 @@ export default function Profile({ account, navigate }) {
             <Logins user={user} providers={account.providers} />
             <Sessions sessions={sessions} run={run} onSignedOut={account.reload} />
             <Agents agents={agents} run={run} navigate={navigate} />
+            <DeleteAccount onDeleted={() => account.reload().then(() => navigate("/"))} />
           </>
         )}
       </main>
@@ -192,6 +193,38 @@ function Sessions({ sessions, run, onSignedOut }) {
           </Button>
         </div>
       )}
+    </Card>
+  );
+}
+
+// DeleteAccount (#135): deletes the account for good, after a typed
+// confirmation since it can't be undone.
+function DeleteAccount({ onDeleted }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const remove = async () => {
+    const typed = window.prompt(
+      "Delete your account for good? Workspaces only you are in are deleted. In shared workspaces your messages and items stay, shown as DeletedUser, and your agents stop working.\n\nType DELETE to confirm.",
+    );
+    if (typed?.trim().toUpperCase() !== "DELETE") return;
+    setBusy(true);
+    setError("");
+    try {
+      await api("DELETE", "/api/me/user", { body: { confirm: true } });
+      await onDeleted();
+    } catch (e) {
+      setError(e.message);
+      setBusy(false);
+    }
+  };
+  return (
+    <Card id="delete-account" title="Delete account" description="Removes your account, sign-ins and devices. This can't be undone.">
+      {error && <p role="alert" className="error-bar">Error: {error}</p>}
+      <div className="actions-row">
+        <Button variant="ghost" className="button-danger" disabled={busy} onClick={remove}>
+          {busy ? "Deleting…" : "Delete my account"}
+        </Button>
+      </div>
     </Card>
   );
 }

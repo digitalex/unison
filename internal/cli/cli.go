@@ -100,6 +100,9 @@ Accounts and invites:
   login                              sign in with GitHub or Google via your browser
                                      (device code); saves a token per server
   logout                             sign out (revokes the token)
+  delete-account --yes               delete your account for good: workspaces only
+                                     you are in go with it; in shared ones your
+                                     content stays as DeletedUser
   whoami --user                      your account on this server
   invite email <address>             invite a person: anyone signing in with that
                                      verified email may join (once, within 48 hours)
@@ -271,6 +274,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.login(rest)
 	case "logout":
 		return a.logout(rest)
+	case "delete-account":
+		return a.deleteAccount(rest)
 	case "invite", "invites":
 		return a.invites(cmd, rest)
 	case "actions":

@@ -256,6 +256,50 @@ func (a *app) logout(args []string) error {
 	return nil
 }
 
+// deleteAccount deletes the signed-in account (#135) and forgets its token.
+func (a *app) deleteAccount(args []string) error {
+	fs := flag.NewFlagSet("delete-account", flag.ContinueOnError)
+	yes := fs.Bool("yes", false, "really delete it (this can't be undone)")
+	if _, err := parseFlags(fs, args); err != nil {
+		return err
+	}
+	if !*yes {
+		return fmt.Errorf("%w: deleting your account can't be undone; run `unison delete-account --yes`", errUsage)
+	}
+	creds, err := loadCredentials()
+	if err != nil {
+		return err
+	}
+	key := serverKey(a.server)
+	cred, ok := creds.Servers[key]
+	if !ok {
+		return fmt.Errorf("not signed in to %s: run `unison login`", key)
+	}
+	var raw json.RawMessage
+	if err := newClient(a.server, cred.Token).do("DELETE", "/api/me/user", map[string]bool{"confirm": true}, &raw); err != nil {
+		return err
+	}
+	delete(creds.Servers, key)
+	if err := creds.save(); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var out store.AccountDeletion
+	if err := json.Unmarshal(raw, &out); err != nil {
+		return err
+	}
+	a.printf("Deleted your account on %s.\n", key)
+	if n := len(out.DeletedWorkspaces); n > 0 {
+		a.printf("Deleted %d workspace(s) only you were in: %s\n", n, strings.Join(out.DeletedWorkspaces, ", "))
+	}
+	if n := len(out.LeftWorkspaces); n > 0 {
+		a.printf("Left %d shared workspace(s), where your content stays as %s: %s\n", n, store.DeletedName, strings.Join(out.LeftWorkspaces, ", "))
+	}
+	return nil
+}
+
 func (a *app) whoamiUser() error {
 	token := a.userToken()
 	if token == "" {

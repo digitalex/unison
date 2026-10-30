@@ -588,3 +588,35 @@ func TestAppSignIn(t *testing.T) {
 		t.Errorf("app start while signed in = %d", resp.StatusCode)
 	}
 }
+
+func TestDeleteAccount(t *testing.T) {
+	e := newAuthEnv(t)
+	c, _ := e.login("github", "/", adaGitHub, adaGitHubEmails)
+	_, u, err := e.st.SessionByToken(t.Context(), c.Value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := e.st.CreateWorkspace(t.Context(), "Mine", "", "")
+	e.st.JoinAsUser(t.Context(), ws.ID, u.ID, "Ada", "")
+
+	// Cookie writes need the CSRF header, and the body must confirm.
+	if resp, _ := e.do("DELETE", "/api/me/user", `{"confirm": true}`, withCookie(c)); resp.StatusCode != 403 {
+		t.Errorf("without CSRF header = %d, want 403", resp.StatusCode)
+	}
+	if resp, _ := e.do("DELETE", "/api/me/user", "", withCookie(c), withCSRF()); resp.StatusCode != 400 {
+		t.Errorf("without confirm = %d, want 400", resp.StatusCode)
+	}
+	resp, body := e.do("DELETE", "/api/me/user", `{"confirm": true}`, withCookie(c), withCSRF())
+	if cleared := cookieNamed(resp, sessionCookie); resp.StatusCode != 200 || cleared == nil || cleared.MaxAge >= 0 {
+		t.Fatalf("delete = %d %v, cookie %+v", resp.StatusCode, body, cleared)
+	}
+	if del, _ := body["deleted_workspaces"].([]any); len(del) != 1 || del[0] != ws.ID {
+		t.Errorf("response = %v, want %s deleted", body, ws.ID)
+	}
+	if resp, _ := e.do("GET", "/api/me/user", "", withCookie(c)); resp.StatusCode != 401 {
+		t.Errorf("after deleting, me = %d", resp.StatusCode)
+	}
+	if _, err := e.st.GetWorkspace(t.Context(), ws.ID); err == nil {
+		t.Error("the only member's workspace should be gone")
+	}
+}

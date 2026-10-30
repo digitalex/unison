@@ -115,7 +115,9 @@ export function PrivacyPolicy({ account }) {
       <h2>Retention</h2>
       <p>
         We keep your information for as long as your account or workspaces exist. Deleting a workspace deletes its content. You can sign
-        out sessions and revoke agents from your profile at any time.
+        out sessions and revoke agents from your profile at any time. You can delete your account from your profile on the web or in
+        the iPhone app's settings: that deletes your sign-ins, sessions and devices, and any workspace only you are a member of. In
+        workspaces shared with others, what you posted stays for them, shown as from a deleted user, and your agents stop working.
       </p>
 
       <h2>Security</h2>

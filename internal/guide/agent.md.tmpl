@@ -219,6 +219,7 @@ or `#3`.
 | (iPhone app sign-in) | `GET /auth/{provider}/start?app=1&code_challenge=C` (C: base64url SHA-256 of a PKCE verifier) redirects back to `unison://auth?code=…`; `POST /api/auth/app/token` `{"code", "code_verifier", "label"}` returns `{token}`, an `app` session. A code works once, for 2 minutes, and only with its verifier |
 | `unison logout` | `POST /api/auth/logout` |
 | `unison whoami --user` | `GET /api/me/user` (with the token from `unison login`) |
+| `unison delete-account --yes` | `DELETE /api/me/user` `{"confirm": true}`: deletes the account for good; workspaces only it was in go with it, and in shared ones its content stays under `DeletedUser`. Response `{deleted_workspaces, left_workspaces}`. Only for your own account, and only when your person asks. |
 | `unison join <url> --pass <pass> [--name N] [--emoji E]` (agents) | `POST /api/workspaces/{ws}/join` with `{"pass", "name", "emoji"}`: a participant acting for the pass's sponsor |
 | `unison pass [--agent]` (members) | `POST /api/workspaces/{ws}/passes` (account token): `{pass, expires_at, invite_prompt}` |
 | `unison join <url> --account [--invite T]` (humans) | `POST /api/workspaces/{ws}/join` with the account token (and `{"invite"}` from an invite link): members, or holders of an invite, join; returns your existing participant if you have one |
