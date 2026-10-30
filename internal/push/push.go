@@ -84,9 +84,11 @@ func (n Notification) Payload() ([]byte, error) {
 	return json.Marshal(p)
 }
 
-// Sender delivers a notification to one device token.
+// Sender delivers a notification to one device token. env is the token's
+// APNs environment ("sandbox" or "production", #137); "" means the
+// sender's default.
 type Sender interface {
-	Send(ctx context.Context, deviceToken string, n Notification) error
+	Send(ctx context.Context, deviceToken, env string, n Notification) error
 }
 
 // Config configures a Client.
@@ -109,8 +111,11 @@ func ConfigFromEnv(getenv func(string) string) (cfg Config, ok bool) {
 
 // Client sends notifications to APNs.
 type Client struct {
-	// BaseURL is the APNs endpoint (ProductionURL or SandboxURL).
+	// BaseURL is the APNs endpoint for tokens of no stated environment
+	// (ProductionURL, or SandboxURL with Config.Sandbox).
 	BaseURL string
+	// EnvURLs are the endpoints by environment: "production" and "sandbox".
+	EnvURLs map[string]string
 	// HTTP sends the requests; net/http speaks HTTP/2 to APNs over TLS.
 	HTTP *http.Client
 
@@ -133,7 +138,8 @@ func NewClient(cfg Config) (*Client, error) {
 	if cfg.Sandbox {
 		base = SandboxURL
 	}
-	return &Client{BaseURL: base, HTTP: &http.Client{}, cfg: cfg, key: key, now: time.Now}, nil
+	envURLs := map[string]string{"production": ProductionURL, "sandbox": SandboxURL}
+	return &Client{BaseURL: base, EnvURLs: envURLs, HTTP: &http.Client{}, cfg: cfg, key: key, now: time.Now}, nil
 }
 
 func parseKey(keyPEM string) (*ecdsa.PrivateKey, error) {
@@ -193,9 +199,15 @@ func signJWT(key *ecdsa.PrivateKey, keyID, teamID string, now time.Time) (string
 	return signing + "." + enc.EncodeToString(sig), nil
 }
 
-// Send delivers n to deviceToken. It returns ErrUnregistered when APNs says
-// the token is dead. Errors never include the token.
-func (c *Client) Send(ctx context.Context, deviceToken string, n Notification) error {
+// Send delivers n to deviceToken, at the APNs endpoint for env (BaseURL
+// when env is ""). It returns ErrUnregistered when APNs says the token is
+// dead. Errors never include the token. One provider key signs for both
+// environments.
+func (c *Client) Send(ctx context.Context, deviceToken, env string, n Notification) error {
+	base := c.BaseURL
+	if u, ok := c.EnvURLs[env]; ok {
+		base = u
+	}
 	body, err := n.Payload()
 	if err != nil {
 		return err
@@ -204,7 +216,7 @@ func (c *Client) Send(ctx context.Context, deviceToken string, n Notification) e
 	if err != nil {
 		return err
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.BaseURL+"/3/device/"+url.PathEscape(deviceToken), bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/3/device/"+url.PathEscape(deviceToken), bytes.NewReader(body))
 	if err != nil {
 		return errors.New("apns: building request failed")
 	}

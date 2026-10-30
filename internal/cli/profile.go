@@ -151,7 +151,11 @@ func (a *app) devices(args []string) error {
 		if d.LastUsedAt != 0 {
 			used = "last notified " + ago(d.LastUsedAt)
 		}
-		a.printf("%-4d %s — registered %s, %s\n", d.ID, firstNonEmpty(d.Label, "(no label)"), ago(d.CreatedAt), used)
+		env := ""
+		if d.Environment != "" {
+			env = " (" + d.Environment + ")"
+		}
+		a.printf("%-4d %s%s — registered %s, %s\n", d.ID, firstNonEmpty(d.Label, "(no label)"), env, ago(d.CreatedAt), used)
 	}
 	return nil
 }

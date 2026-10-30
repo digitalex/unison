@@ -33,12 +33,15 @@ func (s *Server) registerDevice(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		APNSToken string `json:"apns_token"`
 		Label     string `json:"label"`
+		// Environment is "sandbox" (Xcode builds) or "production"
+		// (TestFlight, App Store); optional (#137).
+		Environment string `json:"environment"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	a := signedIn(r)
-	d, err := s.store.RegisterDevice(r.Context(), a.user.ID, a.session.ID, req.APNSToken, req.Label)
+	d, err := s.store.RegisterDevice(r.Context(), a.user.ID, a.session.ID, req.APNSToken, req.Label, req.Environment)
 	s.respond(w, http.StatusCreated, d, nil, err)
 }
 

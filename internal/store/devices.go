@@ -22,7 +22,18 @@ type Device struct {
 	Label      string `json:"label"`
 	CreatedAt  int64  `json:"created_at"`
 	LastUsedAt int64  `json:"last_used_at,omitempty"`
+	// Environment is the APNs environment the token is for (#137):
+	// EnvSandbox (Xcode builds) or EnvProduction (TestFlight and the App
+	// Store); "" for devices registered before apps said, which get the
+	// server's default.
+	Environment string `json:"environment,omitempty"`
 }
+
+// APNs environments a device token can be for.
+const (
+	EnvSandbox    = "sandbox"
+	EnvProduction = "production"
+)
 
 // apnsTokenRE accepts an APNs device token: hex (32 bytes today, but Apple
 // says not to rely on the length).
@@ -30,15 +41,17 @@ var apnsTokenRE = regexp.MustCompile(`^[0-9a-f]{16,400}$`)
 
 const maxDeviceLabel = 100
 
-const deviceCols = `id, user_id, apns_token, label, created_at, last_used_at`
+const deviceCols = `id, user_id, apns_token, label, created_at, last_used_at, apns_env`
 
 func scanDevice(row interface{ Scan(...any) error }) (*Device, error) {
 	var d Device
 	var used sql.NullInt64
-	if err := row.Scan(&d.ID, &d.UserID, &d.APNSToken, &d.Label, &d.CreatedAt, &used); err != nil {
+	var env sql.NullString
+	if err := row.Scan(&d.ID, &d.UserID, &d.APNSToken, &d.Label, &d.CreatedAt, &used, &env); err != nil {
 		return nil, err
 	}
 	d.LastUsedAt = used.Int64
+	d.Environment = env.String
 	return &d, nil
 }
 
@@ -61,19 +74,29 @@ func (s *Store) queryDevices(ctx context.Context, where string, args ...any) ([]
 
 // RegisterDevice registers (or re-registers) an APNs token for userID from
 // sessionID. A token already registered, by this account or another, is
-// moved to userID and sessionID with the new label.
-func (s *Store) RegisterDevice(ctx context.Context, userID, sessionID int64, token, label string) (*Device, error) {
+// moved to userID and sessionID with the new label. env is the token's APNs
+// environment (EnvSandbox or EnvProduction); "" leaves it as it was.
+func (s *Store) RegisterDevice(ctx context.Context, userID, sessionID int64, token, label, env string) (*Device, error) {
 	token = strings.ToLower(strings.TrimSpace(token))
 	if !apnsTokenRE.MatchString(token) {
 		return nil, fmt.Errorf("%w: apns_token must be the device token in hex", ErrInvalid)
+	}
+	var envArg any // NULL: unknown, or unchanged on re-registering.
+	switch env = strings.TrimSpace(env); env {
+	case "":
+	case EnvSandbox, EnvProduction:
+		envArg = env
+	default:
+		return nil, fmt.Errorf("%w: environment must be %q or %q", ErrInvalid, EnvSandbox, EnvProduction)
 	}
 	label = strings.TrimSpace(label)
 	if r := []rune(label); len(r) > maxDeviceLabel {
 		label = string(r[:maxDeviceLabel])
 	}
-	return scanDevice(s.db.QueryRowContext(ctx, `INSERT INTO devices (user_id, apns_token, label, session_id, created_at) VALUES (?, ?, ?, ?, ?)
-		ON CONFLICT (apns_token) DO UPDATE SET user_id = excluded.user_id, label = excluded.label, session_id = excluded.session_id
-		RETURNING `+deviceCols, userID, token, label, sessionID, s.nowMillis()))
+	return scanDevice(s.db.QueryRowContext(ctx, `INSERT INTO devices (user_id, apns_token, label, session_id, created_at, apns_env) VALUES (?, ?, ?, ?, ?, ?)
+		ON CONFLICT (apns_token) DO UPDATE SET user_id = excluded.user_id, label = excluded.label, session_id = excluded.session_id,
+			apns_env = COALESCE(excluded.apns_env, devices.apns_env)
+		RETURNING `+deviceCols, userID, token, label, sessionID, s.nowMillis(), envArg))
 }
 
 // ListDevices lists userID's devices, oldest first.

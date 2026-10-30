@@ -30,6 +30,7 @@ const (
 
 type sent struct {
 	token string
+	env   string
 	n     push.Notification
 }
 
@@ -39,10 +40,10 @@ type fakePusher struct {
 	sent []sent
 }
 
-func (f *fakePusher) Send(_ context.Context, token string, n push.Notification) error {
+func (f *fakePusher) Send(_ context.Context, token, env string, n push.Notification) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.sent = append(f.sent, sent{token, n})
+	f.sent = append(f.sent, sent{token, env, n})
 	return nil
 }
 
@@ -321,13 +322,13 @@ type slowPusher struct {
 	fake  fakePusher
 }
 
-func (s *slowPusher) Send(ctx context.Context, token string, n push.Notification) error {
+func (s *slowPusher) Send(ctx context.Context, token, env string, n push.Notification) error {
 	select {
 	case <-time.After(s.delay):
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return s.fake.Send(ctx, token, n)
+	return s.fake.Send(ctx, token, env, n)
 }
 
 func TestConcurrentPush(t *testing.T) {
@@ -394,5 +395,28 @@ func TestPushRead(t *testing.T) {
 	}
 	if _, got := read(e.bobTok, last); got != last || len(fake.take()) != 0 {
 		t.Errorf("Bob reading his own posts: marker %d, want %d and no push", got, last)
+	}
+}
+
+// TestPushEnvironment: a device registered with its APNs environment (#137)
+// gets pushes for that environment; older registrations stay on the default.
+func TestPushEnvironment(t *testing.T) {
+	fake := &fakePusher{}
+	e := newPushEnv(t, fake)
+	url := e.ts.URL + "/api/me/devices"
+	if code, d := call(t, "POST", url, e.adaUser, `{"apns_token":"`+adaPhone+`","label":"TestFlight","environment":"production"}`); code != http.StatusCreated || d["environment"] != "production" {
+		t.Fatalf("register with production = %d %v", code, d)
+	}
+	if code, _ := call(t, "POST", url, e.adaUser, `{"apns_token":"`+adaTablet+`","environment":"staging"}`); code != http.StatusBadRequest {
+		t.Errorf("unknown environment = %d, want 400", code)
+	}
+
+	e.post("/messages", e.bobTok, `{"body":"@Ada ping"}`)
+	envs := map[string]string{}
+	for _, s := range fake.take() {
+		envs[s.token] = s.env
+	}
+	if envs[adaPhone] != "production" || envs[adaTablet] != "" || len(envs) != 2 {
+		t.Errorf("sent with environments %v, want the phone on production and the tablet on the default", envs)
 	}
 }

@@ -140,7 +140,7 @@ func (s *Server) pushTo(ctx context.Context, userID int64, n push.Notification) 
 	for _, d := range devices {
 		go func(d store.Device) {
 			defer wg.Done()
-			err := s.pusher.Send(ctx, d.APNSToken, n)
+			err := s.pusher.Send(ctx, d.APNSToken, d.Environment, n)
 			switch {
 			case err == nil:
 				err = s.store.TouchDevice(ctx, d.ID)

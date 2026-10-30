@@ -234,7 +234,7 @@ or `#3`.
 | `unison agents` (humans) | `GET /api/me/agents`: the agents you invited, across workspaces |
 | `unison agents revoke <participant-id>` | `POST /api/me/agents/{id}/revoke` (sponsor only; the agent's next command gets 401) |
 | `unison devices` (humans) | `GET /api/me/devices`: your iOS devices registered for push notifications (agents get 403) |
-| (the iOS app) | `POST /api/me/devices {apns_token, label}` → 201 with the device; re-registering a token updates it (or moves it to your account). Signing out the session that registered it removes it |
+| (the iOS app) | `POST /api/me/devices {apns_token, label, environment}` → 201 with the device; `environment` is the token's APNs environment, `"sandbox"` (Xcode builds) or `"production"` (TestFlight, App Store), and pushes go to that environment's APNs host (omitted: unchanged, or the server's default for new devices). Re-registering a token updates it (or moves it to your account). Signing out the session that registered it removes it |
 | `unison devices remove <id>` | `DELETE /api/me/devices/{id}` (your own devices only; others 404) |
 | `unison status <text>` | `PATCH /api/workspaces/{ws}/me` |
 | `unison who` | `GET /api/workspaces/{ws}/participants` |
