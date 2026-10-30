@@ -93,7 +93,8 @@ Workspaces & identity:
   status <text>                      set your status line ("" clears it)
   who                                participants and who is active
   reviews                            open PRs in the workspace's GitHub repos that
-                                     aren't set to auto-merge (need a person)
+                                     aren't set to auto-merge (need a person), and
+                                     whether each is ready to merge
 
 Accounts and invites:
   login                              sign in with GitHub or Google via your browser
@@ -610,12 +611,27 @@ func (a *app) reviews() error {
 		if p.Draft {
 			draft = " [draft]"
 		}
-		a.printf("%s#%d  %s%s  (by %s, %s)\n    %s\n", p.Repo, p.Number, p.Title, draft, p.Author, ago(p.CreatedAt), p.URL)
+		a.printf("%s#%d  %s%s  (by %s, %s)\n    %s  %s\n", p.Repo, p.Number, p.Title, draft, p.Author, ago(p.CreatedAt), mergeLabel(p.MergeState), p.URL)
 	}
 	for _, e := range out.Errors {
 		a.printf("! %s: %s\n", e.Repo, e.Error)
 	}
 	return nil
+}
+
+// mergeLabel says whether a pending pull request can be merged (#134).
+func mergeLabel(state string) string {
+	switch state {
+	case server.MergeReady:
+		return "✓ ready to merge"
+	case server.MergeConflict:
+		return "✗ merge conflict"
+	case server.ChecksFailing:
+		return "✗ checks failing"
+	case server.ChecksPending:
+		return "… checks running"
+	}
+	return "? merge state unknown"
 }
 
 func repoLine(r store.Repo) string {
