@@ -89,12 +89,15 @@ type AuthConfig struct {
 	// and anyone may join or create, as before accounts. For local
 	// development without OAuth only.
 	Open bool
+	// ReviewCode (UNISON_REVIEW_CODE) is the access code for App Review's
+	// sign-in (#139, review.go); "" turns that sign-in off.
+	ReviewCode string
 }
 
 // AuthConfigFromEnv reads UNISON_GITHUB_CLIENT_ID/SECRET,
 // UNISON_GOOGLE_CLIENT_ID/SECRET, UNISON_APPLE_CLIENT_ID/TEAM_ID/KEY_ID/
-// PRIVATE_KEY (and optionally APP_ID, the iPhone app's bundle ID) and
-// UNISON_CREATORS (comma-separated).
+// PRIVATE_KEY (and optionally APP_ID, the iPhone app's bundle ID),
+// UNISON_CREATORS (comma-separated) and UNISON_REVIEW_CODE.
 func AuthConfigFromEnv() AuthConfig {
 	var cfg AuthConfig
 	if id, secret := os.Getenv("UNISON_GITHUB_CLIENT_ID"), os.Getenv("UNISON_GITHUB_CLIENT_SECRET"); id != "" && secret != "" {
@@ -113,6 +116,7 @@ func AuthConfigFromEnv() AuthConfig {
 		}
 	}
 	cfg.Open = os.Getenv("UNISON_AUTH") == "off"
+	cfg.ReviewCode = strings.TrimSpace(os.Getenv("UNISON_REVIEW_CODE"))
 	for _, e := range strings.Split(os.Getenv("UNISON_CREATORS"), ",") {
 		if e = strings.ToLower(strings.TrimSpace(e)); e != "" {
 			cfg.Creators = append(cfg.Creators, e)
@@ -148,6 +152,7 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("GET /api/auth/device/lookup", s.requireUser(s.deviceLookup))
 	m.HandleFunc("POST /api/auth/device/approve", s.requireUser(s.deviceApprove))
 	m.HandleFunc("POST /api/auth/app/token", s.appToken)
+	m.HandleFunc("POST /api/auth/review", s.reviewSignIn)
 	m.HandleFunc("POST /api/invites/lookup", s.requireUser(s.lookupInvite))
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
 	m.HandleFunc("DELETE /api/me/user", s.requireUser(s.deleteAccount))
