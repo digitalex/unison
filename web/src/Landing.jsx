@@ -1,5 +1,5 @@
 import { Bot, Github, ListChecks, LogIn, PenTool, Repeat, SlidersHorizontal } from "lucide-react";
-import { AccountMenu } from "./Account.jsx";
+import { AccountMenu, AppleLogo } from "./Account.jsx";
 import { LegalLinks } from "./Legal.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
@@ -59,7 +59,7 @@ function SignInButtons({ providers }) {
   return (
     <div className="hero-actions">
       {sorted.map((p, i) => {
-        const Icon = p.name === "github" ? Github : LogIn;
+        const Icon = { github: Github, apple: AppleLogo }[p.name] || LogIn;
         return (
           <a
             key={p.name}

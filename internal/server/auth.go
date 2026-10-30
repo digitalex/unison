@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"log"
 	"net/http"
 	"net/url"
 	"os"
@@ -47,6 +48,7 @@ type OAuthProvider struct {
 	UserURL      string
 	EmailsURL    string // GitHub only: /user/emails
 	Scopes       []string
+	Apple        *AppleKey // Apple only (#136): see apple.go
 }
 
 // GitHubProvider returns GitHub's OAuth app endpoints.
@@ -90,7 +92,9 @@ type AuthConfig struct {
 }
 
 // AuthConfigFromEnv reads UNISON_GITHUB_CLIENT_ID/SECRET,
-// UNISON_GOOGLE_CLIENT_ID/SECRET and UNISON_CREATORS (comma-separated).
+// UNISON_GOOGLE_CLIENT_ID/SECRET, UNISON_APPLE_CLIENT_ID/TEAM_ID/KEY_ID/
+// PRIVATE_KEY (and optionally APP_ID, the iPhone app's bundle ID) and
+// UNISON_CREATORS (comma-separated).
 func AuthConfigFromEnv() AuthConfig {
 	var cfg AuthConfig
 	if id, secret := os.Getenv("UNISON_GITHUB_CLIENT_ID"), os.Getenv("UNISON_GITHUB_CLIENT_SECRET"); id != "" && secret != "" {
@@ -98,6 +102,15 @@ func AuthConfigFromEnv() AuthConfig {
 	}
 	if id, secret := os.Getenv("UNISON_GOOGLE_CLIENT_ID"), os.Getenv("UNISON_GOOGLE_CLIENT_SECRET"); id != "" && secret != "" {
 		cfg.Providers = append(cfg.Providers, GoogleProvider(id, secret))
+	}
+	if id, team, kid, key := os.Getenv("UNISON_APPLE_CLIENT_ID"), os.Getenv("UNISON_APPLE_TEAM_ID"), os.Getenv("UNISON_APPLE_KEY_ID"),
+		os.Getenv("UNISON_APPLE_PRIVATE_KEY"); id != "" && team != "" && kid != "" && key != "" {
+		p, err := AppleProvider(id, team, kid, key, firstNonEmpty(os.Getenv("UNISON_APPLE_APP_ID"), "com.digitalex.Unison"))
+		if err != nil {
+			log.Printf("WARNING: sign-in with Apple is off: %v", err)
+		} else {
+			cfg.Providers = append(cfg.Providers, p)
+		}
 	}
 	cfg.Open = os.Getenv("UNISON_AUTH") == "off"
 	for _, e := range strings.Split(os.Getenv("UNISON_CREATORS"), ",") {
@@ -126,6 +139,8 @@ func (s *Server) authRoutes() {
 	m := s.mux
 	m.HandleFunc("GET /auth/{provider}/start", s.oauthStart)
 	m.HandleFunc("GET /auth/{provider}/callback", s.oauthCallback)
+	m.HandleFunc("POST /auth/{provider}/callback", s.oauthCallback) // Apple's form_post
+	m.HandleFunc("POST /api/auth/apple/native", s.appleNative)
 	m.HandleFunc("GET /api/auth/providers", s.listProviders)
 	m.HandleFunc("POST /api/auth/logout", s.requireUser(s.logout))
 	m.HandleFunc("POST /api/auth/device", s.deviceStart)
@@ -333,19 +348,30 @@ func (s *Server) oauthStart(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Bind the login to this browser: the callback must present this cookie.
+	// Apple's callback is a cross-site POST, which only carries SameSite=None
+	// cookies.
+	sameSite := http.SameSiteLaxMode
+	if p.Apple != nil {
+		sameSite = http.SameSiteNoneMode
+	}
 	http.SetCookie(w, &http.Cookie{
 		Name: oauthCookie, Value: state, Path: "/auth/", MaxAge: int(store.OAuthStateTTL / time.Second),
-		HttpOnly: true, Secure: isHTTPS(r), SameSite: http.SameSiteLaxMode,
+		HttpOnly: true, Secure: isHTTPS(r), SameSite: sameSite,
 	})
-	challenge := sha256.Sum256([]byte(verifier))
 	q := url.Values{
-		"response_type":         {"code"},
-		"client_id":             {p.ClientID},
-		"redirect_uri":          {redirectURI(r, p.Name)},
-		"scope":                 {strings.Join(p.Scopes, " ")},
-		"state":                 {state},
-		"code_challenge":        {base64.RawURLEncoding.EncodeToString(challenge[:])},
-		"code_challenge_method": {"S256"},
+		"response_type": {"code"},
+		"client_id":     {p.ClientID},
+		"redirect_uri":  {redirectURI(r, p.Name)},
+		"scope":         {strings.Join(p.Scopes, " ")},
+		"state":         {state},
+	}
+	if p.Apple != nil {
+		// Apple takes no PKCE; its secret is signed by our key instead.
+		q.Set("response_mode", "form_post")
+	} else {
+		challenge := sha256.Sum256([]byte(verifier))
+		q.Set("code_challenge", base64.RawURLEncoding.EncodeToString(challenge[:]))
+		q.Set("code_challenge_method", "S256")
 	}
 	http.Redirect(w, r, p.AuthURL+"?"+q.Encode(), http.StatusFound)
 }
@@ -357,6 +383,14 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	q := r.URL.Query()
+	if r.Method == http.MethodPost {
+		r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+		if r.ParseForm() != nil {
+			authFailed(w, http.StatusBadRequest, "This sign-in response is not valid. Please try again.")
+			return
+		}
+		q = r.PostForm
+	}
 	state := q.Get("state")
 	c, err := r.Cookie(oauthCookie)
 	clearCookie(w, r, oauthCookie, "/auth/")
@@ -377,6 +411,9 @@ func (s *Server) oauthCallback(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		authFailed(w, http.StatusBadGateway, "Could not sign in with "+p.Label+": "+err.Error())
 		return
+	}
+	if p.Apple != nil {
+		prof.Name = appleName(q.Get("user"))
 	}
 	if st.LinkUserID != 0 {
 		s.finishLink(w, r, p, st, prof)
@@ -416,6 +453,9 @@ func authFailed(w http.ResponseWriter, status int, msg string) {
 // fetchProfile exchanges the authorization code (with the PKCE verifier)
 // and reads the person's profile.
 func (s *Server) fetchProfile(ctx context.Context, p *OAuthProvider, code, verifier, redirect string) (*store.Profile, error) {
+	if p.Apple != nil {
+		return s.appleProfile(ctx, p, code, p.ClientID, redirect)
+	}
 	if code == "" {
 		return nil, errors.New("no authorization code")
 	}

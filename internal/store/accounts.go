@@ -22,7 +22,7 @@ import (
 const (
 	SessionBrowser = "browser"
 	SessionCLI     = "cli"
-	SessionApp     = "app" // a native app (the iPhone app), via RedeemAppCode
+	SessionApp     = "app" // a native app (the iPhone app), via RedeemAppCode or its Sign in with Apple button
 )
 
 // SessionTTL is how long a session lives without use; every use (at most
@@ -227,7 +227,7 @@ func truncate(s string, n int) string {
 // CreateSession starts a session for a user and returns its raw token (only
 // its hash is stored).
 func (s *Store) CreateSession(ctx context.Context, userID int64, kind, label string) (string, *Session, error) {
-	if kind != SessionBrowser && kind != SessionCLI {
+	if kind != SessionBrowser && kind != SessionCLI && kind != SessionApp {
 		return "", nil, fmt.Errorf("%w: unknown session kind %q", ErrInvalid, kind)
 	}
 	var token string

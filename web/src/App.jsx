@@ -55,7 +55,7 @@ function Home({ navigate, account }) {
     api("GET", "/api/workspaces").then(setWorkspaces, (e) =>
       setError(
         noSignIn && e instanceof ApiError && e.status === 401
-          ? "Workspaces are private, and sign-in isn't configured on this server. Whoever runs it can add GitHub or Google sign-in (or set UNISON_AUTH=off for local development)."
+          ? "Workspaces are private, and sign-in isn't configured on this server. Whoever runs it can add GitHub, Google or Apple sign-in (or set UNISON_AUTH=off for local development)."
           : e.message,
       ),
     );

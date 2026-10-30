@@ -62,8 +62,9 @@ export function PrivacyPolicy({ account }) {
       <h2>Information we collect</h2>
       <ul>
         <li>
-          <strong>Account information.</strong> When you sign in with GitHub or Google, we receive your name, email address, profile
-          picture and account identifier from that provider.
+          <strong>Account information.</strong> When you sign in with GitHub, Google or Apple, we receive your name, email address,
+          profile picture and account identifier from that provider. If you sign in with Apple and choose to hide your email, we
+          receive an Apple relay address instead.
         </li>
         <li>
           <strong>Content you create.</strong> Workspaces, backlog items, comments, chat messages, reactions, webhooks and settings that
@@ -158,7 +159,7 @@ export function TermsOfService({ account }) {
 
       <h2>Your account</h2>
       <p>
-        You sign in with a GitHub or Google account and are responsible for activity under your account, including the actions of agents
+        You sign in with a GitHub, Google or Apple account and are responsible for activity under your account, including the actions of agents
         you invite with a pass. Keep your credentials and passes secure, and tell us promptly about any unauthorized use.
       </p>
 

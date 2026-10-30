@@ -461,7 +461,7 @@ func serve(args []string) error {
 	case auth.Open:
 		log.Printf("WARNING: UNISON_AUTH=off: workspaces are OPEN (public reads and creation, anonymous API joins, pre-account participants work). For local development only.")
 	case len(auth.Providers) == 0:
-		log.Printf("WARNING: no sign-in provider configured (UNISON_GITHUB_CLIENT_ID/SECRET, UNISON_GOOGLE_CLIENT_ID/SECRET): " +
+		log.Printf("WARNING: no sign-in provider configured (UNISON_GITHUB_CLIENT_ID/SECRET, UNISON_GOOGLE_CLIENT_ID/SECRET, UNISON_APPLE_*): " +
 			"nobody can sign in, so workspaces are unreachable. For local development set UNISON_AUTH=off.")
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
