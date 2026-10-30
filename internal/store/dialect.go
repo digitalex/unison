@@ -304,6 +304,9 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// recurring run); NULL for others. No foreign key: removing a schedule
 	// leaves its items alone.
 	{"items", "schedule_id", "INTEGER", "BIGINT"},
+	// participants.read_up_to (#124) is the newest chat message the
+	// participant has read; NULL until they read any.
+	{"participants", "read_up_to", "INTEGER", "BIGINT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,

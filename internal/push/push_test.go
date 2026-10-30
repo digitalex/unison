@@ -125,6 +125,29 @@ func TestPayload(t *testing.T) {
 	}
 }
 
+func TestReadPayload(t *testing.T) {
+	raw, err := Notification{WorkspaceID: "ws1", Kind: KindRead, ReadUpTo: 42}.Payload()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"aps":{"content-available":1},"kind":"read","read_up_to":42,"workspace_id":"ws1"}`
+	if string(raw) != want {
+		t.Errorf("payload\n got %s\nwant %s", raw, want)
+	}
+}
+
+func TestSendRead(t *testing.T) {
+	var got http.Request
+	var body []byte
+	_, c, _ := apnsServer(t, http.StatusOK, "", &got, &body)
+	if err := c.Send(context.Background(), deviceToken, Notification{WorkspaceID: "ws1", Kind: KindRead, ReadUpTo: 42}); err != nil {
+		t.Fatal(err)
+	}
+	if got.Header.Get("apns-push-type") != "background" || got.Header.Get("apns-priority") != "5" {
+		t.Errorf("headers %v, want a background push at priority 5", got.Header)
+	}
+}
+
 // apnsServer is a fake APNs endpoint answering with status and reason.
 func apnsServer(t *testing.T, status int, reason string, got *http.Request, body *[]byte) (*httptest.Server, *Client, *ecdsa.PrivateKey) {
 	t.Helper()

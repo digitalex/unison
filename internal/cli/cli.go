@@ -123,6 +123,8 @@ Chat:
                                      status update about the item you work on);
                                      --action asks the people it @mentions to
                                      act (review a PR, answer, set something up)
+  chat read [<message-id>]           mark chat read up to a message (default: the
+                                     newest); --show prints how far you've read
   chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 (or +1,
                                      -1, heart, muscle, 100)
 
@@ -1022,8 +1024,54 @@ func (a *app) chat(args []string) error {
 		return a.chatSend(args[1:])
 	case "react":
 		return a.chatReact(args[1:])
+	case "read":
+		return a.chatRead(args[1:])
 	}
 	return fmt.Errorf("%w: unknown chat subcommand %q", errUsage, args[0])
+}
+
+// chatRead moves your chat read marker (#124) up to a message, by default
+// the newest, or with no change shows where it is.
+func (a *app) chatRead(args []string) error {
+	fs := flag.NewFlagSet("chat read", flag.ContinueOnError)
+	show := fs.Bool("show", false, "only show how far you have read")
+	pos, err := parseFlags(fs, args)
+	if err != nil || len(pos) > 1 {
+		return fmt.Errorf("%w: chat read [<message-id>] | chat read --show", errUsage)
+	}
+	var out struct {
+		UpTo int64 `json:"up_to"`
+	}
+	if *show {
+		if ok, err := a.call("GET", "/read", nil, &out, false); !ok {
+			return err
+		}
+		a.printf("Read up to #%d.\n", out.UpTo)
+		return nil
+	}
+	var upTo int64
+	if len(pos) == 1 {
+		if upTo, err = parseID(pos[0]); err != nil {
+			return err
+		}
+	} else {
+		var msgs []store.Message
+		if ok, err := a.call("GET", "/messages?limit=50", nil, &msgs, false); !ok {
+			return err
+		}
+		for _, m := range msgs {
+			upTo = max(upTo, m.ID)
+		}
+		if upTo == 0 {
+			a.printf("No messages yet.\n")
+			return nil
+		}
+	}
+	if ok, err := a.call("PUT", "/read", map[string]int64{"up_to": upTo}, &out, true); !ok {
+		return err
+	}
+	a.printf("Read up to #%d.\n", out.UpTo)
+	return nil
 }
 
 func (a *app) chatLog(args []string) error {

@@ -110,6 +110,23 @@ func (s *Server) pushEvent(ctx context.Context, ev store.Event) error {
 	return nil
 }
 
+// pushRead tells p's devices, silently, that p has read chat up to message
+// upTo (#122), so they can clear the notifications it covers. Only called
+// when the newly read messages had notified p, to stay within what iOS
+// allows for background pushes.
+func (s *Server) pushRead(p *store.Participant, upTo int64) {
+	if s.pusher == nil || p.UserID == 0 {
+		return
+	}
+	s.pushing.Add(1)
+	go func() {
+		defer s.pushing.Done()
+		ctx, cancel := context.WithTimeout(context.Background(), pushTimeout)
+		defer cancel()
+		s.pushTo(ctx, p.UserID, push.Notification{WorkspaceID: p.WorkspaceID, Kind: push.KindRead, ReadUpTo: upTo})
+	}()
+}
+
 // pushTo sends n to every device of userID, forgetting the ones APNs no
 // longer accepts. Device tokens are never logged.
 func (s *Server) pushTo(ctx context.Context, userID int64, n push.Notification) {

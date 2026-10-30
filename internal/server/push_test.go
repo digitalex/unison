@@ -353,3 +353,46 @@ func TestConcurrentPush(t *testing.T) {
 		t.Errorf("delivery took %v, expected < 300ms (indicating concurrent execution)", duration)
 	}
 }
+
+// TestPushRead (#124, #122): moving the read marker past messages that
+// pushed to you sends your devices a silent read push; otherwise nothing.
+func TestPushRead(t *testing.T) {
+	fake := &fakePusher{}
+	e := newPushEnv(t, fake)
+	read := func(token string, upTo int64) (int, int64) {
+		t.Helper()
+		code, out := call(t, "PUT", e.ts.URL+"/api/workspaces/"+e.ws+"/read", token, fmt.Sprintf(`{"up_to":%d}`, upTo))
+		e.srv.waitPushes()
+		if code != http.StatusOK {
+			return code, 0
+		}
+		return code, id(out["up_to"])
+	}
+	plain := id(e.post("/messages", e.bobTok, `{"body":"morning"}`)["id"])
+	mention := id(e.post("/messages", e.bobTok, `{"body":"@Ada look"}`)["id"])
+	last := id(e.post("/messages", e.bobTok, `{"body":"also this"}`)["id"])
+	fake.take()
+
+	if _, got := read(e.adaTok, plain); got != plain || len(fake.take()) != 0 {
+		t.Errorf("reading a message that didn't push: marker %d, want %d and no push", got, plain)
+	}
+	if _, got := read(e.adaTok, last); got != last {
+		t.Errorf("marker %d, want %d", got, last)
+	}
+	want := push.Notification{WorkspaceID: e.ws, Kind: push.KindRead, ReadUpTo: last}
+	if got := fake.take(); len(got) != 2 || got[0].n != want || got[1].n != want {
+		t.Errorf("read past a mention sent %+v, want %+v to both of Ada's devices", got, want)
+	}
+	if _, got := read(e.adaTok, mention); got != last || len(fake.take()) != 0 {
+		t.Errorf("reading backwards: marker %d, want it to stay %d with no push", got, last)
+	}
+	if code, out := getAs(t, e.ts.URL+"/api/workspaces/"+e.ws+"/read", e.adaTok); code != http.StatusOK || !strings.Contains(out, fmt.Sprintf(`"up_to":%d`, last)) {
+		t.Errorf("GET read = %d %s", code, out)
+	}
+	if code, _ := read(e.adaTok, last+100); code != http.StatusNotFound {
+		t.Errorf("unknown message = %d, want 404", code)
+	}
+	if _, got := read(e.bobTok, last); got != last || len(fake.take()) != 0 {
+		t.Errorf("Bob reading his own posts: marker %d, want %d and no push", got, last)
+	}
+}
