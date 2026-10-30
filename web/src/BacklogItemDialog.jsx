@@ -9,18 +9,16 @@ import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input, Select, Textarea } from "./ui/Input.jsx";
 
-// NewItemDialog adds a backlog item: a title and a roomy description.
-// ⌘/Ctrl+Enter submits; onCreated gets the new item.
-export function NewItemDialog({ run, onClose, onCreated }) {
-  const [title, setTitle] = useState("");
-  const [body, setBody] = useState("");
-  const [busy, setBusy] = useState(false);
-  const create = async (e) => {
+// NewItemDialog writes a backlog item: a title and a roomy description,
+// starting from initial ({title, body}) if given, e.g. after a failed add.
+// ⌘/Ctrl+Enter submits; onCreate gets {title, body} and adds it, so the
+// dialog closes at once (#128).
+export function NewItemDialog({ initial, onClose, onCreate }) {
+  const [title, setTitle] = useState(initial?.title || "");
+  const [body, setBody] = useState(initial?.body || "");
+  const create = (e) => {
     e.preventDefault();
-    setBusy(true);
-    const item = await run("POST", "/backlog", { title, body });
-    setBusy(false);
-    if (item) onCreated(item);
+    onCreate({ title, body });
   };
   return (
     <Dialog title="New backlog item" onClose={onClose} className="item-dialog">
@@ -36,7 +34,7 @@ export function NewItemDialog({ run, onClose, onCreated }) {
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel
           </Button>
-          <Button type="submit" variant="primary" disabled={busy}>
+          <Button type="submit" variant="primary">
             Create item
           </Button>
         </div>

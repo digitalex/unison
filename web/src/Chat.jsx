@@ -39,19 +39,23 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   const [prefill, setPrefill] = useState(null); // {text, at}: start the thread composer with this.
   const flashed = useShowMessage(shown, messages);
   const bottom = useRef(null);
+  // Messages you sent that the server hasn't confirmed yet (#128): shown at
+  // once, kept out of messages so they never count as read or unread.
+  const [pending, setPending] = useState([]);
+  const shownMessages = pending.length ? [...messages, ...pending] : messages;
 
   useEffect(() => {
     bottom.current?.scrollIntoView({ block: "nearest" });
-  }, [messages.length, activity.length]);
+  }, [shownMessages.length, activity.length]);
 
-  const byId = new Map(messages.map((m) => [m.id, m]));
+  const byId = new Map(shownMessages.map((m) => [m.id, m]));
   const replies = new Map();
-  for (const m of messages) {
+  for (const m of shownMessages) {
     if (m.parent_id && byId.has(m.parent_id)) {
       replies.set(m.parent_id, [...(replies.get(m.parent_id) || []), m]);
     }
   }
-  const roots = messages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
+  const roots = shownMessages.filter((m) => !m.parent_id || !byId.has(m.parent_id));
   const log = byTime(roots, activity);
   const thread = threadId ? byId.get(threadId) : null;
 
@@ -100,6 +104,25 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   };
   const body = useRef(null);
   const [threadWidth, setThreadWidth] = useStoredWidth();
+  // send posts a message, showing it at once (#128). When the server
+  // answers, its copy takes the pending one's place (the live update may
+  // have brought it already); a failure takes it away and says why.
+  // shown adds what only the pending copy shows (the linked item's chip).
+  const send = async (fields, shown = {}) => {
+    // Who it asks to act is the server's to say, so the pending copy doesn't.
+    const temp = { ...fields, ...shown, action_required: undefined, id: `pending-${Date.now()}`, pending: true, author_id: me?.id, created_at: Date.now(), reactions: [] };
+    setPending((list) => [...list, temp]);
+    try {
+      const m = await call("POST", "/messages", fields);
+      updateMessages((list) => (list.some((x) => x.id === m.id) ? list : [...list, m].sort((a, b) => a.id - b.id)));
+      return true;
+    } catch (err) {
+      onError(err.message);
+      return false;
+    } finally {
+      setPending((list) => list.filter((x) => x !== temp));
+    }
+  };
   const messageProps = (m, root) => ({
     message: m,
     onDone: (done) => setDone(m, done),
@@ -112,7 +135,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
     actionsOpen: actionsFor === m.id,
     onToggleActions: () => setActionsFor(actionsFor === m.id ? null : m.id),
   });
-  const composerProps = { items, call, onError };
+  const composerProps = { items, send };
 
   return (
     <section className={thread ? "screen chat chat-thread-open" : "screen chat"} aria-label="Chat">
@@ -325,7 +348,7 @@ function useOpenShownThread(shown, byId, setThreadId) {
 // name) starts the text with "@Name "; onMentioned says it was used.
 // prefill ({text, at}) starts the text with text, e.g. the @mention of the
 // author being replied to.
-function Composer({ parent, items, call, onError, mention, onMentioned, prefill, placeholder, autoFocus }) {
+function Composer({ parent, items, send: post, mention, onMentioned, prefill, placeholder, autoFocus }) {
   const [text, setText] = useState("");
   const [linked, setLinked] = useState(Boolean(parent?.item)); // Tie the message to the item it mentions.
   const [needsAction, setNeedsAction] = useState(false); // Ask the people the message mentions to act.
@@ -352,22 +375,26 @@ function Composer({ parent, items, call, onError, mention, onMentioned, prefill,
     else if (autoFocus) composer.current?.focus();
   }, [prefill?.at]);
 
+  // The message shows at once and the composer clears; if sending fails,
+  // the text comes back so nothing is lost.
   const send = async (e) => {
     e.preventDefault();
     if (!text.trim()) return;
-    try {
-      await call("POST", "/messages", {
-        body: text,
+    const sent = text;
+    const item = linked && mentionedItem ? mentionedItem : null;
+    setText("");
+    setNeedsAction(false);
+    if (!parent) setLinked(false);
+    const ok = await post(
+      {
+        body: sent,
         parent_id: parent?.id,
-        item_id: linked && mentionedItem ? mentionedItem.id : undefined,
+        item_id: item?.id,
         action_required: needsAction && canAsk ? true : undefined,
-      });
-      setText("");
-      setNeedsAction(false);
-      if (!parent) setLinked(false);
-    } catch (err) {
-      onError(err.message);
-    }
+      },
+      { item: item ? { id: item.id, title: item.title, status: item.status } : undefined },
+    );
+    if (!ok) setText((t) => t || sent);
   };
 
   return (
@@ -462,7 +489,7 @@ function Message({ message, onDone, isNew, participants, me, flashed, onReply, o
     <div
       id={`msg-${message.id}`}
       tabIndex={-1}
-      className={["msg", needsMe ? "needs-me" : !asksMe && mentioned && "mention", flashed === message.id && "msg-flash", actionsOpen && "msg-actions-open"].filter(Boolean).join(" ")}
+      className={["msg", message.pending && "msg-pending", needsMe ? "needs-me" : !asksMe && mentioned && "mention", flashed === message.id && "msg-flash", actionsOpen && "msg-actions-open"].filter(Boolean).join(" ")}
     >
       {!isReply && (
         <span className="avatar" aria-hidden="true">
@@ -473,7 +500,7 @@ function Message({ message, onDone, isNew, participants, me, flashed, onReply, o
         <span className="who">{author ? (isReply ? `${author.emoji} ${author.name}` : author.name) : `participant ${message.author_id}`}</span>
         {author?.sponsor && <span className="agent-of">· agent of {author.sponsor.display_name}</span>}
         <span className="time" title={created.toLocaleString()}>
-          {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · #{message.id}
+          {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {message.pending ? "sending…" : `#${message.id}`}
         </span>
         <div className="text">
           <Markdown text={message.body} />

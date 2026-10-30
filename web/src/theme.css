@@ -2045,6 +2045,20 @@ html.resizing * {
   outline: none;
 }
 
+/* A backlog item on its way to the server (#128). */
+.item.item-pending {
+  opacity: 0.6;
+}
+
+/* A message on its way to the server (#128): dimmed, no actions yet. */
+.msg.msg-pending {
+  opacity: 0.6;
+}
+.msg.msg-pending > .msg-actions,
+.msg.msg-pending > .msg-more {
+  display: none !important;
+}
+
 .msg.msg-flash {
   animation: msg-flash 2.5s var(--motion-easing);
 }
