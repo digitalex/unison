@@ -1594,14 +1594,8 @@ button.group-head {
   color: var(--text-muted);
 }
 
-/* Recurring tasks (Recurring.jsx): the backlog's Recurring group, and the
-   marker on items a schedule added. */
-.group-head .group-icon {
-  width: 14px;
-  height: 14px;
-  color: var(--text-muted);
-}
-
+/* Recurring tasks (Recurring.jsx): the Recurring screen, and the marker on
+   backlog items a schedule added. */
 .recurring-marker {
   display: inline-flex;
   flex: none;
@@ -1614,37 +1608,27 @@ button.group-head {
   height: 14px;
 }
 
-/* Schedule rows have no hover actions: keep their next run showing. */
-.item.recurring .row:hover .meta,
-.item.recurring .row:focus-within .meta {
-  display: inline;
+.recurring-list {
+  padding: var(--space-xxs) 0;
 }
 
-.add-row {
-  display: flex;
-  align-items: center;
-  gap: var(--space-xs);
-  width: calc(100% - 12px);
-  height: 32px;
-  margin: 1px 6px;
-  padding: 0 10px 0 calc(10px + 18px + var(--space-s));
-  border: 0;
-  border-radius: var(--radius-s);
-  background: none;
+.recurring-empty {
+  padding: var(--space-xs) var(--space-m);
   color: var(--text-muted);
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
 }
 
-.add-row:hover {
-  background: var(--surface-hover);
-  color: var(--text);
+@media (max-width: 640px) {
+  .recurring-list {
+    padding: 0;
+  }
 }
 
-.add-row .lucide {
-  width: 14px;
-  height: 14px;
+/* Schedule rows have no hover actions: keep their next run showing on wide screens. */
+@media (min-width: 641px) {
+  .item.recurring .row:hover .meta,
+  .item.recurring .row:focus-within .meta {
+    display: inline;
+  }
 }
 
 .schedule-when {

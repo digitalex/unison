@@ -11,8 +11,8 @@ import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
 // Pages: "/" is Home (the landing page, or the workspace list when signed
-// in); "/w/:id" is a workspace's backlog, "/w/:id/chat" its chat,
-// "/w/:id/settings" its settings,
+// in); "/w/:id" is a workspace's backlog, "/w/:id/recurring" its recurring
+// tasks, "/w/:id/chat" its chat, "/w/:id/settings" its settings,
 // "/w/:id/join?invite=…" where an invite link lands; "/me" is your profile;
 // "/auth/device" approves a `unison login`; "/privacy-policy" and
 // "/terms-of-service" are the legal pages.
@@ -28,7 +28,7 @@ export default function App() {
     window.history.pushState(null, "", to);
     setPath(window.location.pathname);
   };
-  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|chat))?/);
+  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat))?/);
   if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live
   // stream and dialogs start fresh for the new one.
