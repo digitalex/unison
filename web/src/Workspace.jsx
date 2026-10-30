@@ -8,6 +8,7 @@ import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { agentStatus } from "./agents.js";
+import { ago } from "./backlogFormat.js";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -19,9 +20,23 @@ import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const DORMANT_WINDOW_MS = 15 * 60 * 1000;
+// Agents not seen this long drop off the roster (#125); they're still
+// participants (chat and the backlog show their names).
+const AGENT_GONE_MS = 24 * 60 * 60 * 1000;
 
 function isDormant(p, now) {
   return agentStatus(p, now) || !p.last_seen_at || now - p.last_seen_at >= DORMANT_WINDOW_MS;
+}
+
+// roster is who the People list shows: everyone but agents (other than
+// you) not seen in AGENT_GONE_MS.
+function roster(participants, me, now = Date.now()) {
+  return participants.filter((p) => !p.sponsor || p.id === me?.id || now - (p.last_seen_at || 0) < AGENT_GONE_MS);
+}
+
+// lastSeen is "last seen 12m ago", for people who aren't active.
+function lastSeen(p) {
+  return p.last_seen_at ? `last seen ${ago(p.last_seen_at)}` : "never seen";
 }
 
 // The events chat shows as one-line activity updates (#93); the server's
@@ -257,7 +272,7 @@ export default function Workspace({ id, view, navigate, account }) {
         screens={screens}
         account={account}
         navigate={navigate}
-        participants={participants}
+        participants={roster(participants, me)}
         people={
           joined && (
             <>
@@ -814,7 +829,8 @@ function byName(participants) {
 // People: who's here, one row per participant (an account has one per
 // workspace, #99), with a presence dot and their status. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
-// at the end of the list. Your own row sets your status; anyone else's starts a
+// at the end of the list; hovering one says when they were last seen. Agents
+// not seen in 24 hours aren't listed (#125). Your own row sets your status; anyone else's starts a
 // chat message to them (@Name).
 function People({ participants, me, call, onError, onMention }) {
   const setStatus = async () => {
@@ -834,7 +850,7 @@ function People({ participants, me, call, onError, onMention }) {
 
   const activePeople = [];
   const dormantPeople = [];
-  for (const p of byName(participants)) {
+  for (const p of byName(roster(participants, me, now))) {
     if (isDormant(p, now)) {
       dormantPeople.push(p);
     } else {
@@ -850,7 +866,7 @@ function People({ participants, me, call, onError, onMention }) {
         const mine = me && p.id === me.id;
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
         const status = p.status || (active ? "active" : "away");
-        const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — ${status}`;
+        const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — ${status}${active ? "" : ` · ${lastSeen(p)}`}`;
         const content = (
           <>
             <span className={active ? "avatar active" : "avatar"} aria-hidden="true">
@@ -881,7 +897,7 @@ function People({ participants, me, call, onError, onMention }) {
             {dormantPeople.map((p) => {
               const mine = me && p.id === me.id;
               const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-              const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — inactive`;
+              const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — inactive · ${lastSeen(p)}`;
               return (
                 <button
                   key={p.id}
