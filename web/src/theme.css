@@ -996,6 +996,16 @@ html.dialog-open {
   white-space: nowrap;
 }
 
+/* Filled like the Done status: the light green is too faint as a line. */
+.pending-pr .merge-ok {
+  color: var(--panel);
+  fill: var(--success);
+}
+
+.pending-pr .merge-bad {
+  color: var(--danger);
+}
+
 .pending-pr.draft .nav-text {
   color: var(--text-muted);
 }

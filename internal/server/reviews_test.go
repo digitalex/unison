@@ -28,6 +28,10 @@ func TestReviewsAPI(t *testing.T) {
 		case "/repos/acme/web/pulls":
 			w.Write([]byte(`[{"number": 3, "title": "Older one", "html_url": "https://github.com/acme/web/pull/3", "draft": true,
 				"created_at": "2026-10-20T10:00:00Z", "user": {"login": "bo"}}]`))
+		case "/repos/acme/api/pulls/7":
+			w.Write([]byte(`{"mergeable_state": "clean", "head": {"sha": "abc"}}`))
+		case "/repos/acme/web/pulls/3":
+			w.Write([]byte(`{"mergeable_state": "draft", "head": {"sha": "def"}}`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -78,6 +82,9 @@ func TestReviewsAPI(t *testing.T) {
 	if first["repo"] != "acme/web" || first["number"] != 3.0 || first["draft"] != true || second["url"] != "https://github.com/acme/api/pull/7" || second["author"] != "ada" {
 		t.Errorf("pulls = %v, want web#3 (older) then api#7, without auto-merge #8", pulls)
 	}
+	if first["merge_state"] != "unknown" || second["merge_state"] != "ready" {
+		t.Errorf("merge states = %v, %v; want unknown (draft), ready", first["merge_state"], second["merge_state"])
+	}
 	if len(errs) != 1 || errs[0].(map[string]any)["repo"] != "acme/gone" {
 		t.Errorf("errors = %v, want acme/gone (404); gitlab skipped", errs)
 	}
@@ -115,6 +122,51 @@ func TestGitHubSlug(t *testing.T) {
 	} {
 		if got := githubSlug(in); got != want {
 			t.Errorf("githubSlug(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestMergeState(t *testing.T) {
+	// Pull request n's mergeable_state and head SHA; each SHA's check runs.
+	pulls := map[string][2]string{
+		"1": {"clean", "ok"}, "2": {"has_hooks", "ok"}, "3": {"dirty", "ok"},
+		"4": {"blocked", "failed"}, "5": {"unstable", "failed"}, "6": {"blocked", "running"},
+		"7": {"blocked", "ok"}, "8": {"blocked", "secret"}, "9": {"unknown", "ok"}, "10": {"draft", "ok"},
+	}
+	runs := map[string]string{
+		"ok":      `{"check_runs": [{"status": "completed", "conclusion": "success"}, {"status": "completed", "conclusion": "skipped"}]}`,
+		"failed":  `{"check_runs": [{"status": "in_progress"}, {"status": "completed", "conclusion": "failure"}]}`,
+		"running": `{"check_runs": [{"status": "queued"}, {"status": "completed", "conclusion": "success"}]}`,
+	}
+	gh := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if sha, ok := strings.CutPrefix(r.URL.Path, "/repos/a/b/commits/"); ok {
+			if body, ok := runs[strings.TrimSuffix(sha, "/check-runs")]; ok {
+				w.Write([]byte(body))
+				return
+			}
+			http.Error(w, "{}", http.StatusForbidden) // the token can't read checks
+			return
+		}
+		pr, ok := pulls[strings.TrimPrefix(r.URL.Path, "/repos/a/b/pulls/")]
+		if !ok {
+			http.NotFound(w, r)
+			return
+		}
+		w.Write([]byte(`{"mergeable_state": "` + pr[0] + `", "head": {"sha": "` + pr[1] + `"}}`))
+	}))
+	defer gh.Close()
+	defer func(old string) { githubAPI = old }(githubAPI)
+	githubAPI = gh.URL
+
+	for n, want := range map[int64]string{
+		1: MergeReady, 2: MergeReady, 3: MergeConflict,
+		4: ChecksFailing, 5: ChecksFailing, 6: ChecksPending,
+		7: ChecksFailing,                                    // blocked, though every check passed
+		8: ChecksFailing,                                    // blocked, and the checks can't be read
+		9: MergeUnknown, 10: MergeUnknown, 11: MergeUnknown, // 11 doesn't exist
+	} {
+		if got := mergeState(t.Context(), "tok", "a/b", n); got != want {
+			t.Errorf("#%d: merge state = %q, want %q", n, got, want)
 		}
 	}
 }

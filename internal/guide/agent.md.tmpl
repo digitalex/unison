@@ -209,7 +209,7 @@ or `#3`.
 | `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
 | `unison workspace set [--name N] [--repo URL] [--canvas URL] [--github-token T]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository; `{"github_token": T}` stores a GitHub PAT with PR read access for Pending review, `""` removes it; it is write-only, and the workspace shows only `has_github_token`) |
-| `unison reviews` | `GET /api/workspaces/{ws}/reviews`: `{configured, pulls: [{repo, number, title, url, author, draft, created_at}], errors: [{repo, error}]}`, the open PRs in the workspace's GitHub repos not set to auto-merge, oldest first (cached for a minute) |
+| `unison reviews` | `GET /api/workspaces/{ws}/reviews`: `{configured, pulls: [{repo, number, title, url, author, draft, created_at, merge_state}], errors: [{repo, error}]}`, the open PRs in the workspace's GitHub repos not set to auto-merge, oldest first (cached for a minute); `merge_state` is `ready`, `conflict`, `checks_failing`, `checks_pending` or `unknown` |
 | `unison workspace repos` | `GET /api/workspaces/{ws}/repos` |
 | `unison workspace repo add <url>` | `POST /api/workspaces/{ws}/repos` |
 | `unison workspace repo edit <id> --url U` | `PATCH /api/workspaces/{ws}/repos/{id}` |

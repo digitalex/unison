@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, CircleAlert, GitPullRequest } from "lucide-react";
+import { ArrowUpRight, CircleAlert, CircleCheck, CircleDashed, CircleX, GitMerge, GitPullRequest } from "lucide-react";
 import { ago } from "./backlogFormat.js";
 
 // Pending review (#127): open pull requests in the workspace's GitHub
@@ -41,6 +41,16 @@ export function usePendingReviews(call, workspace) {
   return reviews;
 }
 
+// MERGE_STATES (#134): whether a pull request can be merged, as its icon:
+// green when it's ready, red when a conflict or failing checks block it.
+const MERGE_STATES = {
+  ready: { icon: CircleCheck, label: "Ready to merge", tone: "ok" },
+  conflict: { icon: GitMerge, label: "Merge conflict", tone: "bad" },
+  checks_failing: { icon: CircleX, label: "Checks failing", tone: "bad" },
+  checks_pending: { icon: CircleDashed, label: "Checks running", tone: "" },
+};
+const UNKNOWN_STATE = { icon: GitPullRequest, label: "", tone: "" };
+
 // PendingReviewList is the sidebar section's body: a two-line row per pull
 // request (title; repository#number and author), opening it on GitHub, then
 // any repository that couldn't be read.
@@ -49,27 +59,35 @@ export function PendingReviewList({ reviews, id }) {
   return (
     <ul id={id} className="nav-list nav-list-small pending-reviews">
       {reviews.pulls.length === 0 && reviews.errors.length === 0 && <li className="nav-empty">Nothing waiting for review</li>}
-      {reviews.pulls.map((p) => (
-        <li key={p.url}>
-          <a
-            className={p.draft ? "nav-link pending-pr draft" : "nav-link pending-pr"}
-            href={p.url}
-            target="_blank"
-            rel="noreferrer"
-            title={`${p.repo}#${p.number}: ${p.title}\nby ${p.author}, opened ${ago(p.created_at)}${p.draft ? " · draft" : ""}`}
-          >
-            <GitPullRequest aria-hidden="true" />
-            <span className="pending-pr-text">
-              <span className="nav-text">{p.title}</span>
-              <span className="pending-pr-ref">
-                {repoLabel(p.repo)}#{p.number} · {p.author}
-                {p.draft && " · draft"}
+      {reviews.pulls.map((p) => {
+        const state = MERGE_STATES[p.merge_state] || UNKNOWN_STATE;
+        const Icon = state.icon;
+        return (
+          <li key={p.url}>
+            <a
+              className={p.draft ? "nav-link pending-pr draft" : "nav-link pending-pr"}
+              href={p.url}
+              target="_blank"
+              rel="noreferrer"
+              title={`${p.repo}#${p.number}: ${p.title}\nby ${p.author}, opened ${ago(p.created_at)}${p.draft ? " · draft" : ""}${state.label ? `\n${state.label}` : ""}`}
+            >
+              <Icon
+                className={state.tone && `merge-${state.tone}`}
+                aria-label={state.label || undefined}
+                aria-hidden={state.label ? undefined : "true"}
+              />
+              <span className="pending-pr-text">
+                <span className="nav-text">{p.title}</span>
+                <span className="pending-pr-ref">
+                  {repoLabel(p.repo)}#{p.number} · {p.author}
+                  {p.draft && " · draft"}
+                </span>
               </span>
-            </span>
-            <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
-          </a>
-        </li>
-      ))}
+              <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+            </a>
+          </li>
+        );
+      })}
       {reviews.errors.map((e) => (
         <li key={e.repo} className="pending-error" title={e.error}>
           <CircleAlert aria-hidden="true" />

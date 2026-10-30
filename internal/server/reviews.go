@@ -35,7 +35,18 @@ type PendingPR struct {
 	Author    string `json:"author"`
 	Draft     bool   `json:"draft"`
 	CreatedAt int64  `json:"created_at"`
+	// MergeState (#134) is whether it can be merged: MergeReady, or why not.
+	MergeState string `json:"merge_state"`
 }
+
+// Merge states of a pending pull request (#134).
+const (
+	MergeReady    = "ready"          // GitHub would merge it now
+	MergeConflict = "conflict"       // it conflicts with its base branch
+	ChecksFailing = "checks_failing" // a check failed, or something else blocks it
+	ChecksPending = "checks_pending" // checks are still running
+	MergeUnknown  = "unknown"        // GitHub is still working it out (or it's a draft)
+)
 
 // RepoError is why a repository's pull requests couldn't be read.
 type RepoError struct {
@@ -148,17 +159,35 @@ func fetchPendingReviews(ctx context.Context, token string, slugs []string) Pend
 	return out
 }
 
-// openPulls lists a repository's open pull requests that aren't set to
-// auto-merge (up to 100, GitHub's page size).
-func openPulls(ctx context.Context, token, slug string) ([]PendingPR, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", githubAPI+"/repos/"+slug+"/pulls?state=open&per_page=100", nil)
+// githubGet GETs path from GitHub's API with the token.
+func githubGet(ctx context.Context, token, path string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", githubAPI+path, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
-	resp, err := githubClient.Do(req)
+	return githubClient.Do(req)
+}
+
+// githubJSON GETs path and decodes a 200 answer into out.
+func githubJSON(ctx context.Context, token, path string, out any) error {
+	resp, err := githubGet(ctx, token, path)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("GitHub said %s", resp.Status)
+	}
+	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// openPulls lists a repository's open pull requests that aren't set to
+// auto-merge (up to 100, GitHub's page size), with their merge state.
+func openPulls(ctx context.Context, token, slug string) ([]PendingPR, error) {
+	resp, err := githubGet(ctx, token, "/repos/"+slug+"/pulls?state=open&per_page=100")
 	if err != nil {
 		return nil, fmt.Errorf("GitHub is unreachable: %v", err)
 	}
@@ -192,5 +221,66 @@ func openPulls(ctx context.Context, token, slug string) ([]PendingPR, error) {
 		}
 		out = append(out, PendingPR{Repo: slug, Number: p.Number, Title: p.Title, URL: p.HTMLURL, Author: p.User.Login, Draft: p.Draft, CreatedAt: p.CreatedAt.UnixMilli()})
 	}
+	var wg sync.WaitGroup
+	for i := range out {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			out[i].MergeState = mergeState(ctx, token, slug, out[i].Number)
+		}()
+	}
+	wg.Wait()
 	return out, nil
+}
+
+// mergeState asks GitHub whether pull request n can be merged. The list
+// doesn't say, so this reads the pull request, and its check runs when
+// something blocks it. Anything unreadable is MergeUnknown.
+func mergeState(ctx context.Context, token, slug string, n int64) string {
+	var pr struct {
+		MergeableState string `json:"mergeable_state"`
+		Head           struct {
+			SHA string `json:"sha"`
+		} `json:"head"`
+	}
+	if githubJSON(ctx, token, fmt.Sprintf("/repos/%s/pulls/%d", slug, n), &pr) != nil {
+		return MergeUnknown
+	}
+	switch pr.MergeableState {
+	case "clean", "has_hooks":
+		return MergeReady
+	case "dirty":
+		return MergeConflict
+	case "blocked", "unstable", "behind":
+		return checksState(ctx, token, slug, pr.Head.SHA)
+	}
+	return MergeUnknown // "unknown" (GitHub computes it lazily), "draft"
+}
+
+// checksState is ChecksPending while a check on sha runs and none has
+// failed, else ChecksFailing (also when the checks can't be read: the pull
+// request is blocked either way).
+func checksState(ctx context.Context, token, slug, sha string) string {
+	var runs struct {
+		CheckRuns []struct {
+			Status     string `json:"status"`
+			Conclusion string `json:"conclusion"`
+		} `json:"check_runs"`
+	}
+	if sha == "" || githubJSON(ctx, token, "/repos/"+slug+"/commits/"+sha+"/check-runs?per_page=100", &runs) != nil {
+		return ChecksFailing
+	}
+	running := false
+	for _, r := range runs.CheckRuns {
+		switch {
+		case r.Status != "completed":
+			running = true
+		case r.Conclusion != "success" && r.Conclusion != "neutral" && r.Conclusion != "skipped":
+			return ChecksFailing
+		}
+	}
+	if running {
+		return ChecksPending
+	}
+	return ChecksFailing
 }
