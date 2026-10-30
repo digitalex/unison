@@ -336,7 +336,7 @@ export default function Workspace({ id, view, navigate, account }) {
               error={errorBar}
             />
           ) : view === "recurring" ? (
-            <Recurring schedules={schedules} call={call} onError={setError} head={headExtras} error={errorBar} />
+            <Recurring schedules={schedules} setSchedules={setSchedules} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : (
             <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
           )}
