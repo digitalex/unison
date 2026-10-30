@@ -48,11 +48,13 @@ export default function SettingsPage({ workspace, members, invites, participants
     grown.observe(content);
     follow();
     window.addEventListener("hashchange", follow);
+    window.addEventListener("popstate", follow); // spaNavigate: links within the app (#145)
     const userScroll = ["wheel", "touchstart", "keydown"];
     userScroll.forEach((t) => window.addEventListener(t, unpin, { passive: true }));
     return () => {
       grown.disconnect();
       window.removeEventListener("hashchange", follow);
+      window.removeEventListener("popstate", follow);
       userScroll.forEach((t) => window.removeEventListener(t, unpin));
     };
   }, []);

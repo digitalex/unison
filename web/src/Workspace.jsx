@@ -7,7 +7,7 @@ import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
-import { PendingReviewList, usePendingReviews } from "./PendingReview.jsx";
+import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
 import { ago } from "./backlogFormat.js";
 import Recurring from "./Recurring.jsx";
@@ -538,6 +538,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
 
   const peopleCount = participants ? participants.length : null;
   const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
+  const needsToken = joined && !workspace.has_github_token;
 
   return (
     <nav className="sidebar" aria-label="Workspace">
@@ -585,16 +586,16 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             {peopleOpen && <div id="sidebar-people">{people}</div>}
           </section>
         )}
-        {reviews && (
+        {(reviews || needsToken) && (
           <section className="sidebar-section" aria-label="Pending review">
             <SectionHeading
               title="Pending review"
-              count={reviews.pulls.length}
+              count={reviews ? reviews.pulls.length : null}
               open={reviewsOpen}
               onToggle={() => setReviewsOpen(!reviewsOpen)}
               ariaControls="sidebar-reviews"
             />
-            {reviewsOpen && <PendingReviewList reviews={reviews} id="sidebar-reviews" />}
+            {reviewsOpen && (reviews ? <PendingReviewList reviews={reviews} id="sidebar-reviews" /> : <PendingReviewSetup workspaceId={workspace.id} id="sidebar-reviews" />)}
           </section>
         )}
         {(workspace.canvas_url || repos.length > 0) && (
