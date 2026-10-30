@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from "react";
 import { Github, LogIn, Monitor, SquareTerminal } from "lucide-react";
-import { Avatar, PROVIDER_LABELS, SignInOptions, primaryEmail } from "./Account.jsx";
+import { AppleLogo, Avatar, PROVIDER_LABELS, SignInOptions, primaryEmail } from "./Account.jsx";
 import { api } from "./api.js";
 import { SiteHeader } from "./Landing.jsx";
 import Notifications from "./settings/Notifications.jsx";
 import Button from "./ui/Button.jsx";
 
 // The providers Unison knows; the server says which are configured.
-const PROVIDERS = ["github", "google"];
+const PROVIDERS = ["github", "google", "apple"];
 
 function ago(ms) {
   const minutes = Math.max(0, Math.round((Date.now() - ms) / 60000));
@@ -22,7 +22,8 @@ function day(ms) {
 }
 
 function ProviderIcon({ name }) {
-  return name === "github" ? <Github aria-hidden="true" /> : <LogIn aria-hidden="true" />;
+  const Icon = { github: Github, apple: AppleLogo }[name] || LogIn;
+  return <Icon aria-hidden="true" />;
 }
 
 // Profile (/me): who you are, how you sign in, where you're signed in, and

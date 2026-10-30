@@ -40,7 +40,7 @@ function SignIn({ providers, returnTo }) {
     <SignInOptions providers={providers} returnTo={returnTo} />
   ) : (
     <p className="muted">
-      Sign-in isn't configured on this server. Whoever runs it can add GitHub or Google sign-in (or set <code>UNISON_AUTH=off</code> for local
+      Sign-in isn't configured on this server. Whoever runs it can add GitHub, Google or Apple sign-in (or set <code>UNISON_AUTH=off</code> for local
       development).
     </p>
   );
