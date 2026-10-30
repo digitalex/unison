@@ -1865,8 +1865,12 @@ html.resizing * {
   margin-right: 0;
 }
 
+/* Quiet once read; bold only with unread replies (#117). */
 .thread-replies-count {
   color: var(--link);
+}
+
+.thread-summary.has-new .thread-replies-count {
   font-weight: var(--weight-ui-heavy);
 }
 

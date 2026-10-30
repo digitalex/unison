@@ -56,6 +56,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   const thread = threadId ? byId.get(threadId) : null;
 
   useOpenShownThread(shown, byId, setThreadId);
+  const readUpTo = useThreadsRead(thread, replies);
   useEffect(() => {
     if (!thread) return;
     const onKey = (e) => e.key === "Escape" && setThreadId(null);
@@ -131,7 +132,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
                     replies={replies.get(m.id)}
                     participants={participants}
                     me={me}
-                    newAfter={newAfter}
+                    newAfter={Math.max(newAfter, readUpTo[m.id] || 0)}
                     open={threadId === m.id}
                     onOpen={() => setThreadId(threadId === m.id ? null : m.id)}
                   />
@@ -256,8 +257,8 @@ function countLabel(n) {
 
 // ThreadSummary is a thread's line under its first message in the main
 // log: how many replies, who replied, and when the last one came. It
-// stands out when the thread has replies new to you; clicking it opens (or
-// closes) the thread.
+// stands out (bold, with an "N new" badge) only when the thread has replies
+// new to you; clicking it opens (or closes) the thread.
 function ThreadSummary({ replies, participants, me, newAfter, open, onOpen }) {
   const last = replies[replies.length - 1];
   const authors = [...new Set(replies.map((r) => r.author_id))].slice(0, 4).map((id) => participants.find((p) => p.id === id)).filter(Boolean);
@@ -279,6 +280,19 @@ function ThreadSummary({ replies, participants, me, newAfter, open, onOpen }) {
       </span>
     </button>
   );
+}
+
+// useThreadsRead remembers, per thread, the last reply you have seen in the
+// thread panel this visit: opening a thread reads it, so its summary stops
+// standing out (#117), as do replies that arrive while it's open.
+function useThreadsRead(thread, replies) {
+  const [readUpTo, setReadUpTo] = useState({});
+  const list = thread ? replies.get(thread.id) || [] : [];
+  const lastId = list.length ? list[list.length - 1].id : 0;
+  useEffect(() => {
+    if (thread && lastId > (readUpTo[thread.id] || 0)) setReadUpTo((r) => ({ ...r, [thread.id]: lastId }));
+  }, [thread?.id, lastId]);
+  return readUpTo;
 }
 
 // ThreadLog scrolls the thread panel to its latest reply when the thread
