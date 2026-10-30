@@ -7,6 +7,7 @@ import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
+import { PendingReviewList, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
 import { ago } from "./backlogFormat.js";
 import Recurring from "./Recurring.jsx";
@@ -135,6 +136,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [error, setError] = useState("");
   const joined = Boolean(me);
   const notify = useNotifier(me, participants, view);
+  const reviews = usePendingReviews(call, joined ? workspace : null);
 
   const loaders = {
     workspace: () => call("GET").then(setWorkspace),
@@ -274,6 +276,7 @@ export default function Workspace({ id, view, navigate, account }) {
         account={account}
         navigate={navigate}
         participants={roster(participants, me)}
+        reviews={reviews}
         people={
           joined && (
             <>
@@ -515,9 +518,10 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
-// here (people, with Invite), links out (canvas, repositories), then
-// settings and your account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people }) {
+// here (people, with Invite), pull requests pending review (with a GitHub
+// token, #127), links out (canvas, repositories), then settings and your
+// account at the bottom.
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews }) {
   const repos = workspace.repos || [];
   const height = useWindowHeight();
   const isLowHeight = height < LOW_HEIGHT_THRESHOLD;
@@ -525,6 +529,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
 
   const [userPeopleOpen, setUserPeopleOpen] = useState(null);
   const [userLinksOpen, setUserLinksOpen] = useState(null);
+  const [reviewsOpen, setReviewsOpen] = useState(true);
 
   // If the user hasn't explicitly toggled, collapse some sections by default:
   // low height collapses people first; very low height collapses links too.
@@ -578,6 +583,18 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
               ariaControls="sidebar-people"
             />
             {peopleOpen && <div id="sidebar-people">{people}</div>}
+          </section>
+        )}
+        {reviews && (
+          <section className="sidebar-section" aria-label="Pending review">
+            <SectionHeading
+              title="Pending review"
+              count={reviews.pulls.length}
+              open={reviewsOpen}
+              onToggle={() => setReviewsOpen(!reviewsOpen)}
+              ariaControls="sidebar-reviews"
+            />
+            {reviewsOpen && <PendingReviewList reviews={reviews} id="sidebar-reviews" />}
           </section>
         )}
         {(workspace.canvas_url || repos.length > 0) && (

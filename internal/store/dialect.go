@@ -307,6 +307,10 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// participants.read_up_to (#124) is the newest chat message the
 	// participant has read; NULL until they read any.
 	{"participants", "read_up_to", "INTEGER", "BIGINT"},
+	// workspaces.github_token (#127) is a token for reading the workspace
+	// repositories' pull requests (the Pending review list); NULL if none.
+	// Write-only through the API.
+	{"workspaces", "github_token", "TEXT", "TEXT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,

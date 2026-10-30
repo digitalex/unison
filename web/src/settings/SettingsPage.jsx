@@ -61,7 +61,7 @@ export default function SettingsPage({ workspace, members, invites, participants
     general: <General workspace={workspace} call={call} onError={onError} />,
     members: <Members members={members} invites={invites} account={account} call={call} onError={onError} />,
     invites: <Invites invites={invites} account={account} call={call} onError={onError} />,
-    repositories: <Repositories repos={workspace.repos || []} call={call} onError={onError} />,
+    repositories: <Repositories repos={workspace.repos || []} hasGitHubToken={Boolean(workspace.has_github_token)} call={call} onError={onError} />,
     webhooks: <Webhooks webhooks={webhooks} call={call} onError={onError} />,
     agents: <Agents participants={participants} />,
     danger: <DangerZone workspace={workspace} call={call} onError={onError} navigate={navigate} />,
