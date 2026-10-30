@@ -36,26 +36,26 @@ func TestDevices(t *testing.T) {
 	_, alexSess, _ := s.CreateSession(ctx, alex.ID, SessionCLI, "")
 	_, bobSess, _ := s.CreateSession(ctx, bob.ID, SessionCLI, "")
 
-	if _, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, "not hex!", "x"); !errors.Is(err, ErrInvalid) {
+	if _, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, "not hex!", "x", ""); !errors.Is(err, ErrInvalid) {
 		t.Errorf("bad token err = %v", err)
 	}
-	d1, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, strings.ToUpper(tokA), " iPhone ")
+	d1, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, strings.ToUpper(tokA), " iPhone ", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if d1.UserID != alex.ID || d1.APNSToken != tokA || d1.Label != "iPhone" || d1.CreatedAt == 0 {
 		t.Errorf("registered %+v", d1)
 	}
-	again, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, tokA, "Alex's iPhone")
+	again, err := s.RegisterDevice(ctx, alex.ID, alexSess.ID, tokA, "Alex's iPhone", "")
 	if err != nil || again.ID != d1.ID || again.Label != "Alex's iPhone" {
 		t.Errorf("re-register = %+v, %v; want the same device relabelled", again, err)
 	}
-	d2, _ := s.RegisterDevice(ctx, alex.ID, alexSess.ID, tokB, "iPad")
+	d2, _ := s.RegisterDevice(ctx, alex.ID, alexSess.ID, tokB, "iPad", "")
 	if got := deviceIDs(t, s, alex.ID); !slices.Equal(got, []int64{d1.ID, d2.ID}) {
 		t.Errorf("alex's devices = %v", got)
 	}
 
-	moved, err := s.RegisterDevice(ctx, bob.ID, bobSess.ID, tokB, "Bob's iPad")
+	moved, err := s.RegisterDevice(ctx, bob.ID, bobSess.ID, tokB, "Bob's iPad", "")
 	if err != nil || moved.ID != d2.ID || moved.UserID != bob.ID {
 		t.Fatalf("reassign = %+v, %v", moved, err)
 	}
@@ -99,8 +99,8 @@ func TestSignOutRemovesDevices(t *testing.T) {
 	_, phone, _ := s.CreateSession(ctx, alex.ID, SessionCLI, "phone")
 	_, tablet, _ := s.CreateSession(ctx, alex.ID, SessionCLI, "tablet")
 	_, web, _ := s.CreateSession(ctx, alex.ID, SessionBrowser, "web")
-	dPhone, _ := s.RegisterDevice(ctx, alex.ID, phone.ID, tokA, "phone")
-	dTablet, _ := s.RegisterDevice(ctx, alex.ID, tablet.ID, tokB, "tablet")
+	dPhone, _ := s.RegisterDevice(ctx, alex.ID, phone.ID, tokA, "phone", "")
+	dTablet, _ := s.RegisterDevice(ctx, alex.ID, tablet.ID, tokB, "tablet", "")
 
 	if err := s.RevokeSession(ctx, alex.ID, phone.ID); err != nil {
 		t.Fatal(err)
@@ -143,4 +143,34 @@ func TestPushRecipients(t *testing.T) {
 		t.Fatal(err)
 	}
 	check("former member", f.alex, "@Bob still there?", nil, nil, nil)
+}
+
+// TestDeviceEnvironment: a device remembers its APNs environment (#137);
+// re-registering without one keeps it, and anything else is refused.
+func TestDeviceEnvironment(t *testing.T) {
+	s, _ := newStore(t)
+	ctx := context.Background()
+	alex, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1"})
+	_, sess, _ := s.CreateSession(ctx, alex.ID, SessionCLI, "")
+
+	old, err := s.RegisterDevice(ctx, alex.ID, sess.ID, tokA, "older app", "")
+	if err != nil || old.Environment != "" {
+		t.Fatalf("without an environment = %+v, %v", old, err)
+	}
+	d, err := s.RegisterDevice(ctx, alex.ID, sess.ID, tokA, "TestFlight", EnvProduction)
+	if err != nil || d.ID != old.ID || d.Environment != EnvProduction {
+		t.Fatalf("with production = %+v, %v", d, err)
+	}
+	if again, _ := s.RegisterDevice(ctx, alex.ID, sess.ID, tokA, "TestFlight", ""); again.Environment != EnvProduction {
+		t.Errorf("re-registering without one = %q, want production kept", again.Environment)
+	}
+	if dev, _ := s.RegisterDevice(ctx, alex.ID, sess.ID, tokA, "Xcode", EnvSandbox); dev.Environment != EnvSandbox {
+		t.Errorf("switching to sandbox = %q", dev.Environment)
+	}
+	if _, err := s.RegisterDevice(ctx, alex.ID, sess.ID, tokB, "x", "staging"); !errors.Is(err, ErrInvalid) {
+		t.Errorf("unknown environment err = %v", err)
+	}
+	if list, _ := s.ListDevices(ctx, alex.ID); len(list) != 1 || list[0].Environment != EnvSandbox {
+		t.Errorf("list = %+v", list)
+	}
 }

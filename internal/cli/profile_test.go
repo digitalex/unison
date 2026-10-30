@@ -102,12 +102,12 @@ func TestDevicesCommands(t *testing.T) {
 	}
 	const token = "a0a1a2a3a4a5a6a7a8a9aaabacadaeafb0b1b2b3b4b5b6b7b8b9babbbcbdbebf"
 	_, app, _ := e.st.CreateSession(t.Context(), ada.ID, store.SessionCLI, "iOS")
-	d, err := e.st.RegisterDevice(t.Context(), ada.ID, app.ID, token, "Ada's iPhone")
+	d, err := e.st.RegisterDevice(t.Context(), ada.ID, app.ID, token, "Ada's iPhone", "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, bobApp, _ := e.st.CreateSession(t.Context(), bob.ID, store.SessionCLI, "iOS")
-	bobs, _ := e.st.RegisterDevice(t.Context(), bob.ID, bobApp.ID, strings.Repeat("b", 64), "Bob's iPhone")
+	bobs, _ := e.st.RegisterDevice(t.Context(), bob.ID, bobApp.ID, strings.Repeat("b", 64), "Bob's iPhone", "")
 
 	out := e.ok(dir, "devices")
 	if !strings.Contains(out, "Ada's iPhone") || !strings.Contains(out, "never notified") || strings.Contains(out, token) || strings.Contains(out, "Bob") {

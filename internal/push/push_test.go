@@ -140,7 +140,7 @@ func TestSendRead(t *testing.T) {
 	var got http.Request
 	var body []byte
 	_, c, _ := apnsServer(t, http.StatusOK, "", &got, &body)
-	if err := c.Send(context.Background(), deviceToken, Notification{WorkspaceID: "ws1", Kind: KindRead, ReadUpTo: 42}); err != nil {
+	if err := c.Send(context.Background(), deviceToken, "", Notification{WorkspaceID: "ws1", Kind: KindRead, ReadUpTo: 42}); err != nil {
 		t.Fatal(err)
 	}
 	if got.Header.Get("apns-push-type") != "background" || got.Header.Get("apns-priority") != "5" {
@@ -179,7 +179,7 @@ func TestSend(t *testing.T) {
 	var body []byte
 	_, c, key := apnsServer(t, http.StatusOK, "", &got, &body)
 	n := Notification{Title: "t", Body: "b", WorkspaceID: "ws1", ItemID: 4, CommentID: 9, Kind: "comment_mention"}
-	if err := c.Send(context.Background(), deviceToken, n); err != nil {
+	if err := c.Send(context.Background(), deviceToken, "", n); err != nil {
 		t.Fatal(err)
 	}
 	if got.Method != http.MethodPost || got.URL.Path != "/3/device/"+deviceToken || got.ProtoMajor != 2 {
@@ -214,7 +214,7 @@ func TestSendErrors(t *testing.T) {
 		var got http.Request
 		var body []byte
 		_, c, _ := apnsServer(t, tc.status, tc.reason, &got, &body)
-		err := c.Send(context.Background(), deviceToken, Notification{Kind: "mention"})
+		err := c.Send(context.Background(), deviceToken, "", Notification{Kind: "mention"})
 		if err == nil || errors.Is(err, ErrUnregistered) != tc.unregistered {
 			t.Errorf("%d %s: err = %v, want unregistered=%v", tc.status, tc.reason, err, tc.unregistered)
 		}
@@ -233,8 +233,31 @@ func TestSendNetworkErrorHidesToken(t *testing.T) {
 	_, keyPEM := testKey(t)
 	c, _ := NewClient(Config{KeyPEM: keyPEM, KeyID: "K", TeamID: "T", Topic: "app"})
 	c.BaseURL = "https://127.0.0.1:1"
-	err := c.Send(context.Background(), deviceToken, Notification{})
+	err := c.Send(context.Background(), deviceToken, "", Notification{})
 	if err == nil || strings.Contains(err.Error(), deviceToken) {
 		t.Errorf("err = %v", err)
+	}
+}
+
+// TestSendEnvironment: a token's environment picks the APNs endpoint (#137);
+// none means BaseURL.
+func TestSendEnvironment(t *testing.T) {
+	var got http.Request
+	var body []byte
+	ts, c, _ := apnsServer(t, http.StatusOK, "", &got, &body)
+	c.BaseURL = ts.URL + "/default"
+	c.EnvURLs = map[string]string{"production": ts.URL + "/prod", "sandbox": ts.URL + "/sandbox"}
+	for env, prefix := range map[string]string{"production": "/prod", "sandbox": "/sandbox", "": "/default"} {
+		if err := c.Send(context.Background(), deviceToken, env, Notification{Kind: "mention"}); err != nil {
+			t.Fatal(err)
+		}
+		if got.URL.Path != prefix+"/3/device/"+deviceToken {
+			t.Errorf("env %q went to %s, want %s/3/device/…", env, got.URL.Path, prefix)
+		}
+	}
+	_, keyPEM := testKey(t)
+	nc, _ := NewClient(Config{KeyPEM: keyPEM, KeyID: "K", TeamID: "T", Topic: "x"})
+	if nc.EnvURLs["production"] != ProductionURL || nc.EnvURLs["sandbox"] != SandboxURL || nc.BaseURL != ProductionURL {
+		t.Errorf("NewClient URLs = %s %v", nc.BaseURL, nc.EnvURLs)
 	}
 }

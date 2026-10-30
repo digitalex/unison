@@ -311,6 +311,10 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// repositories' pull requests (the Pending review list); NULL if none.
 	// Write-only through the API.
 	{"workspaces", "github_token", "TEXT", "TEXT"},
+	// devices.apns_env (#137) is the APNs environment a device token is
+	// for: "sandbox" or "production"; NULL for devices registered before,
+	// which get the server's default (APNS_SANDBOX).
+	{"devices", "apns_env", "TEXT", "TEXT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
