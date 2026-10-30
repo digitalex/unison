@@ -447,32 +447,37 @@ func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
 			}
 			return err
 		}
-		for _, q := range []string{
-			`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
-			`DELETE FROM webhooks WHERE workspace_id = ?`,
-			`DELETE FROM workspace_repos WHERE workspace_id = ?`,
-			`DELETE FROM schedules WHERE workspace_id = ?`,
-			`DELETE FROM item_comments WHERE workspace_id = ?`,
-			`DELETE FROM item_prs WHERE workspace_id = ?`,
-			`DELETE FROM reactions WHERE workspace_id = ?`,
-			`DELETE FROM message_actions WHERE workspace_id = ?`,
-			`UPDATE messages SET parent_id = NULL WHERE workspace_id = ?`,
-			`DELETE FROM messages WHERE workspace_id = ?`,
-			`DELETE FROM items WHERE workspace_id = ?`,
-			`DELETE FROM agent_passes WHERE workspace_id = ?`,
-			`DELETE FROM workspace_invites WHERE workspace_id = ?`,
-			`DELETE FROM memberships WHERE workspace_id = ?`,
-			`DELETE FROM participants WHERE workspace_id = ?`,
-			`DELETE FROM events WHERE workspace_id = ?`,
-			`DELETE FROM workspaces WHERE id = ?`,
-		} {
-			if _, err := t.Exec(q, id); err != nil {
-				return err
-			}
-		}
-		return nil
+		return deleteWorkspace(t, id)
 	})
 	return err
+}
+
+// deleteWorkspace deletes workspace id and everything in it.
+func deleteWorkspace(t *tx, id string) error {
+	for _, q := range []string{
+		`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
+		`DELETE FROM webhooks WHERE workspace_id = ?`,
+		`DELETE FROM workspace_repos WHERE workspace_id = ?`,
+		`DELETE FROM schedules WHERE workspace_id = ?`,
+		`DELETE FROM item_comments WHERE workspace_id = ?`,
+		`DELETE FROM item_prs WHERE workspace_id = ?`,
+		`DELETE FROM reactions WHERE workspace_id = ?`,
+		`DELETE FROM message_actions WHERE workspace_id = ?`,
+		`UPDATE messages SET parent_id = NULL WHERE workspace_id = ?`,
+		`DELETE FROM messages WHERE workspace_id = ?`,
+		`DELETE FROM items WHERE workspace_id = ?`,
+		`DELETE FROM agent_passes WHERE workspace_id = ?`,
+		`DELETE FROM workspace_invites WHERE workspace_id = ?`,
+		`DELETE FROM memberships WHERE workspace_id = ?`,
+		`DELETE FROM participants WHERE workspace_id = ?`,
+		`DELETE FROM events WHERE workspace_id = ?`,
+		`DELETE FROM workspaces WHERE id = ?`,
+	} {
+		if _, err := t.Exec(q, id); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // ---- Participants ----

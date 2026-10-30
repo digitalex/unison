@@ -135,6 +135,7 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("POST /api/auth/app/token", s.appToken)
 	m.HandleFunc("POST /api/invites/lookup", s.requireUser(s.lookupInvite))
 	m.HandleFunc("GET /api/me/user", s.requireUser(s.meUser))
+	m.HandleFunc("DELETE /api/me/user", s.requireUser(s.deleteAccount))
 	m.HandleFunc("GET /api/me/sessions", s.requireUser(s.listSessions))
 	m.HandleFunc("DELETE /api/me/sessions/{id}", s.requireUser(s.revokeSession))
 	m.HandleFunc("POST /api/me/sessions/revoke-others", s.requireUser(s.revokeOtherSessions))
@@ -544,6 +545,31 @@ func (s *Server) meUser(w http.ResponseWriter, r *http.Request) {
 		setSessionCookie(w, r, c.Value)
 	}
 	writeJSON(w, http.StatusOK, a.user)
+}
+
+// deleteAccount deletes the signed-in account for good (#135). The body
+// must be {"confirm": true}, so a stray DELETE can't do it.
+func (s *Server) deleteAccount(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirm bool `json:"confirm"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	if !req.Confirm {
+		writeError(w, http.StatusBadRequest, `deleting your account can't be undone: send {"confirm": true}`)
+		return
+	}
+	out, evs, err := s.store.DeleteAccount(r.Context(), signedIn(r).user.ID)
+	if err != nil {
+		storeError(w, err)
+		return
+	}
+	clearCookie(w, r, sessionCookie, "/")
+	for _, ws := range out.DeletedWorkspaces {
+		s.wake(ws)
+	}
+	s.respond(w, http.StatusOK, out, evs, nil)
 }
 
 func (s *Server) logout(w http.ResponseWriter, r *http.Request) {

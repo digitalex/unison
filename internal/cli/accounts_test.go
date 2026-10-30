@@ -89,6 +89,44 @@ func TestLoginLogout(t *testing.T) {
 	}
 }
 
+func TestDeleteAccountCLI(t *testing.T) {
+	st, err := store.Open(storetest.DSN(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	srv := server.New(st, nil)
+	srv.SetAuth(server.AuthConfig{DeviceInterval: time.Second, Creators: []string{"ada@example.com"}})
+	ts := httptest.NewServer(srv)
+	t.Cleanup(ts.Close)
+	e := &testEnv{t: t, url: ts.URL}
+	for _, k := range []string{"UNISON_SERVER", "UNISON_WORKSPACE", "UNISON_TOKEN", "UNISON_CONFIG"} {
+		t.Setenv(k, "")
+	}
+	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "unison", "credentials.json"))
+	dir := t.TempDir()
+	ada, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "1", Name: "Ada", Email: "ada@example.com", EmailVerified: true})
+	browser, _, _ := st.CreateSession(t.Context(), ada.ID, store.SessionBrowser, "test")
+	deviceLogin(t, ts.URL, browser)
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(dir, "workspace", "create", "Mine", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, errOut, code := e.run(dir, "delete-account"); code == 0 || !strings.Contains(errOut, "--yes") {
+		t.Errorf("without --yes: exit %d %q, want refused", code, errOut)
+	}
+	if out := e.ok(dir, "delete-account", "--yes"); !strings.Contains(out, "Deleted your account") || !strings.Contains(out, ws.ID) {
+		t.Errorf("delete-account = %q", out)
+	}
+	if _, err := st.GetWorkspace(t.Context(), ws.ID); err == nil {
+		t.Error("the workspace only Ada was in should be gone")
+	}
+	if _, errOut, code := e.run(dir, "whoami", "--user"); code == 0 || !strings.Contains(errOut, "unison login") {
+		t.Errorf("after deleting, the token should be forgotten: exit %d %q", code, errOut)
+	}
+}
+
 func waitForCode(t *testing.T, r *os.File) string {
 	t.Helper()
 	re := regexp.MustCompile(`confirm the code ([A-Z]{4}-[A-Z]{4})`)
