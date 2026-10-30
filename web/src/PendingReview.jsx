@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
-import { ArrowUpRight, CircleAlert, CircleCheck, CircleDashed, CircleX, GitMerge, GitPullRequest } from "lucide-react";
+import { ArrowUpRight, CircleAlert, CircleCheck, CircleDashed, CircleX, GitMerge, GitPullRequest, KeyRound } from "lucide-react";
 import { ago } from "./backlogFormat.js";
+import { spaLink } from "./nav.js";
 
 // Pending review (#127): open pull requests in the workspace's GitHub
 // repositories that aren't set to auto-merge, i.e. that wait for a person.
@@ -50,6 +51,21 @@ const MERGE_STATES = {
   checks_pending: { icon: CircleDashed, label: "Checks running", tone: "" },
 };
 const UNKNOWN_STATE = { icon: GitPullRequest, label: "", tone: "" };
+
+// PendingReviewSetup is the sidebar section's body without a GitHub token
+// (#145): a link to where you add one.
+export function PendingReviewSetup({ workspaceId, id }) {
+  return (
+    <ul id={id} className="nav-list nav-list-small">
+      <li>
+        <a className="nav-link" {...spaLink(`/w/${workspaceId}/settings#repositories`)} title="Add a GitHub token to list open pull requests">
+          <KeyRound aria-hidden="true" />
+          <span className="nav-text">Set up now</span>
+        </a>
+      </li>
+    </ul>
+  );
+}
 
 // PendingReviewList is the sidebar section's body: a two-line row per pull
 // request (title; repository#number and author), opening it on GitHub, then
