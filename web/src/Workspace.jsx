@@ -849,6 +849,11 @@ function InviteAgent({ call }) {
   }, []);
   const left = minted ? Math.max(0, Math.round((minted.expires_at - now) / 1000)) : 0;
   const prompt = minted && left > 0 ? minted.invite_prompt : "";
+  const copyPrompt = () => {
+    navigator.clipboard.writeText(prompt);
+    // Only a person can do this (the server tracks the other key actions, #155).
+    window.gtag?.("event", "agent_instructions_copied", { actor_type: "human" });
+  };
   return (
     <>
       <p>Paste this into any coding agent:</p>
@@ -861,7 +866,7 @@ function InviteAgent({ call }) {
       )}
       {error && <p role="alert">Error: {error}</p>}
       <div className="actions-row">
-        <Button type="button" disabled={!prompt} onClick={() => navigator.clipboard.writeText(prompt)}>
+        <Button type="button" disabled={!prompt} onClick={copyPrompt}>
           Copy
         </Button>
         <Button type="button" variant="ghost" onClick={mint}>

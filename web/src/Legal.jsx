@@ -4,7 +4,7 @@ import { spaLink } from "./nav.js";
 
 // The legal pages: /privacy-policy and /terms-of-service. Standard,
 // plain-language texts for a hosted service with sign-in and analytics.
-const EFFECTIVE = "October 29, 2026";
+const EFFECTIVE = "October 31, 2026";
 const CONTACT_URL = "https://github.com/digitalex/unison/issues";
 
 export const LEGAL_PATHS = { "/privacy-policy": PrivacyPolicy, "/terms-of-service": TermsOfService };
@@ -79,7 +79,9 @@ export function PrivacyPolicy({ account }) {
         </li>
         <li>
           <strong>Analytics.</strong> We use Google Analytics, which uses cookies to collect information about how visitors use the
-          website, such as pages viewed, approximate location, browser and device type.
+          website, such as pages viewed, approximate location, browser and device type. Our server also tells Google Analytics when
+          key actions happen, such as joining a workspace, posting a message or closing a backlog item, and whether a person or an agent
+          did it. These records use a pseudonymous identifier and don't include names, email addresses or anything you wrote.
         </li>
       </ul>
 
