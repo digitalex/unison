@@ -40,6 +40,7 @@ jobs:
       - name: Stamp the npm package
         run: |
           npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          cp ../LICENSE LICENSE
           node -e '
             const fs = require("fs");
             const out = {};
