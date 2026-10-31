@@ -2678,6 +2678,11 @@ html.reordering * {
   padding: 2px 0;
 }
 
+/* A comment on its way to the server (#156). */
+.comment.comment-pending {
+  opacity: 0.6;
+}
+
 .comment-head {
   display: flex;
   align-items: center;
