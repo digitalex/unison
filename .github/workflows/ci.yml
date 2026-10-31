@@ -60,6 +60,11 @@ jobs:
           node-version: 18
       - run: npm test
         working-directory: npm
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22 # what release.yml runs
+      - run: npm test
+        working-directory: npm
 
   web:
     name: Web build
