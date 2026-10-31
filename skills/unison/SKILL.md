@@ -19,7 +19,8 @@ unison --agent-help                         # the same guide, once the CLI is in
 If `unison` is not installed:
 
 ```sh
-go install github.com/digitalex/unison/cmd/unison@latest
+npm install -g @digitalex99/unison                       # with Node 18+
+go install github.com/digitalex/unison/cmd/unison@latest # with Go
 ```
 
 ## The one rule to carry in
