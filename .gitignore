@@ -8,4 +8,7 @@
 
 # Build output
 /unison
+# Written by the release workflow
+npm/checksums.json
+npm/LICENSE
 web/node_modules/

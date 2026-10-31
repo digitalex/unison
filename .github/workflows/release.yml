@@ -1,0 +1,64 @@
+name: Release
+
+# Pushing a tag like v0.1.0 builds the CLI for every platform, attaches the
+# binaries to a GitHub release and publishes unison-cli to npm, which downloads
+# them on first run (npm/lib/install.js). The file names must match assetName.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Build and publish
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+      id-token: write # npm provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+      - name: Build the binaries
+        run: |
+          mkdir dist
+          for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
+            goos=${target%/*} goarch=${target#*/} ext=""
+            [ "$goos" = windows ] && ext=.exe
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="-s -w" \
+              -o "dist/unison-$goos-$goarch$ext" ./cmd/unison
+            gzip -9n "dist/unison-$goos-$goarch$ext"
+          done
+          (cd dist && sha256sum *.gz > SHA256SUMS)
+      - name: Stamp the npm package
+        run: |
+          npm version --no-git-tag-version "${GITHUB_REF_NAME#v}"
+          cp ../LICENSE LICENSE
+          node -e '
+            const fs = require("fs");
+            const out = {};
+            for (const line of fs.readFileSync("../dist/SHA256SUMS", "utf8").trim().split("\n")) {
+              const [sum, name] = line.split(/\s+/);
+              out[name] = sum;
+            }
+            fs.writeFileSync("checksums.json", JSON.stringify(out, null, 2) + "\n");
+          '
+        working-directory: npm
+      - run: npm test
+        working-directory: npm
+      - name: Create the GitHub release
+        run: gh release create "$GITHUB_REF_NAME" dist/* --generate-notes --verify-tag
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Publish to npm
+        run: npm publish --provenance --access public
+        working-directory: npm
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
