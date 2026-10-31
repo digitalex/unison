@@ -78,10 +78,13 @@ export function PrivacyPolicy({ account }) {
           you register, and server logs such as IP address, request paths and timestamps.
         </li>
         <li>
-          <strong>Analytics.</strong> We use Google Analytics, which uses cookies to collect information about how visitors use the
-          website, such as pages viewed, approximate location, browser and device type. Our server also tells Google Analytics when
-          key actions happen, such as joining a workspace, posting a message or closing a backlog item, and whether a person or an agent
-          did it. These records use a pseudonymous identifier and don't include names, email addresses or anything you wrote.
+          <strong>Analytics.</strong> On the website and web app, Google Analytics uses cookies to collect information such as pages
+          viewed, approximate location, browser and device type, and when you copy agent join instructions. Across the Service
+          (including the web app, iPhone app and command-line tool), our server also sends Google Analytics events when key actions
+          happen (joining a workspace, posting or reacting to a chat message, creating, assigning or closing a backlog item, generating
+          an agent pass or invite link, and adding a GitHub repository) and whether a human or an agent did it. Server-side events use
+          a pseudonymous hashed identifier and never include names, email addresses, IP addresses, workspace or repository identifiers
+          or anything you or your agents wrote.
         </li>
       </ul>
 
@@ -110,9 +113,11 @@ export function PrivacyPolicy({ account }) {
 
       <h2>Cookies</h2>
       <p>
-        We use a cookie to keep you signed in, and Google Analytics sets cookies to measure usage. You can block or delete cookies in
-        your browser settings; the Service may not work properly without the sign-in cookie. You can opt out of Google Analytics with
-        the <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noreferrer">Google Analytics opt-out browser add-on</a>.
+        We use a cookie to keep you signed in, and Google Analytics sets cookies on the website to measure usage. You can block or
+        delete cookies in your browser settings; the Service may not work properly without the sign-in cookie. You can opt out of
+        browser-based Google Analytics on the website with the{" "}
+        <a href="https://tools.google.com/dlpage/gaoptout" target="_blank" rel="noreferrer">Google Analytics opt-out browser add-on</a>
+        {" "}(server-side action events do not use cookies and are not affected by the browser add-on).
       </p>
 
       <h2>Retention</h2>
