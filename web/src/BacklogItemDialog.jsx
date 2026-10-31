@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { GitPullRequest, MessagesSquare, Pencil, Trash2, X } from "lucide-react";
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter } from "./backlogFormat.js";
 import Markdown from "./Markdown.jsx";
@@ -88,7 +88,7 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
       <ItemActions item={item} path={path} participants={participants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
       {item.message_count > 0 && <ChatLinks item={item} path={path} participants={participants} call={call} onShow={onClose} />}
-      <Comments item={item} path={path} participants={participants} me={me} call={call} run={run} />
+      <Comments key={path} item={item} path={path} participants={participants} me={me} call={call} run={run} />
     </Dialog>
   );
 }
@@ -284,15 +284,39 @@ function ChatLinks({ item, path, participants, call, onShow }) {
   );
 }
 
+// withComment returns list (oldest first) with comment c in it.
+function withComment(list, c) {
+  const base = list || [];
+  return base.some((x) => x.id === c.id) ? base : [...base, c].sort((a, b) => a.id - b.id);
+}
+
+// mergeAddedComments keeps comments just returned by POST visible if an
+// earlier in-flight GET finishes before the live-update refetch.
+function mergeAddedComments(fetched, addedMap) {
+  let out = fetched;
+  for (const [id, c] of addedMap) {
+    if (out.some((x) => x.id === id)) addedMap.delete(id);
+    else out = withComment(out, c);
+  }
+  return out;
+}
+
+// Comments lists and edits an item's comments. Adding and deleting update
+// the list at once (#156); live updates keep other people's changes in sync.
 function Comments({ item, path, participants, me, call, run }) {
   const [comments, setComments] = useState(null);
+  const [pending, setPending] = useState([]);
+  const [removing, setRemoving] = useState([]);
   const [text, setText] = useState("");
+  const added = useRef(new Map());
+  const seq = useRef(0);
+
   // Refetch when the count changes (live updates reload the item list).
   useEffect(() => {
     let current = true;
     call("GET", `${path}/comments`).then(
-      (list) => current && setComments(list),
-      () => current && setComments([]),
+      (list) => current && setComments(mergeAddedComments(list, added.current)),
+      () => current && setComments((prev) => prev || []),
     );
     return () => {
       current = false;
@@ -301,27 +325,60 @@ function Comments({ item, path, participants, me, call, run }) {
 
   const send = async (e) => {
     e.preventDefault();
-    if (text.trim() && (await run("POST", `${path}/comments`, { body: text }))) setText("");
+    if (!text.trim()) return;
+    const sent = text;
+    const temp = {
+      id: `pending-${++seq.current}`,
+      pending: true,
+      author_id: me?.id,
+      body: sent,
+      created_at: Date.now(),
+    };
+    setText("");
+    setPending((list) => [...list, temp]);
+    const c = await run("POST", `${path}/comments`, { body: sent });
+    setPending((list) => list.filter((x) => x !== temp));
+    if (c) {
+      added.current.set(c.id, c);
+      setComments((list) => withComment(list, c));
+    } else {
+      setText((t) => t || sent);
+    }
   };
+
+  const remove = async (c) => {
+    if (!window.confirm("Delete this comment?")) return;
+    setRemoving((ids) => [...ids, c.id]);
+    const ok = await run("DELETE", `${path}/comments/${c.id}`);
+    if (ok) {
+      added.current.delete(c.id);
+      setComments((list) => list?.filter((x) => x.id !== c.id) ?? null);
+    }
+    setRemoving((ids) => ids.filter((id) => id !== c.id));
+  };
+
+  const confirmed = comments ? comments.filter((c) => !removing.includes(c.id)) : [];
+  const shown = pending.length ? [...confirmed, ...pending] : confirmed;
+
   return (
     <section className="detail-section">
       <h3>Comments</h3>
-      {comments?.length === 0 && <p className="muted">No comments yet.</p>}
-      {comments?.map((c) => (
-        <div key={c.id} className="comment">
+      {comments !== null && shown.length === 0 && <p className="muted">No comments yet.</p>}
+      {shown.map((c) => (
+        <div key={c.id} className={c.pending ? "comment comment-pending" : "comment"} aria-busy={c.pending || undefined}>
           <div className="comment-head">
             <span className="who">{name(participants, c.author_id)}</span>
-            <span className="time" title={new Date(c.created_at).toLocaleString()}>
-              {ago(c.created_at)}
+            <span className="time" title={c.pending ? undefined : new Date(c.created_at).toLocaleString()}>
+              {c.pending ? "sending…" : ago(c.created_at)}
             </span>
-            {me?.id === c.author_id && (
+            {!c.pending && me?.id === c.author_id && (
               <Button
                 iconOnly
                 variant="ghost"
                 className="comment-delete"
                 aria-label="Delete comment"
                 title="Delete comment"
-                onClick={() => window.confirm("Delete this comment?") && run("DELETE", `${path}/comments/${c.id}`)}
+                onClick={() => remove(c)}
               >
                 <X aria-hidden="true" />
               </Button>
