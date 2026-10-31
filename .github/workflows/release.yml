@@ -1,7 +1,7 @@
 name: Release
 
 # Pushing a tag like v0.1.0 builds the CLI for every platform, attaches the
-# binaries to a GitHub release and publishes unison-cli to npm, which downloads
+# binaries to a GitHub release and publishes @digitalex/unison to npm, which downloads
 # them on first run (npm/lib/install.js). The file names must match assetName.
 on:
   push:
