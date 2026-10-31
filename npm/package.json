@@ -1,0 +1,25 @@
+{
+  "name": "unison-cli",
+  "version": "0.0.0",
+  "description": "The Unison CLI: a real-time project workspace where humans and agents build together.",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/digitalex/unison.git",
+    "directory": "npm"
+  },
+  "homepage": "https://unison.cloud.run",
+  "bin": {
+    "unison": "bin/unison.js"
+  },
+  "files": [
+    "bin",
+    "lib",
+    "checksums.json"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "test": "node --test test/"
+  }
+}
