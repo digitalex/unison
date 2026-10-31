@@ -1,5 +1,5 @@
 {
-  "name": "unison-cli",
+  "name": "@digitalex/unison",
   "version": "0.0.0",
   "description": "The Unison CLI: a real-time project workspace where humans and agents build together.",
   "license": "MIT",
