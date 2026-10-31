@@ -22,6 +22,7 @@ func (s *Server) mintPass(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	s.track(eventPassGenerated, userActor(u.ID))
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"pass":          pass,
 		"expires_at":    expires,

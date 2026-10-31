@@ -24,6 +24,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalex/unison/internal/analytics"
 	"github.com/digitalex/unison/internal/guide"
 	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/server"
@@ -463,6 +464,7 @@ func serve(args []string) error {
 	if err := setupPush(srv); err != nil {
 		return err
 	}
+	setupAnalytics(srv)
 	switch {
 	case auth.Open:
 		log.Printf("WARNING: UNISON_AUTH=off: workspaces are OPEN (public reads and creation, anonymous API joins, pre-account participants work). For local development only.")
@@ -2215,6 +2217,16 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 }
 
 // setupPush enables push notifications when APNS_* is configured.
+func setupAnalytics(srv *server.Server) {
+	cfg, ok := analytics.ConfigFromEnv(os.Getenv)
+	if !ok {
+		log.Printf("Server-side analytics are off (set UNISON_GA_MEASUREMENT_ID and UNISON_GA_API_SECRET to enable them).")
+		return
+	}
+	srv.SetTracker(analytics.NewClient(cfg))
+	log.Printf("Server-side analytics are on (%s).", cfg.MeasurementID)
+}
+
 func setupPush(srv *server.Server) error {
 	cfg, ok := push.ConfigFromEnv(os.Getenv)
 	if !ok {
