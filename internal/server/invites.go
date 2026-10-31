@@ -37,6 +37,7 @@ func (s *Server) createInvite(w http.ResponseWriter, r *http.Request) {
 		inv, token, evs, err := s.store.CreateLinkInvite(r.Context(), ws, u.ID)
 		resp := map[string]any{"invite": inv}
 		if err == nil {
+			s.track(eventInviteLink, userActor(u.ID))
 			resp["token"], resp["url"] = token, inviteURL(r, ws, token)
 		}
 		s.respond(w, http.StatusCreated, resp, evs, err)

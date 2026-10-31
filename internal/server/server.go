@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/digitalex/unison/internal/analytics"
 	"github.com/digitalex/unison/internal/guide"
 	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/store"
@@ -44,6 +45,10 @@ type Server struct {
 	// pusher sends push notifications (push.go); nil when disabled.
 	pusher  push.Sender
 	pushing sync.WaitGroup
+
+	// tracker sends analytics events (analytics.go); nil when disabled.
+	tracker  analytics.Sender
+	tracking sync.WaitGroup
 
 	// reviews caches each workspace's Pending review list (reviews.go).
 	reviews reviewCache
@@ -348,6 +353,7 @@ func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var err error
 	if creator != nil {
 		ws, evs, err = s.store.CreateWorkspaceFor(r.Context(), creator.ID, req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
+		s.trackRepos(evs, userActor(creator.ID))
 	} else {
 		ws, evs, err = s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
 	}
@@ -365,6 +371,7 @@ func (s *Server) updateWorkspace(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	ws, evs, err := s.store.UpdateWorkspace(r.Context(), r.PathValue("ws"), actor(r).ID, p)
+	s.trackRepos(evs, participantActor(actor(r)))
 	s.respond(w, http.StatusOK, ws, evs, err)
 }
 
@@ -399,6 +406,7 @@ func (s *Server) addRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	repo, evs, err := s.store.AddRepo(r.Context(), actor(r), req)
+	s.trackRepos(evs, participantActor(actor(r)))
 	s.respond(w, http.StatusCreated, repo, evs, err)
 }
 
@@ -502,6 +510,9 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 	// Agents join with a pass.
 	if req.Pass != "" {
 		p, tok, evs, err := s.store.JoinWithPass(r.Context(), r.PathValue("ws"), req.Pass, req.Name, req.Emoji)
+		if err == nil {
+			s.track(eventJoined, participantActor(p))
+		}
 		s.respond(w, http.StatusCreated, map[string]any{"participant": p, "token": tok}, evs, err)
 		return
 	}
@@ -565,6 +576,9 @@ func (s *Server) react(on bool) http.HandlerFunc {
 			return
 		}
 		m, evs, err := s.store.React(r.Context(), actor(r), id, r.PathValue("emoji"), on)
+		if err == nil && on && len(evs) > 0 {
+			s.track(eventReacted, participantActor(actor(r)))
+		}
 		s.respond(w, http.StatusOK, m, evs, err)
 	}
 }
@@ -580,6 +594,9 @@ func (s *Server) postMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m, evs, err := s.store.Post(r.Context(), actor(r), store.NewMessage{Body: req.Body, ParentID: req.ParentID, ItemID: req.ItemID, ActionRequired: req.ActionRequired})
+	if err == nil {
+		s.track(eventMessagePosted, participantActor(actor(r)))
+	}
 	s.respond(w, http.StatusCreated, m, evs, err)
 }
 
@@ -630,6 +647,12 @@ func (s *Server) addItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, evs, err := s.store.AddItemAssigned(r.Context(), actor(r), req.Title, req.Body, req.Position, req.AssigneeID)
+	if err == nil {
+		s.track(eventItemCreated, participantActor(actor(r)))
+		if req.AssigneeID != 0 {
+			s.track(eventItemAssigned, participantActor(actor(r)))
+		}
+	}
 	s.respond(w, http.StatusCreated, it, evs, err)
 }
 
@@ -684,6 +707,9 @@ func (s *Server) assignItem(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	it, evs, err := s.store.AssignItem(r.Context(), actor(r), id, target)
+	if err == nil && target != 0 {
+		s.track(eventItemAssigned, participantActor(actor(r)))
+	}
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 
@@ -728,6 +754,9 @@ func (s *Server) closeItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, evs, err := s.store.CloseItem(r.Context(), actor(r), id, req.Note)
+	if err == nil {
+		s.track(eventItemClosed, participantActor(actor(r)))
+	}
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 

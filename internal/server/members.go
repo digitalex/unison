@@ -32,6 +32,9 @@ func (s *Server) joinAsUser(w http.ResponseWriter, r *http.Request, u *store.Use
 	} else {
 		p, tok, existing, evs, err = s.store.JoinWorkspace(r.Context(), r.PathValue("ws"), u.ID, name, emoji, invite)
 	}
+	if err == nil && !existing {
+		s.track(eventJoined, participantActor(p))
+	}
 	status := http.StatusCreated
 	if existing {
 		status = http.StatusOK
