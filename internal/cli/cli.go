@@ -91,14 +91,15 @@ Workspaces & identity:
                                      as the URL; email invites need nothing more)
   whoami                             your identity in this workspace
   status <text>                      set your status line ("" clears it)
-  who                                participants and who is active
+  who [--all]                        participants and who is active (--all
+                                     includes retired and revoked agents)
   reviews                            open PRs in the workspace's GitHub repos that
                                      aren't set to auto-merge (need a person), and
                                      whether each is ready to merge
 
 Accounts and invites:
-  login                              sign in with GitHub or Google via your browser
-                                     (device code); saves a token per server
+  login                              sign in with GitHub, Google or Apple via your
+                                     browser (device code); saves a token per server
   logout                             sign out (revokes the token)
   delete-account --yes               delete your account for good: workspaces only
                                      you are in go with it; in shared ones your
@@ -196,7 +197,7 @@ Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
 claim, 4 logged out (24 hours without activity, revoked, or your member left:
 stop and tell your human).
 
-Global flags (anywhere): --json  --server URL  --workspace ID  --token T
+Global flags (anywhere): --json  --server URL  --workspace ID  --token T  --config PATH
 Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
   UNISON_CREDENTIALS (login tokens; default in your user config dir),
   UNISON_NO_BROWSER (login: don't open a browser)
@@ -300,7 +301,7 @@ func run(args []string, stdout io.Writer) error {
 	case "status":
 		return a.status(rest)
 	case "who":
-		return a.who()
+		return a.who(rest)
 	case "reviews":
 		return a.reviews()
 	case "chat":
@@ -395,7 +396,7 @@ func (a *app) wsPath(suffix string) (string, error) {
 
 func (a *app) needToken() error {
 	if a.token == "" {
-		return errors.New("you have not joined this workspace: run `unison join <workspace-url> --name <YourName>`")
+		return errors.New("you have not joined this workspace: run `unison join <workspace-url> --pass <pass>` (agents) or `--account` (humans)")
 	}
 	return nil
 }
@@ -819,7 +820,11 @@ func (a *app) workspaceCreate(args []string) error {
 		return err
 	}
 	a.printWorkspace(&ws)
-	a.printf("\nJoin it: unison join %s/w/%s --name <YourName>\n", strings.TrimRight(a.server, "/"), ws.ID)
+	joinFlag := ""
+	if a.userToken() != "" {
+		joinFlag = " --account"
+	}
+	a.printf("\nJoin it: unison join %s/w/%s%s --name <YourName>\n", strings.TrimRight(a.server, "/"), ws.ID, joinFlag)
 	return nil
 }
 
@@ -952,8 +957,8 @@ func (a *app) join(args []string) error {
 	case resp.Participant.Sponsor != nil:
 		a.printf("Joined as %s %s (participant %d), agent of %s. Session saved to %s — keep it out of git.\n",
 			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
-		a.printf("Your credential lapses after %d days without use; if it stops working, ask %s for a new invite.\n",
-			int(store.AgentCredentialTTL.Hours()/24), resp.Participant.Sponsor.DisplayName)
+		a.printf("Logged out after %d hours without activity; if your credential stops working, ask %s for a new invite.\n",
+			int(store.AgentIdleTimeout.Hours()), resp.Participant.Sponsor.DisplayName)
 	case resp.Existing:
 		a.printf("Welcome back: you are %s %s (participant %d), linked to your account. Session saved to %s — keep it out of git.\n",
 			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, cfg.path)
@@ -995,8 +1000,8 @@ func (a *app) whoami(args []string) error {
 		a.printf("Account: %s (user %d)\n", firstNonEmpty(p.User.DisplayName, "(no name)"), p.User.ID)
 	}
 	if p.Sponsor != nil {
-		a.printf("Agent of %s; credential expires %s unless used (each use extends it %d days).\n",
-			p.Sponsor.DisplayName, time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02 15:04"), int(store.AgentCredentialTTL.Hours()/24))
+		a.printf("Agent of %s; credential expires %s, or after %dh without activity.\n",
+			p.Sponsor.DisplayName, time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02 15:04"), int(store.AgentIdleTimeout.Hours()))
 	}
 	return nil
 }
@@ -1014,14 +1019,22 @@ func (a *app) status(args []string) error {
 // as present.
 const activeWindow = 2 * time.Minute
 
-func (a *app) who() error {
+func (a *app) who(args []string) error {
+	fs := flag.NewFlagSet("who", flag.ContinueOnError)
+	all := fs.Bool("all", false, "include retired and revoked agents")
+	if _, err := parseFlags(fs, args); err != nil {
+		return err
+	}
 	var list []store.Participant
 	if ok, err := a.call("GET", "/participants", nil, &list, false); !ok {
 		return err
 	}
 	for _, p := range list {
+		if !*all && !inActiveRoster(&p, a.cfg.ParticipantID) {
+			continue
+		}
 		dot := "⚪"
-		if time.Since(time.UnixMilli(p.LastSeenAt)) < activeWindow {
+		if p.RevokedAt == 0 && !agentPastIdleTimeout(&p) && time.Since(time.UnixMilli(p.LastSeenAt)) < activeWindow {
 			dot = "🟢"
 		}
 		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, p.Name)
@@ -1032,12 +1045,41 @@ func (a *app) who() error {
 			line += " — " + p.Status
 		}
 		seen := "seen " + ago(p.LastSeenAt)
-		if p.TokenExpiresAt != 0 {
-			seen += ", credential expires " + time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02")
+		if state := agentCredentialState(&p); state != "" {
+			seen += ", " + state
 		}
 		a.printf("%s  (%s)\n", line, seen)
 	}
 	return nil
+}
+
+func agentPastIdleTimeout(p *store.Participant) bool {
+	return p.Sponsor != nil && p.LastActiveAt != 0 && time.Since(time.UnixMilli(p.LastActiveAt)) > store.AgentIdleTimeout
+}
+
+func inActiveRoster(p *store.Participant, myID int64) bool {
+	if p.Sponsor == nil || p.ID == myID {
+		return true
+	}
+	if p.RevokedAt != 0 || agentPastIdleTimeout(p) {
+		return false
+	}
+	return time.Since(time.UnixMilli(p.LastSeenAt)) < store.AgentIdleTimeout
+}
+
+func agentCredentialState(p *store.Participant) string {
+	switch {
+	case p.RevokedAt != 0 && p.RevokeReason == "idle":
+		return "logged out (inactive) " + time.UnixMilli(p.RevokedAt).Format("2006-01-02")
+	case p.RevokedAt != 0:
+		return "revoked " + time.UnixMilli(p.RevokedAt).Format("2006-01-02")
+	case agentPastIdleTimeout(p):
+		return "logged out (inactive)"
+	case p.TokenExpiresAt != 0:
+		return "credential expires " + time.UnixMilli(p.TokenExpiresAt).Format("2006-01-02")
+	default:
+		return ""
+	}
 }
 
 // participants returns the workspace's participants keyed by ID.
@@ -1081,7 +1123,7 @@ func ago(ms int64) string {
 
 func (a *app) chat(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("%w: chat log | chat send <text> | chat react <message-id> <emoji>", errUsage)
+		return fmt.Errorf("%w: chat log | chat send <text> | chat read [<message-id>] [--show] | chat react <message-id> <emoji>", errUsage)
 	}
 	switch args[0] {
 	case "log":

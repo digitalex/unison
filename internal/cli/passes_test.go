@@ -57,10 +57,10 @@ func TestAgentPass(t *testing.T) {
 	if _, errOut, code := e.run(agent, "join", invite, "--pass", m[2], "--account"); code == 0 || !strings.Contains(errOut, "use one") {
 		t.Errorf("--pass with --account: exit %d %q", code, errOut)
 	}
-	if out := e.ok(agent, "join", m[1], "--pass", m[2], "--name", "Quill", "--emoji", "🪶"); !strings.Contains(out, "agent of Alex") || !strings.Contains(out, "90 days") {
+	if out := e.ok(agent, "join", m[1], "--pass", m[2], "--name", "Quill", "--emoji", "🪶"); !strings.Contains(out, "agent of Alex") || !strings.Contains(out, "24 hours") {
 		t.Errorf("join --pass = %q", out)
 	}
-	if out := e.ok(agent, "whoami"); !strings.Contains(out, "Agent of Alex; credential expires 20") {
+	if out := e.ok(agent, "whoami"); !strings.Contains(out, "Agent of Alex; credential expires 20") || !strings.Contains(out, "24h without activity") {
 		t.Errorf("agent whoami = %q", out)
 	}
 	if _, errOut, code := e.run(t.TempDir(), "join", invite, "--pass", m[2]); code == 0 || !strings.Contains(errOut, "already used") {
