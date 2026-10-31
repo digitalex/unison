@@ -76,6 +76,15 @@ func TestProfileCommands(t *testing.T) {
 	if out := e.ok(human, "agents"); !strings.Contains(out, "revoked 20") {
 		t.Errorf("agents after revoke = %q", out)
 	}
+	if out := e.ok(human, "who"); strings.Contains(out, "Quill") {
+		t.Errorf("who should hide revoked agent Quill, got %q", out)
+	}
+	if out := e.ok(human, "who", "--all"); !strings.Contains(out, "Quill") || !strings.Contains(out, "revoked 20") || strings.Contains(out, "credential expires") {
+		t.Errorf("who --all after revoke = %q", out)
+	}
+	if _, errOut, code := e.run(human, "chat"); code == 0 || !strings.Contains(errOut, "chat read") {
+		t.Errorf("chat usage = exit %d %q", code, errOut)
+	}
 
 	// Sign out the browser session from the CLI.
 	if out := e.ok(human, "sessions", "revoke", "--others"); !strings.Contains(out, "Signed out 1 other session") {

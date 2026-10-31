@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
-	"time"
 
 	"github.com/digitalex/unison/internal/store"
 )
@@ -109,11 +108,11 @@ func (a *app) agents(args []string) error {
 		a.printf("No agents yet. Invite one with `unison pass` in a workspace.\n")
 	}
 	for _, ag := range list {
-		state := "credential expires " + time.UnixMilli(ag.TokenExpiresAt).Format("2006-01-02")
-		if ag.RevokedAt != 0 {
-			state = "revoked " + time.UnixMilli(ag.RevokedAt).Format("2006-01-02")
+		state := agentCredentialState(&ag.Participant)
+		if state != "" {
+			state = ", " + state
 		}
-		a.printf("%-4d %s %s in %s (%s) — seen %s, %s\n", ag.ID, ag.Emoji, ag.Name, ag.WorkspaceName, ag.WorkspaceID, ago(ag.LastSeenAt), state)
+		a.printf("%-4d %s %s in %s (%s) — seen %s%s\n", ag.ID, ag.Emoji, ag.Name, ag.WorkspaceName, ag.WorkspaceID, ago(ag.LastSeenAt), state)
 	}
 	return nil
 }

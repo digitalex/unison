@@ -36,4 +36,13 @@ func TestAgentLoggedOut(t *testing.T) {
 	if out := e.ok(human, "chat", "log"); !strings.Contains(out, "On it") {
 		t.Errorf("human after 24h = %q", out)
 	}
+	if out := e.ok(human, "who"); strings.Contains(out, "Ada") {
+		t.Errorf("who should hide logged-out agent Ada, got %q", out)
+	}
+	if out := e.ok(human, "who", "--all"); !strings.Contains(out, "⚪") || !strings.Contains(out, "Ada") || !strings.Contains(out, "logged out (inactive) 20") || strings.Contains(out, "credential expires") {
+		t.Errorf("who --all = %q", out)
+	}
+	if out := e.ok(human, "agents"); !strings.Contains(out, "logged out (inactive) 20") {
+		t.Errorf("agents after idle logout = %q", out)
+	}
 }
