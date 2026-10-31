@@ -127,7 +127,7 @@ Accounts and invites:
   devices remove <id>                stop pushes to one of them
 
 Chat:
-  chat log [--limit N]               recent messages, with threads
+  chat log [--limit N]               recent messages, with threads (marks them read)
   chat send <text> [--reply-to ID] [--item ID] [--action]
                                      post a message (or reply in a thread);
                                      --item ties it to a backlog item (e.g. a
@@ -192,7 +192,9 @@ plain-text instructions):
   webhook delivery <delivery-id>     headers and payload
 
 Real time:
-  wait [--mentions] [--timeout SECONDS]   block until something concerns you
+  wait [--mentions] [--timeout SECONDS]
+                                     block until something concerns you (wakes
+                                     immediately on unread messages)
 
 Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
 claim, 4 logged out (24 hours without activity, revoked, or your member left:
@@ -944,6 +946,11 @@ func (a *app) join(args []string) error {
 	if err := c.do("GET", "/api/workspaces/"+a.ws+"/events", nil, &events); err != nil {
 		return err
 	}
+	if !resp.Existing {
+		if err := markLatestRead(c, a.ws); err != nil {
+			return err
+		}
+	}
 	cfg := &Config{
 		Server: a.server, Workspace: a.ws, Token: resp.Token, ParticipantID: resp.Participant.ID,
 		Name: resp.Participant.Name, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
@@ -1165,14 +1172,19 @@ func (a *app) chatRead(args []string) error {
 			return err
 		}
 	} else {
-		var msgs []store.Message
-		if ok, err := a.call("GET", "/messages?limit=50", nil, &msgs, false); !ok {
+		if _, err := a.wsPath("/read"); err != nil {
 			return err
 		}
-		for _, m := range msgs {
-			upTo = max(upTo, m.ID)
+		if err := a.needToken(); err != nil {
+			return err
+		}
+		if upTo, err = latestMessageID(a.client(), a.ws); err != nil {
+			return err
 		}
 		if upTo == 0 {
+			if a.jsonOut {
+				return a.printJSON(json.RawMessage(`{"up_to":0}`))
+			}
 			a.printf("No messages yet.\n")
 			return nil
 		}
@@ -1184,15 +1196,68 @@ func (a *app) chatRead(args []string) error {
 	return nil
 }
 
+func latestMessageID(c *client, ws string) (int64, error) {
+	var msgs []store.Message
+	if err := c.do("GET", "/api/workspaces/"+ws+"/messages?limit=1", nil, &msgs); err != nil {
+		return 0, err
+	}
+	if len(msgs) == 0 {
+		return 0, nil
+	}
+	return msgs[len(msgs)-1].ID, nil
+}
+
+func markReadUpTo(c *client, ws string, upTo int64) error {
+	if upTo <= 0 {
+		return nil
+	}
+	return c.do("PUT", "/api/workspaces/"+ws+"/read", map[string]int64{"up_to": upTo}, nil)
+}
+
+func markLatestRead(c *client, ws string) error {
+	latest, err := latestMessageID(c, ws)
+	if err != nil {
+		return err
+	}
+	return markReadUpTo(c, ws, latest)
+}
+
+func (a *app) markReadBestEffort(upTo int64) {
+	if upTo <= 0 || a.ws == "" {
+		return
+	}
+	_ = markReadUpTo(a.client(), a.ws, upTo)
+}
+
+func maxMessageSliceID(msgs []store.Message) int64 {
+	var hi int64
+	for _, m := range msgs {
+		hi = max(hi, m.ID)
+	}
+	return hi
+}
+
 func (a *app) chatLog(args []string) error {
 	fs := flag.NewFlagSet("chat log", flag.ContinueOnError)
 	limit := fs.Int("limit", 50, "number of recent messages")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
 	}
-	var msgs []store.Message
-	if ok, err := a.call("GET", fmt.Sprintf("/messages?limit=%d", *limit), nil, &msgs, false); !ok {
+	path, err := a.wsPath(fmt.Sprintf("/messages?limit=%d", *limit))
+	if err != nil {
 		return err
+	}
+	var raw json.RawMessage
+	if err := a.client().do("GET", path, nil, &raw); err != nil {
+		return err
+	}
+	var msgs []store.Message
+	if err := json.Unmarshal(raw, &msgs); err != nil {
+		return err
+	}
+	a.markReadBestEffort(maxMessageSliceID(msgs))
+	if a.jsonOut {
+		return a.printJSON(raw)
 	}
 	people, err := a.participants()
 	if err != nil {
@@ -1315,18 +1380,28 @@ func (a *app) chatSend(args []string) error {
 	if *action {
 		body["action_required"] = true
 	}
-	for key, v := range map[string]string{"parent_id": *replyTo, "item_id": *item} {
-		if v == "" {
-			continue
-		}
-		id, err := parseID(v)
+	var replyID int64
+	if *replyTo != "" {
+		id, err := parseID(*replyTo)
 		if err != nil {
 			return err
 		}
-		body[key] = id
+		replyID = id
+		body["parent_id"] = id
+	}
+	if *item != "" {
+		id, err := parseID(*item)
+		if err != nil {
+			return err
+		}
+		body["item_id"] = id
 	}
 	var m store.Message
-	if ok, err := a.call("POST", "/messages", body, &m, true); !ok {
+	ok, err := a.call("POST", "/messages", body, &m, true)
+	if err == nil && replyID > 0 {
+		a.markReadBestEffort(replyID)
+	}
+	if !ok {
 		return err
 	}
 	about := ""
@@ -1990,6 +2065,12 @@ func (a *app) wait(args []string) error {
 	if err := c.do("GET", path, nil, &me); err != nil {
 		return err
 	}
+	var readState struct {
+		UpTo int64 `json:"up_to"`
+	}
+	if err := c.do("GET", "/api/workspaces/"+a.ws+"/read", nil, &readState); err != nil {
+		return err
+	}
 	cursor := a.cfg.Cursor
 	if a.cfg.Workspace != a.ws || cursor == 0 {
 		var resp struct {
@@ -2000,18 +2081,26 @@ func (a *app) wait(args []string) error {
 		}
 		cursor = resp.Cursor
 	}
-	f := &eventFilter{me: &me, mentionsOnly: *mentions, client: c, ws: a.ws}
+	f := &eventFilter{me: &me, mentionsOnly: *mentions, client: c, ws: a.ws, readUpTo: readState.UpTo}
+	unread, err := f.unreadMessageEvents()
+	if err != nil {
+		return err
+	}
 	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	for {
 		remaining := int(time.Until(deadline).Seconds())
-		if remaining <= 0 {
+		if remaining <= 0 && len(unread) == 0 {
 			return &exitError{code: 2, msg: "Nothing new. Run `unison wait` again to keep listening."}
+		}
+		waitSec := min(max(remaining, 0), 60)
+		if len(unread) > 0 {
+			waitSec = 0
 		}
 		var resp struct {
 			Events []store.Event `json:"events"`
 			Cursor int64         `json:"cursor"`
 		}
-		q := fmt.Sprintf("/api/workspaces/%s/events?after=%d&wait=%d", a.ws, cursor, min(remaining, 60))
+		q := fmt.Sprintf("/api/workspaces/%s/events?after=%d&wait=%d", a.ws, cursor, waitSec)
 		if err := c.do("GET", q, nil, &resp); err != nil {
 			return err
 		}
@@ -2028,8 +2117,19 @@ func (a *app) wait(args []string) error {
 				return err
 			}
 		}
+		if len(unread) > 0 && len(resp.Events) == 500 && len(relevant) == 0 {
+			continue
+		}
+		if len(unread) > 0 {
+			relevant = mergeUnreadEvents(unread, relevant)
+			unread = nil
+		}
 		if len(relevant) > 0 {
-			return a.printEvents(relevant)
+			if err := a.printEvents(relevant); err != nil {
+				return err
+			}
+			a.markReadBestEffort(maxMessageEventID(relevant))
+			return nil
 		}
 	}
 }
@@ -2039,6 +2139,7 @@ type eventFilter struct {
 	mentionsOnly bool
 	client       *client
 	ws           string
+	readUpTo     int64
 	authors      map[int64]int64 // message ID → author ID, fetched lazily.
 }
 
@@ -2052,7 +2153,7 @@ func (f *eventFilter) relevant(e store.Event) bool {
 		if json.Unmarshal(e.Data, &m) != nil {
 			return false
 		}
-		return !f.mentionsOnly || mentions(m.Body, f.me.Name) || (m.ParentID != nil && f.authorOf(*m.ParentID) == f.me.ID)
+		return m.ID > f.readUpTo && f.messageConcernsMe(m)
 	case e.Type == "comment.added":
 		var ce store.CommentEvent
 		if json.Unmarshal(e.Data, &ce) != nil || ce.Comment == nil {
@@ -2088,6 +2189,97 @@ func (f *eventFilter) relevant(e store.Event) bool {
 	return false
 }
 
+func (f *eventFilter) messageConcernsMe(m store.Message) bool {
+	if m.AuthorID == f.me.ID {
+		return false
+	}
+	if !f.mentionsOnly {
+		return true
+	}
+	if mentions(m.Body, f.me.Name) {
+		return true
+	}
+	if m.ParentID != nil && f.authorOf(*m.ParentID) == f.me.ID {
+		return true
+	}
+	return slices.Contains(m.ActionFor, f.me.ID) && !slices.Contains(m.DoneBy, f.me.ID)
+}
+
+func (f *eventFilter) unreadMessageEvents() ([]store.Event, error) {
+	latest, err := latestMessageID(f.client, f.ws)
+	if err != nil || latest <= f.readUpTo {
+		return nil, err
+	}
+	var msgs []store.Message
+	if err := f.client.do("GET", "/api/workspaces/"+f.ws+"/messages?limit=1000", nil, &msgs); err != nil {
+		return nil, err
+	}
+	if f.authors == nil {
+		f.authors = make(map[int64]int64, len(msgs))
+	}
+	for _, m := range msgs {
+		f.authors[m.ID] = m.AuthorID
+	}
+	var out []store.Event
+	for _, m := range msgs {
+		if m.ID > f.readUpTo && f.messageConcernsMe(m) {
+			out = append(out, messageEvent(m))
+		}
+	}
+	return out, nil
+}
+
+func messageEvent(m store.Message) store.Event {
+	raw, _ := json.Marshal(m)
+	return store.Event{
+		WorkspaceID: m.WorkspaceID,
+		Type:        "message.created",
+		ActorID:     m.AuthorID,
+		Data:        raw,
+		CreatedAt:   m.CreatedAt,
+	}
+}
+
+func messageEventID(e store.Event) int64 {
+	if e.Type != "message.created" {
+		return 0
+	}
+	var m struct {
+		ID int64 `json:"id"`
+	}
+	if json.Unmarshal(e.Data, &m) != nil {
+		return 0
+	}
+	return m.ID
+}
+
+func mergeUnreadEvents(unread, pending []store.Event) []store.Event {
+	if len(unread) == 0 {
+		return pending
+	}
+	seen := make(map[int64]bool, len(pending))
+	for _, e := range pending {
+		if id := messageEventID(e); id > 0 {
+			seen[id] = true
+		}
+	}
+	var out []store.Event
+	for _, e := range unread {
+		if id := messageEventID(e); id == 0 || !seen[id] {
+			out = append(out, e)
+		}
+	}
+	return append(out, pending...)
+}
+
+func maxMessageEventID(evs []store.Event) int64 {
+	var hi int64
+	for _, e := range evs {
+		hi = max(hi, messageEventID(e))
+	}
+	return hi
+}
+
 func (f *eventFilter) authorOf(msgID int64) int64 {
 	if f.authors == nil {
 		f.authors = map[int64]int64{}
@@ -2098,7 +2290,16 @@ func (f *eventFilter) authorOf(msgID int64) int64 {
 			}
 		}
 	}
-	return f.authors[msgID]
+	if author, ok := f.authors[msgID]; ok {
+		return author
+	}
+	var m store.Message
+	if err := f.client.do("GET", fmt.Sprintf("/api/workspaces/%s/messages/%d", f.ws, msgID), nil, &m); err == nil {
+		f.authors[msgID] = m.AuthorID
+		return m.AuthorID
+	}
+	f.authors[msgID] = 0
+	return 0
 }
 
 var mentionRegexCache sync.Map
