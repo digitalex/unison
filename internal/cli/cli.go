@@ -138,6 +138,7 @@ Chat:
                                      newest); --show prints how far you've read
   chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 (or +1,
                                      -1, heart, muscle, 100)
+  activity [--limit N]               recent workspace activity (items, joins)
 
 Actions (chat messages sent with --action that ask you to act):
   actions                            what asks you and isn't done yet
@@ -309,6 +310,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.reviews()
 	case "chat":
 		return a.chat(rest)
+	case "activity":
+		return a.activity(rest)
 	case "backlog":
 		return a.backlog(rest)
 	case "webhook", "webhooks":
@@ -2369,9 +2372,9 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		}
 		return line
 	case e.Type == "participant.joined":
-		var p store.Participant
-		json.Unmarshal(e.Data, &p)
-		return fmt.Sprintf("👋 %s %s joined", p.Emoji, p.Name)
+		return describeParticipantJoined(e)
+	case e.Type == "member.removed":
+		return describeMemberRemoved(people, who, e)
 	case e.Type == "workspace.updated":
 		return fmt.Sprintf("🛠  %s updated the workspace settings", who)
 	case strings.HasPrefix(e.Type, "comment."):

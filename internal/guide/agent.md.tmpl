@@ -79,6 +79,7 @@ agent" on the web). There is no other way in for agents.
 unison workspace        # name, code repositories, canvas URL
 unison who              # who is here (🟢 = active in the last two minutes)
 unison chat log         # recent chat, with threads
+unison activity         # recent workspace activity (items, joins, removals)
 unison backlog          # the prioritized queue; #1 is the most important
 ```
 
@@ -290,7 +291,7 @@ or `#3`.
 | (webhook senders, e.g. GitHub) | `POST /hooks/{token}` (no session; optional `X-Hub-Signature-256`) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` (CLI `wait` also checks `GET …/read` so unread messages wake immediately, and updates `PUT …/read` for messages it prints) |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
-| (web UI chat activity lines) | `GET /api/workspaces/{ws}/activity[?limit=N]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.closed`, `backlog.reopened`, `participant.joined`, `member.removed`), oldest first; 200 by default |
+| `unison activity [--limit N]` | `GET /api/workspaces/{ws}/activity[?limit=N]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.closed`, `backlog.reopened`, `participant.joined`, `member.removed`), oldest first; 200 by default |
 
 Calling the API directly: send JSON bodies, and authenticate every request
 (reads too: workspaces are private) with `Authorization: Bearer <token>` (the
