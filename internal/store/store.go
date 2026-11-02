@@ -807,11 +807,21 @@ func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (
 	return m, evs, nil
 }
 
-// ListMessages returns up to limit of the most recent messages, oldest first.
-func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
+// clampLimit applies def when limit <= 0 and caps limit at maxLimit.
+func clampLimit(limit, def, maxLimit int) int {
+	if limit <= 0 {
+		return def
 	}
+	if limit > maxLimit {
+		return maxLimit
+	}
+	return limit
+}
+
+// ListMessages returns up to limit of the most recent messages (default 200,
+// clamped to 1000), oldest first.
+func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
+	limit = clampLimit(limit, 200, 1000)
 	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
 }
 
@@ -844,9 +854,7 @@ func (s *Store) ItemMessages(ctx context.Context, wsID string, itemID int64) ([]
 
 // EventsAfter returns up to limit events in a workspace with seq > after.
 func (s *Store) EventsAfter(ctx context.Context, wsID string, after int64, limit int) ([]Event, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 500
-	}
+	limit = clampLimit(limit, 500, 1000)
 	rows, err := s.db.QueryContext(ctx, `SELECT seq, workspace_id, type, COALESCE(actor_id, 0), data, created_at FROM events WHERE workspace_id = ? AND seq > ? ORDER BY seq LIMIT ?`, wsID, after, limit)
 	if err != nil {
 		return nil, err
@@ -860,11 +868,10 @@ func (s *Store) EventsAfter(ctx context.Context, wsID string, after int64, limit
 var ActivityTypes = []string{"backlog.added", "backlog.assigned", "backlog.started", "backlog.closed", "backlog.reopened", "participant.joined", "member.removed"}
 
 // RecentActivity returns the workspace's latest activity events (see
-// ActivityTypes), oldest first: at most limit of them (200 by default).
+// ActivityTypes), oldest first: at most limit of them (default 200, clamped
+// to 1000).
 func (s *Store) RecentActivity(ctx context.Context, wsID string, limit int) ([]Event, error) {
-	if limit <= 0 || limit > 1000 {
-		limit = 200
-	}
+	limit = clampLimit(limit, 200, 1000)
 	args := []any{wsID}
 	for _, t := range ActivityTypes {
 		args = append(args, t)

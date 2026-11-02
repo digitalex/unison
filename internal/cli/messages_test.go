@@ -129,3 +129,49 @@ func TestWaitUnreadMessages(t *testing.T) {
 		t.Fatalf("wait after draining follow-up two: exit = %d, want 2", code)
 	}
 }
+
+func TestChatShowCLI(t *testing.T) {
+	e := newTestEnv(t)
+	human, agent := t.TempDir(), t.TempDir()
+	e.login("Alex", "")
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+	invite := e.url + "/w/" + ws.ID
+	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑", "--account")
+	e.ok(agent, "join", invite, "--pass", e.passFor(human), "--name", "Ada", "--emoji", "🦊")
+	e.ok(human, "backlog", "add", "Ship chat show")
+
+	sent := e.ok(agent, "chat", "send", "@Alex PR ready", "--item", "1", "--action")
+	rootID := regexp.MustCompile(`#(\d+)`).FindStringSubmatch(sent)[1]
+	e.ok(human, "chat", "react", rootID, "+1")
+
+	replySent := e.ok(human, "chat", "send", "LGTM!", "--reply-to", rootID)
+	replyID := regexp.MustCompile(`#(\d+)`).FindStringSubmatch(replySent)[1]
+
+	shownRoot := e.ok(agent, "chat", "show", rootID)
+	for _, want := range []string{"[#" + rootID + " ", "🦊 Ada [item #1] [needs @Alex ✓]: @Alex PR ready", "· 👍 1"} {
+		if !strings.Contains(shownRoot, want) {
+			t.Errorf("chat show %s = %q, missing %q", rootID, shownRoot, want)
+		}
+	}
+	shownReply := e.ok(agent, "chat", "show", "#"+replyID)
+	if !strings.Contains(shownReply, "(reply in thread #"+rootID+")") || !strings.Contains(shownReply, "LGTM!") {
+		t.Errorf("chat show #%s = %q", replyID, shownReply)
+	}
+
+	var m store.Message
+	if err := json.Unmarshal([]byte(e.ok(agent, "chat", "show", rootID, "--json")), &m); err != nil || m.Body != "@Alex PR ready" || len(m.Reactions) != 1 {
+		t.Errorf("chat show --json = %+v, err %v", m, err)
+	}
+
+	if _, errOut, code := e.run(agent, "chat", "show", "9999"); code == 0 || !strings.Contains(errOut, "not found") {
+		t.Errorf("chat show missing id: exit %d, stderr %q", code, errOut)
+	}
+	for _, bad := range [][]string{{"chat", "show"}, {"chat", "show", "1", "2"}, {"chat", "log", "1"}, {"chat", "log", "--limit", "0"}} {
+		if _, _, code := e.run(agent, bad...); code == 0 {
+			t.Errorf("unison %v succeeded, want usage error", bad)
+		}
+	}
+}

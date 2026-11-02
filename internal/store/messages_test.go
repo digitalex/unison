@@ -144,3 +144,38 @@ func TestMessageItemMigration(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestLimitClamping(t *testing.T) {
+	if got := clampLimit(0, 200, 1000); got != 200 {
+		t.Errorf("clampLimit(0) = %d, want 200", got)
+	}
+	if got := clampLimit(-5, 200, 1000); got != 200 {
+		t.Errorf("clampLimit(-5) = %d, want 200", got)
+	}
+	if got := clampLimit(2000, 200, 1000); got != 1000 {
+		t.Errorf("clampLimit(2000) = %d, want 1000", got)
+	}
+
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+	for i := 0; i < 205; i++ {
+		if _, _, err := s.PostMessage(ctx, a, "msg", nil, nil); err != nil {
+			t.Fatal(err)
+		}
+		if _, _, err := s.AddItem(ctx, a, "item", "", 0); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if msgs, err := s.ListMessages(ctx, a.WorkspaceID, 0); err != nil || len(msgs) != 200 {
+		t.Errorf("ListMessages(0) = %d, err %v; want 200", len(msgs), err)
+	}
+	if msgs, err := s.ListMessages(ctx, a.WorkspaceID, 2000); err != nil || len(msgs) != 205 {
+		t.Errorf("ListMessages(2000) = %d, err %v; want 205 (clamped to 1000, not reset to 200)", len(msgs), err)
+	}
+	if evs, err := s.RecentActivity(ctx, a.WorkspaceID, 0); err != nil || len(evs) != 200 {
+		t.Errorf("RecentActivity(0) = %d, err %v; want 200", len(evs), err)
+	}
+	if evs, err := s.RecentActivity(ctx, a.WorkspaceID, 2000); err != nil || len(evs) != 207 {
+		t.Errorf("RecentActivity(2000) = %d, err %v; want 207 (2 joins + 205 items, clamped to 1000)", len(evs), err)
+	}
+}
