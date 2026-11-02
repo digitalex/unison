@@ -83,7 +83,7 @@ export default function Recurring({ schedules, setSchedules, call, onError, head
     <section className="screen" aria-label="Recurring">
       <ScreenHead title="Recurring">
         {head}
-        <Button variant="primary" size="small" onClick={() => setEditing("new")} aria-haspopup="dialog">
+        <Button variant="primary" size="small" onClick={() => setEditing("new")} aria-haspopup="dialog" aria-label="New task">
           <Plus aria-hidden="true" />
           <span className="label">New task</span>
         </Button>

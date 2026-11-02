@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
@@ -290,7 +290,8 @@ export default function Workspace({ id, view, navigate, account }) {
                   screens.show("chat");
                 }}
               />
-              <InviteButton workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
+              <InviteButton kind="person" workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
+              <InviteButton kind="agent" workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
             </>
           )
         }
@@ -695,19 +696,25 @@ function NotifyRow() {
   );
 }
 
-// InviteButton: Invite a person or an agent, in a modal.
-function InviteButton({ workspace, account, members, call, className }) {
+const INVITE_KINDS = {
+  person: { title: "Invite a human", Icon: UserPlus },
+  agent: { title: "Invite an agent", Icon: Bot },
+};
+
+// InviteButton: Invite a human or an agent, in a modal.
+function InviteButton({ kind, workspace, account, members, call, className }) {
+  const { title, Icon } = INVITE_KINDS[kind];
   const [open, setOpen] = useState(false);
   const close = () => setOpen(false);
   return (
     <>
-      <button type="button" className={className} title="Invite a person or an agent" aria-haspopup="dialog" onClick={() => setOpen(true)}>
-        <UserPlus aria-hidden="true" />
-        <span className="label">Invite</span>
+      <button type="button" className={className} title={title} aria-haspopup="dialog" onClick={() => setOpen(true)}>
+        <Icon aria-hidden="true" />
+        <span className="label">{title}</span>
       </button>
       {open && (
-        <Dialog title="Invite a person or an agent" onClose={close} className="invite-dialog">
-          <Invite workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />
+        <Dialog title={title} onClose={close} className="invite-dialog">
+          <Invite kind={kind} workspaceId={workspace.id} account={account} members={members} call={call} onNavigate={close} />
         </Dialog>
       )}
     </>
@@ -720,7 +727,8 @@ function HeadExtras({ workspace, call, account, members, settingsLink }) {
   return (
     <>
       <span className="head-account">
-        <InviteButton workspace={workspace} account={account} members={members} call={call} className="button button-ghost button-icon" />
+        <InviteButton kind="person" workspace={workspace} account={account} members={members} call={call} className="button button-ghost button-icon" />
+        <InviteButton kind="agent" workspace={workspace} account={account} members={members} call={call} className="button button-ghost button-icon" />
         <ThemeSwitch />
         {account.user ? (
           <AccountMenu
@@ -767,9 +775,8 @@ function JoinCard({ workspaceId, account, onJoined }) {
 
 // Invite: people get an invite link (Settings → Invites has email invites,
 // expiry choices and revoking); agents get a single-use pass.
-function Invite({ workspaceId, account, members, call, onNavigate }) {
+function Invite({ kind, workspaceId, account, members, call, onNavigate }) {
   const member = Boolean(account.user && members.members.some((m) => m.user_id === account.user.id));
-  const [kind, setKind] = useState("person");
   if (!member) {
     return (
       <p className="pass-status muted">
@@ -778,21 +785,7 @@ function Invite({ workspaceId, account, members, call, onNavigate }) {
       </p>
     );
   }
-  return (
-    <>
-      <div className="seg invite-kind" role="group" aria-label="Invite">
-        {[
-          ["person", "A person"],
-          ["agent", "An agent"],
-        ].map(([k, label]) => (
-          <button key={k} type="button" aria-pressed={kind === k} onClick={() => setKind(k)}>
-            {label}
-          </button>
-        ))}
-      </div>
-      {kind === "person" ? <InvitePerson workspaceId={workspaceId} call={call} onNavigate={onNavigate} /> : <InviteAgent call={call} />}
-    </>
-  );
+  return kind === "person" ? <InvitePerson workspaceId={workspaceId} call={call} onNavigate={onNavigate} /> : <InviteAgent call={call} />;
 }
 
 // InvitePerson makes an invite link (48 hours, any number of people) to send
