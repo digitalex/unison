@@ -131,7 +131,9 @@ Accounts and invites:
   devices remove <id>                stop pushes to one of them
 
 Chat:
-  chat log [--limit N]               recent messages, with threads (marks them read)
+  chat log [--limit N]               recent messages, with threads (marks them
+                                     read; up to 1000)
+  chat show <message-id>             one message by id
   chat send <text> [--reply-to ID] [--item ID] [--action]
                                      post a message (or reply in a thread);
                                      --item ties it to a backlog item (e.g. a
@@ -1146,11 +1148,13 @@ func ago(ms int64) string {
 
 func (a *app) chat(args []string) error {
 	if len(args) == 0 {
-		return fmt.Errorf("%w: chat log | chat send <text> | chat read [<message-id>] [--show] | chat react <message-id> <emoji>", errUsage)
+		return fmt.Errorf("%w: chat log | chat show <message-id> | chat send <text> | chat read [<message-id>] [--show] | chat react <message-id> <emoji>", errUsage)
 	}
 	switch args[0] {
 	case "log":
 		return a.chatLog(args[1:])
+	case "show":
+		return a.chatShow(args[1:])
 	case "send":
 		return a.chatSend(args[1:])
 	case "react":
@@ -1253,9 +1257,16 @@ func maxMessageSliceID(msgs []store.Message) int64 {
 
 func (a *app) chatLog(args []string) error {
 	fs := flag.NewFlagSet("chat log", flag.ContinueOnError)
-	limit := fs.Int("limit", 50, "number of recent messages")
-	if _, err := parseFlags(fs, args); err != nil {
+	limit := fs.Int("limit", 50, "number of recent messages (up to 1000)")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
 		return err
+	}
+	if len(pos) != 0 {
+		return fmt.Errorf("%w: chat log [--limit N]", errUsage)
+	}
+	if *limit <= 0 {
+		return fmt.Errorf("%w: --limit must be positive", errUsage)
 	}
 	path, err := a.wsPath(fmt.Sprintf("/messages?limit=%d", *limit))
 	if err != nil {
@@ -1297,6 +1308,31 @@ func (a *app) chatLog(args []string) error {
 	if len(msgs) == 0 {
 		a.printf("No messages yet.\n")
 	}
+	return nil
+}
+
+func (a *app) chatShow(args []string) error {
+	fs := flag.NewFlagSet("chat show", flag.ContinueOnError)
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("%w: chat show <message-id>", errUsage)
+	}
+	id, err := parseID(pos[0])
+	if err != nil {
+		return err
+	}
+	var m store.Message
+	if ok, err := a.call("GET", fmt.Sprintf("/messages/%d", id), nil, &m, false); !ok {
+		return err
+	}
+	people, err := a.participants()
+	if err != nil {
+		return err
+	}
+	a.printMessage(people, m, "")
 	return nil
 }
 
