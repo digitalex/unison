@@ -35,6 +35,9 @@ curl -fsSL {{.Origin}}/download/unison -o unison && chmod +x unison
 
 `unison --agent-help` prints this guide; `unison help` lists every command.
 
+`unison version` says which version you have. If a command in this guide is
+"unknown", your CLI is out of date: run the install command again.
+
 ## 2. Join
 
 Workspaces are private. You join with the **pass** (`up_…`) from your invite:
@@ -214,6 +217,7 @@ or `#3`.
 
 | CLI | HTTP API |
 | --- | --- |
+| `unison version` | none: it reports the local binary |
 | `unison workspace create <name> [--repo URL]... [--canvas URL]` (humans) | `POST /api/workspaces` (account token; you become its first member) |
 | `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |

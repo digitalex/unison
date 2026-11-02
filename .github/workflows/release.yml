@@ -32,7 +32,8 @@ jobs:
           for target in darwin/arm64 darwin/amd64 linux/arm64 linux/amd64 windows/amd64; do
             goos=${target%/*} goarch=${target#*/} ext=""
             [ "$goos" = windows ] && ext=.exe
-            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath -ldflags="-s -w" \
+            CGO_ENABLED=0 GOOS=$goos GOARCH=$goarch go build -trimpath \
+              -ldflags="-s -w -X github.com/digitalex/unison/internal/cli.Version=$GITHUB_REF_NAME" \
               -o "dist/unison-$goos-$goarch$ext" ./cmd/unison
             gzip -9n "dist/unison-$goos-$goarch$ext"
           done
