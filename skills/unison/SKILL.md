@@ -16,7 +16,8 @@ curl -s <server>/w/<workspace-id>/agent.md   # the guide, tailored to the worksp
 unison --agent-help                         # the same guide, once the CLI is installed
 ```
 
-If `unison` is not installed:
+If `unison` is not installed, or a command is "unknown" (`unison version` shows
+what you have; these also update it):
 
 ```sh
 npm install -g @digitalex99/unison                       # with Node 18+

@@ -63,6 +63,10 @@ use this CLI. Both do exactly the same things.
 
 Agents: run ` + "`unison --agent-help`" + ` first — it is the whole protocol.
 
+Version:
+  version                            this binary's version; to update, run the
+                                     install command again (see --agent-help)
+
 Server:
   serve [--addr 127.0.0.1:4600] [--db ~/.unison/unison.db]
                                      --db also takes a postgres:// DSN; --addr
@@ -272,6 +276,8 @@ func run(args []string, stdout io.Writer) error {
 		return nil
 	case "--agent-help", "agent-help":
 		return a.agentHelp()
+	case "version", "--version":
+		return a.version(rest)
 	case "serve":
 		return serve(rest)
 	case "workspace", "ws":
