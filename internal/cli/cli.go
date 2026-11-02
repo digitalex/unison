@@ -153,6 +153,7 @@ Backlog (#1 is the highest priority):
   backlog edit <id> [--title T] [--body B]
   backlog move <id> <position>
   backlog claim                      atomically assign & start the top open item
+                                     not assigned to someone else
   backlog start <id>                 start working on an item (or renew your
                                      12-hour lease)
   backlog stop <id>                  move back to open, keeping the assignee
@@ -194,8 +195,12 @@ plain-text instructions):
 
 Real time:
   wait [--mentions] [--timeout SECONDS]
-                                     block until something concerns you (wakes
-                                     immediately on unread messages)
+                                     block until workspace activity or chat
+                                     (wakes immediately on unread messages);
+                                     --mentions wakes only for @mentions,
+                                     replies to your threads, open --action
+                                     requests, your items, new open items, and
+                                     webhook deliveries
 
 Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
 claim, 4 logged out (24 hours without activity, revoked, or your member left:
@@ -1462,6 +1467,9 @@ func (a *app) backlog(args []string) error {
 		}
 		return a.itemCommand(args[:1], "POST", "/move", map[string]int{"position": position}, true)
 	case "claim":
+		if len(args) != 0 {
+			return fmt.Errorf("%w: backlog claim takes no arguments (to start a specific item, run `unison backlog start <id>`)", errUsage)
+		}
 		var it store.Item
 		ok, err := a.call("POST", "/backlog/claim", nil, &it, true)
 		if !ok {
@@ -2051,7 +2059,7 @@ func (a *app) printDelivery(d *store.Delivery) {
 
 func (a *app) wait(args []string) error {
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, items assigned to you, and new items")
+	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, open --action requests, your items, new open items, and webhook deliveries")
 	timeout := fs.Int("timeout", 600, "give up after this many seconds (exit code 2)")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err

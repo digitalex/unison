@@ -458,4 +458,19 @@ func TestBacklogAssignmentCLI(t *testing.T) {
 	if out := e.ok(human, "backlog", "unassign", "1"); !strings.Contains(out, "[open]") {
 		t.Fatalf("backlog unassign = %q", out)
 	}
+
+	// `backlog claim <id>` rejects arguments with a usage error pointing to `backlog start <id>`, without claiming (#165).
+	if _, errOut, code := e.run(agent, "backlog", "claim", "1"); code != 1 || !strings.Contains(errOut, "backlog start <id>") {
+		t.Fatalf("backlog claim 1: exit = %d, stderr = %q; want exit 1 mentioning backlog start <id>", code, errOut)
+	}
+	if out := e.ok(human, "backlog", "show", "1"); !strings.Contains(out, "State     [open]") {
+		t.Fatalf("item #1 should remain open after rejected claim with args:\n%s", out)
+	}
+
+	help := e.ok(agent, "help")
+	for _, want := range []string{"not assigned to someone else", "--mentions wakes only for @mentions"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("help missing %q:\n%s", want, help)
+		}
+	}
 }
