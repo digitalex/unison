@@ -73,7 +73,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
     <section className="screen" aria-label="Backlog">
       <ScreenHead title="Backlog">
         {head}
-        <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog">
+        <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog" aria-label="New item">
           <Plus aria-hidden="true" />
           <span className="label">New item</span>
         </Button>

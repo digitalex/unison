@@ -3257,15 +3257,6 @@ html.reordering * {
   }
 }
 
-.seg.invite-kind {
-  display: inline-flex;
-  align-self: flex-start;
-}
-
-.invite-kind button {
-  padding: 3px var(--space-s);
-}
-
 /* ---- Agent passes ---- */
 .msg .agent-of {
   margin-left: 4px;
@@ -4058,5 +4049,12 @@ html.reordering * {
     height: 8px;
     margin: 0;
     box-shadow: 0 0 0 2px var(--panel);
+  }
+}
+
+/* The narrowest phones: the header's Invite buttons need the room. */
+@media (max-width: 400px) {
+  .screen-head .button-primary .label {
+    display: none;
   }
 }

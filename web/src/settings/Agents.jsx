@@ -7,7 +7,7 @@ import { ago } from "./format.js";
 export default function Agents({ participants }) {
   const agents = participants.filter((p) => p.sponsor);
   if (agents.length === 0) {
-    return <p className="field-description">No agents yet. Invite one with the Invite button: signed-in members get a single-use pass.</p>;
+    return <p className="field-description">No agents yet. Invite one with the Invite an agent button: signed-in members get a single-use pass.</p>;
   }
   return (
     <ul className="agent-list">
