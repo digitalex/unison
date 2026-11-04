@@ -30,11 +30,14 @@ function isDormant(p, now) {
   return agentStatus(p, now) || !p.last_seen_at || now - p.last_seen_at >= DORMANT_WINDOW_MS;
 }
 
-// roster is who the People list shows: everyone but agents (other than
-// you) not seen in AGENT_GONE_MS.
+// roster is who the Humans and Agents lists show: everyone but agents (other
+// than you) not seen in AGENT_GONE_MS.
 function roster(participants, me, now = Date.now()) {
   return participants.filter((p) => !p.sponsor || p.id === me?.id || now - (p.last_seen_at || 0) < AGENT_GONE_MS);
 }
+
+// Agents are the participants that joined with a pass, for a sponsor.
+const KINDS = { humans: (p) => !p.sponsor, agents: (p) => Boolean(p.sponsor) };
 
 // lastSeen is "last seen 12m ago", for people who aren't active.
 function lastSeen(p) {
@@ -278,9 +281,11 @@ export default function Workspace({ id, view, navigate, account }) {
         participants={roster(participants, me)}
         reviews={reviews}
         people={
-          joined && (
+          joined &&
+          ((kind) => (
             <>
               <People
+                kind={kind}
                 participants={participants}
                 me={me}
                 call={call}
@@ -290,10 +295,9 @@ export default function Workspace({ id, view, navigate, account }) {
                   screens.show("chat");
                 }}
               />
-              <InviteButton kind="person" workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
-              <InviteButton kind="agent" workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
+              <InviteButton kind={kind === "agents" ? "agent" : "person"} workspace={workspace} account={account} members={members} call={call} className="nav-link nav-invite" />
             </>
-          )
+          ))
         }
       />
       {view === "settings" && joined ? (
@@ -519,7 +523,7 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
-// here (people, with Invite), pull requests pending review (with a GitHub
+// here (humans and agents, each with Invite), pull requests pending review (with a GitHub
 // token, #127), links out (canvas, repositories), then settings and your
 // account at the bottom.
 function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews }) {
@@ -528,16 +532,17 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
   const isLowHeight = height < LOW_HEIGHT_THRESHOLD;
   const isVeryLowHeight = height < VERY_LOW_HEIGHT_THRESHOLD;
 
-  const [userPeopleOpen, setUserPeopleOpen] = useState(null);
+  const [userPeopleOpen, setUserPeopleOpen] = useState({});
   const [userLinksOpen, setUserLinksOpen] = useState(null);
   const [reviewsOpen, setReviewsOpen] = useState(true);
 
   // If the user hasn't explicitly toggled, collapse some sections by default:
-  // low height collapses people first; very low height collapses links too.
-  const peopleOpen = userPeopleOpen !== null ? userPeopleOpen : !isLowHeight;
+  // low height collapses humans and agents first; very low height collapses
+  // links too.
+  const peopleOpen = (kind) => userPeopleOpen[kind] ?? !isLowHeight;
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
 
-  const peopleCount = participants ? participants.length : null;
+  const peopleCount = (kind) => (participants ? participants.filter(KINDS[kind]).length : null);
   const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
   const needsToken = joined && !workspace.has_github_token;
 
@@ -575,18 +580,22 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             ))}
           </ul>
         )}
-        {people && (
-          <section className="sidebar-section" aria-label="People">
-            <SectionHeading
-              title="People"
-              count={peopleCount}
-              open={peopleOpen}
-              onToggle={() => setUserPeopleOpen(!peopleOpen)}
-              ariaControls="sidebar-people"
-            />
-            {peopleOpen && <div id="sidebar-people">{people}</div>}
-          </section>
-        )}
+        {people &&
+          [
+            ["humans", "Humans"],
+            ["agents", "Agents"],
+          ].map(([kind, title]) => (
+            <section key={kind} className="sidebar-section" aria-label={title}>
+              <SectionHeading
+                title={title}
+                count={peopleCount(kind)}
+                open={peopleOpen(kind)}
+                onToggle={() => setUserPeopleOpen({ ...userPeopleOpen, [kind]: !peopleOpen(kind) })}
+                ariaControls={`sidebar-${kind}`}
+              />
+              {peopleOpen(kind) && <div id={`sidebar-${kind}`}>{people(kind)}</div>}
+            </section>
+          ))}
         {(reviews || needsToken) && (
           <section className="sidebar-section" aria-label="Pending review">
             <SectionHeading
@@ -877,13 +886,13 @@ function byName(participants) {
   return [...participants].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id - b.id);
 }
 
-// People: who's here, one row per participant (an account has one per
+// People: who's here among the humans or the agents (kind), one row per participant (an account has one per
 // workspace, #99), with a presence dot and their status. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
 // at the end of the list; hovering one says when they were last seen. Agents
 // not seen in 24 hours aren't listed (#125). Your own row sets your status; anyone else's starts a
 // chat message to them (@Name).
-function People({ participants, me, call, onError, onMention }) {
+function People({ kind, participants, me, call, onError, onMention }) {
   const setStatus = async () => {
     const status = window.prompt("Your status", me?.status || "");
     if (status === null) return;
@@ -901,7 +910,7 @@ function People({ participants, me, call, onError, onMention }) {
 
   const activePeople = [];
   const dormantPeople = [];
-  for (const p of byName(roster(participants, me, now))) {
+  for (const p of byName(roster(participants, me, now).filter(KINDS[kind]))) {
     if (isDormant(p, now)) {
       dormantPeople.push(p);
     } else {
@@ -910,7 +919,7 @@ function People({ participants, me, call, onError, onMention }) {
   }
 
   return (
-    <ul className="nav-list people" aria-label="Who's here">
+    <ul className="nav-list people" aria-label={kind === "agents" ? "Agents here" : "Humans here"}>
       {activePeople.map((p) => {
         // Logged-out (or revoked) agents are never shown as active.
         const active = now - p.last_seen_at < ACTIVE_WINDOW_MS && !agentStatus(p, now);
