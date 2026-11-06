@@ -30,13 +30,30 @@ type Config struct {
 	path string
 }
 
+// workingDir returns the current working directory, falling back to $PWD when
+// the open "." directory descriptor has gone stale (e.g. after a worktree or
+// snapshot directory is recreated underneath a long-running shell) but the
+// path in $PWD still exists on disk.
+func workingDir() (string, error) {
+	dir, err := os.Getwd()
+	if err == nil {
+		return dir, nil
+	}
+	if pwd := os.Getenv("PWD"); filepath.IsAbs(pwd) {
+		if info, statErr := os.Stat(pwd); statErr == nil && info.IsDir() {
+			return filepath.Clean(pwd), nil
+		}
+	}
+	return "", err
+}
+
 // findConfig returns UNISON_CONFIG, or the nearest .unison.json walking up
 // from the working directory, or "" if there is none.
 func findConfig() string {
 	if p := os.Getenv("UNISON_CONFIG"); p != "" {
 		return p
 	}
-	dir, err := os.Getwd()
+	dir, err := workingDir()
 	if err != nil {
 		return ""
 	}
@@ -73,7 +90,11 @@ func loadConfig(path string) (*Config, error) {
 
 func (c *Config) save() error {
 	if c.path == "" {
-		c.path = ConfigFile
+		if dir, err := workingDir(); err == nil {
+			c.path = filepath.Join(dir, ConfigFile)
+		} else {
+			c.path = ConfigFile
+		}
 	}
 	raw, err := json.MarshalIndent(c, "", "  ")
 	if err != nil {
