@@ -464,3 +464,22 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 		t.Errorf("Ada's account missing after workspace deletion: %v", err)
 	}
 }
+
+// TestGateStoreErrorIsNot401 checks that a database outage (Cloud SQL
+// maintenance, #285) is a retryable 500, not a 401 telling clients their
+// credential is gone: `unison wait` exits 4 (logged out) on a 401.
+func TestGateStoreErrorIsNot401(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := t.Context()
+	alex, _ := e.st.LoginWithProvider(ctx, "github", store.Profile{Subject: "alex", Name: "Alex"})
+	ws, _, _ := e.st.CreateWorkspaceFor(ctx, alex.ID, "Private", "", "")
+	_, partTok, _, _, _ := e.st.JoinAsUser(ctx, ws.ID, alex.ID, "Alex", "")
+	userTok, _, _ := e.st.CreateSession(ctx, alex.ID, store.SessionCLI, "")
+	e.st.Close()
+
+	for name, tok := range map[string]string{"participant token": partTok, "user token": userTok} {
+		if resp, out := e.do("GET", "/api/workspaces/"+ws.ID+"/me", "", withBearer(tok)); resp.StatusCode != 500 {
+			t.Errorf("%s with the database down = %d %v, want 500", name, resp.StatusCode, out)
+		}
+	}
+}
