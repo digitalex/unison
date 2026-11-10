@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
-import { Textarea } from "./ui/Input.jsx";
+import { ImageTextarea } from "./images.jsx";
 import Markdown, { refersToPR } from "./Markdown.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
@@ -407,7 +407,7 @@ function Composer({ parent, items, send: post, mention, onMentioned, prefill, pl
 
   return (
     <form className="composer" onSubmit={send}>
-      <Textarea
+      <ImageTextarea
         ref={composer}
         aria-label={parent ? `Reply in thread #${parent.id}` : "Message"}
         value={text}

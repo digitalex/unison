@@ -146,6 +146,12 @@ Chat:
                                      -1, heart, muscle, 100)
   activity [--limit N]               recent workspace activity (items, joins)
 
+Images (screenshots to show inline in chat, items and comments):
+  image upload <file> [--name N]     upload a PNG, JPEG, GIF or WebP (up to 5 MiB);
+                                     prints ![name](url) to paste into Markdown
+  image save <id-or-url> <dest>      download one (12, #12, its /api/… path or
+                                     full URL); dest - writes to stdout
+
 Actions (chat messages sent with --action that ask you to act):
   actions                            what asks you and isn't done yet
   done <message-id> [--undo]         mark one done (replying in its thread or
@@ -325,6 +331,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.chat(rest)
 	case "activity":
 		return a.activity(rest)
+	case "image", "images":
+		return a.image(rest)
 	case "backlog":
 		return a.backlog(rest)
 	case "webhook", "webhooks":

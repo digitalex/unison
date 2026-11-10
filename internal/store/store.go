@@ -458,6 +458,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
 		`DELETE FROM webhooks WHERE workspace_id = ?`,
 		`DELETE FROM workspace_repos WHERE workspace_id = ?`,
+		`DELETE FROM images WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,
 		`DELETE FROM item_prs WHERE workspace_id = ?`,

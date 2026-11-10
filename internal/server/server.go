@@ -174,6 +174,8 @@ func (s *Server) routes() {
 	h("GET "+ws+"/webhooks/{id}/secret", s.auth(s.webhookSecret))
 	h("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
 	h("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
+	h("POST "+ws+"/images", s.auth(s.uploadImage))
+	h("GET "+ws+"/images/{id}", s.getImage)
 	h("GET "+ws+"/events", s.events)
 	h("GET "+ws+"/activity", s.listActivity)
 	h("GET "+ws+"/stream", s.stream)

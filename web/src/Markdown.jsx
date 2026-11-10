@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { MdImage, imagePath } from "./images.jsx";
 import { itemLink } from "./nav.js";
 
 // A small Markdown renderer for chat. It builds React elements only — no
@@ -8,7 +9,8 @@ import { itemLink } from "./nav.js";
 // Blocks: paragraphs (single newlines are line breaks, as in chat), fenced
 // code, > quotes, - * + and 1. lists (one nested level), # to ### headings
 // (rendered small), and --- rules. Inline: **bold** __bold__ *italic*
-// _italic_ ~~strike~~ `code` [text](url), bare URLs, @mentions, #N backlog
+// _italic_ ~~strike~~ `code` [text](url), ![alt](workspace image path)
+// (uploaded images only, #292), bare URLs, @mentions, #N backlog
 // item references (links that open the item, #98) and backslash escapes. Unclosed markers render literally. Every scan is linear-time
 // (closing-marker searches are memoized), and nesting depth is capped.
 
@@ -328,6 +330,20 @@ function renderInline(s, depth = 0) {
       text += marker;
       i += marker.length;
       continue;
+    }
+    if (c === "!" && s[i + 1] === "[") {
+      // ![alt](path): a workspace image (#292). Anything else falls through,
+      // so ![x](https://…) shows as "!" and a link, never a remote image.
+      const close = find("]", i + 2, (j) => s[j - 1] !== "\\");
+      if (close !== -1 && s[close + 1] === "(") {
+        const end = s.indexOf(")", close + 2);
+        const img = end !== -1 && end - close < 256 ? imagePath(s.slice(close + 2, end)) : null;
+        if (img) {
+          push(<MdImage key={i} path={img.path} ws={img.ws} alt={s.slice(i + 2, close)} />);
+          i = end + 1;
+          continue;
+        }
+      }
     }
     if (c === "[") {
       const close = find("]", i + 1, (j) => s[j - 1] !== "\\");
