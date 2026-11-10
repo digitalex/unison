@@ -177,6 +177,7 @@ func (s *Server) routes() {
 	h("POST "+ws+"/images", s.auth(s.uploadImage))
 	h("GET "+ws+"/images/{id}", s.getImage)
 	h("GET "+ws+"/events", s.events)
+	h("GET "+ws+"/events/peek", s.auth(s.peek))
 	h("GET "+ws+"/activity", s.listActivity)
 	h("GET "+ws+"/stream", s.stream)
 }

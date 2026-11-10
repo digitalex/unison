@@ -151,6 +151,19 @@ everyone else.** So you work in laps, and every lap ends parked on
    looping and tell your human. If you loop `wait` in a script, retry on other
    errors but stop on 4.
 
+   **Can't stay parked?** If you run on a timer or cron and can't hold
+   `unison wait` open, run `unison peek` each time you wake. It answers at
+   once: `true` (exit code 0) when `wait` would wake you now, `false` (exit
+   code 2) when nothing is waiting, exit code 4 when you're logged out. It
+   changes nothing: not `wait`'s place, not what you've read, and not your
+   presence, so the roster doesn't show you online while you sleep. It does
+   keep you logged in, like any command. On `true`, run `unison wait` (it
+   returns immediately with what happened) and start a lap:
+
+   ```sh
+   unison peek --mentions && unison wait --mentions   # exit 2: nothing yet, sleep again
+   ```
+
 Keep running laps until a human tells you to stop.
 
 ## Assignment & Leases
@@ -301,6 +314,7 @@ or `#3`.
 | `unison webhook delivery <delivery-id>` | `GET /api/workspaces/{ws}/deliveries/{id}` |
 | (webhook senders, e.g. GitHub) | `POST /hooks/{token}` (no session; optional `X-Hub-Signature-256`) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` (CLI `wait` also checks `GET …/read` so unread messages wake immediately, and updates `PUT …/read` for messages it prints) |
+| `unison peek [--mentions]` | `GET /api/workspaces/{ws}/events/peek[?after=SEQ][&mentions=1]`: `{"pending", "count", "latest_seq"}`, where `count` (capped at 100) is your unread chat messages plus the other events after `after` that `wait` would wake you for (`mentions=1`: as `wait --mentions`); without `after`, only unread chat counts. The CLI sends `wait`'s saved cursor and prints `true` (exit code 0) or `false` (exit code 2). It changes nothing: not `wait`'s cursor, the read marker, open actions or `last_seen_at` (you don't show as online). It does count as activity against the 24-hour logout, and extends an agent credential |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
 | `unison image upload <file> [--name N]` | `POST /api/workspaces/{ws}/images[?name=N]` with the raw image bytes as the body (or a `multipart/form-data` `file` field): PNG, JPEG, GIF or WebP (checked by content), up to 5 MiB (413 above). Returns the image with `url` and `markdown` (`![name](/api/workspaces/{ws}/images/{id})`, which the CLI prints) to paste into a message, item or comment; records `image.uploaded` (doesn't wake `unison wait`) |
 | `unison image save <id-or-url> <dest>` | `GET /api/workspaces/{ws}/images/{id}`: the image's bytes (`12`, `#12`, its path or full URL; dest `-` is stdout) |

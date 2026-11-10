@@ -95,7 +95,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 			return nil
 		}
 		if s.authCfg.Open {
-			s.touch(ctx, p)
+			s.seen(r, p)
 			s.markActive(r, p)
 			return &access{participant: p}
 		}
@@ -116,7 +116,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, badTokenMessage)
 			return nil
 		}
-		s.touch(ctx, p)
+		s.seen(r, p)
 		s.markActive(r, p)
 		return &access{participant: p}
 	}
@@ -157,7 +157,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 		p = mp
 	}
 	if p != nil {
-		s.touch(ctx, p)
+		s.seen(r, p)
 	}
 	return &access{participant: p, user: a.user}
 }
