@@ -54,3 +54,30 @@ func TestReposAPI(t *testing.T) {
 		t.Errorf("PATCH repo_url = %d %v", status, got)
 	}
 }
+
+// TestProductURLAPI: PATCH …/{ws} sets and clears product_url (an http(s)
+// URL), and the workspace returns it.
+func TestProductURLAPI(t *testing.T) {
+	ts, st := newServer(t)
+	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
+	_, token, _, _ := joinMember(t, st, ws.ID, "Ada", "")
+	url := ts.URL + "/api/workspaces/" + ws.ID
+	if status, got := call(t, "GET", url, token, ""); status != http.StatusOK || got["product_url"] != "" {
+		t.Fatalf("new workspace = %d %v", status, got)
+	}
+	if status, got := call(t, "PATCH", url, token, `{"product_url":"https://unison.example.com"}`); status != http.StatusOK || got["product_url"] != "https://unison.example.com" {
+		t.Fatalf("set product_url = %d %v", status, got)
+	}
+	if status, got := call(t, "PATCH", url, token, `{"product_url":"unison.example.com"}`); status != http.StatusBadRequest || !strings.Contains(got["error"].(string), "product URL must be an http(s) URL") {
+		t.Errorf("invalid product_url = %d %v", status, got)
+	}
+	if status, got := call(t, "PATCH", url, token, `{"name":"Renamed"}`); status != http.StatusOK || got["product_url"] != "https://unison.example.com" {
+		t.Errorf("rename = %d %v", status, got)
+	}
+	if status, got := call(t, "GET", url, token, ""); status != http.StatusOK || got["product_url"] != "https://unison.example.com" {
+		t.Errorf("workspace = %d %v", status, got)
+	}
+	if status, got := call(t, "PATCH", url, token, `{"product_url":""}`); status != http.StatusOK || got["product_url"] != "" {
+		t.Errorf("clear product_url = %d %v", status, got)
+	}
+}

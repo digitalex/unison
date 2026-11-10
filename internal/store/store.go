@@ -54,7 +54,10 @@ type Workspace struct {
 	Name      string `json:"name"`
 	RepoURL   string `json:"repo_url"` // The first repository's URL (legacy).
 	CanvasURL string `json:"canvas_url"`
-	CreatedAt int64  `json:"created_at"`
+	// ProductURL is where the product the workspace builds is deployed
+	// (#298); "" if none.
+	ProductURL string `json:"product_url"`
+	CreatedAt  int64  `json:"created_at"`
 	// OwnerID is the account that owns the workspace (#296): its creator,
 	// or for workspaces created without one, the first member. Only the
 	// owner may delete the workspace or remove other members. 0 while the
@@ -254,12 +257,12 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // workspaceCols are read by scanWorkspace; the last says whether a GitHub
 // token is set without reading it.
-const workspaceCols = `id, name, repo_url, canvas_url, created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
+const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
 	var hasToken int64
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -394,6 +397,9 @@ type WorkspacePatch struct {
 	Name      *string `json:"name"`
 	RepoURL   *string `json:"repo_url"`
 	CanvasURL *string `json:"canvas_url"`
+	// ProductURL sets where the product is deployed (#298): an http(s) URL,
+	// or "" to remove it.
+	ProductURL *string `json:"product_url"`
 	// GitHubToken sets the token the server reads pull requests with (#127);
 	// "" removes it.
 	GitHubToken *string `json:"github_token"`
@@ -418,6 +424,17 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 		}
 		if _, err := t.Exec(`UPDATE workspaces SET name = ?, canvas_url = ? WHERE id = ?`, w.Name, w.CanvasURL, id); err != nil {
 			return err
+		}
+		if p.ProductURL != nil {
+			var product any // NULL when removed.
+			if strings.TrimSpace(*p.ProductURL) != "" {
+				if product, err = httpURL("product", *p.ProductURL); err != nil {
+					return err
+				}
+			}
+			if _, err := t.Exec(`UPDATE workspaces SET product_url = ? WHERE id = ?`, product, id); err != nil {
+				return err
+			}
 		}
 		if p.GitHubToken != nil {
 			var token any // NULL when removed.

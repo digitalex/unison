@@ -12,7 +12,7 @@ import Webhooks from "./Webhooks.jsx";
 // workspace's own settings: personal ones (theme, desktop notifications)
 // are in your profile (/me) and the account menu (#131).
 const SECTIONS = [
-  { id: "general", title: "General", description: "The workspace's name and its isocan design canvas." },
+  { id: "general", title: "General", description: "The workspace's name, its isocan design canvas and where its product is deployed." },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. The owner can remove members and delete the workspace; anyone else can leave." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite an agent button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },

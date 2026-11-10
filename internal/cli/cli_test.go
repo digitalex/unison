@@ -255,6 +255,26 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Repos      1   https://github.com/digitalex/unison\n") || !strings.Contains(out, "unison-web") {
 		t.Errorf("workspace show = %q", out)
 	}
+	// The product URL (#298): unset by default, set and cleared with
+	// `workspace set --product`, and shown in the guide while set.
+	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Product    (not set)\n") {
+		t.Errorf("workspace show = %q", out)
+	}
+	if out := e.ok(agent, "--agent-help"); strings.Contains(out, "| Product (deployed) |") {
+		t.Errorf("agent guide lists a product URL that isn't set:\n%s", out)
+	}
+	if _, errOut, code := e.run(agent, "workspace", "set", "--product", "unison.example.com"); code != 1 || !strings.Contains(errOut, "product URL must be an http(s) URL") {
+		t.Errorf("workspace set --product unison.example.com: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "workspace", "set", "--product", "https://unison.example.com"); !strings.Contains(out, "Product    https://unison.example.com\n") {
+		t.Errorf("workspace set --product = %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Product (deployed) | https://unison.example.com |\n") {
+		t.Errorf("agent guide lacks the product URL:\n%s", out)
+	}
+	if out := e.ok(agent, "workspace", "set", "--product", ""); !strings.Contains(out, "Product    (not set)\n") {
+		t.Errorf("workspace set --product \"\" = %q", out)
+	}
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison-web |") {
 		t.Errorf("agent help lacks the repositories:\n%s", out)
 	}

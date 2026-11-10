@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, FolderGit2, Globe, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
@@ -530,7 +530,7 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
-// token, #127), links out (canvas, repositories), then settings and your
+// token, #127), links out (product, canvas, repositories), then settings and your
 // account at the bottom.
 function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews }) {
   const repos = workspace.repos || [];
@@ -549,7 +549,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
 
   const peopleCount = (kind) => (participants ? participants.filter(KINDS[kind]).length : null);
-  const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
+  const linksCount = (workspace.product_url ? 1 : 0) + (workspace.canvas_url ? 1 : 0) + repos.length;
   const needsToken = joined && !workspace.has_github_token;
 
   return (
@@ -614,7 +614,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             {reviewsOpen && (reviews ? <PendingReviewList reviews={reviews} id="sidebar-reviews" /> : <PendingReviewSetup workspaceId={workspace.id} id="sidebar-reviews" />)}
           </section>
         )}
-        {(workspace.canvas_url || repos.length > 0) && (
+        {linksCount > 0 && (
           <section className="sidebar-section" aria-label="Links">
             <SectionHeading
               title="Links"
@@ -625,6 +625,15 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             />
             {linksOpen && (
               <ul id="sidebar-links" className="nav-list nav-list-small">
+                {workspace.product_url && (
+                  <li>
+                    <a className="nav-link" href={workspace.product_url} target="_blank" rel="noreferrer" title={`Product: ${workspace.product_url}`}>
+                      <Globe aria-hidden="true" />
+                      Product
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                  </li>
+                )}
                 {workspace.canvas_url && (
                   <li>
                     <a className="nav-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">

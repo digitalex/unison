@@ -2,6 +2,7 @@ package store
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -140,5 +141,39 @@ func TestRepoURLMigration(t *testing.T) {
 	defer s.Close()
 	if ws, _ := s.GetWorkspace(ctx, legacy.ID); len(ws.Repos) != 0 || ws.RepoURL != "" {
 		t.Errorf("removed repo came back after a reboot: %+v", ws)
+	}
+}
+
+// TestWorkspaceProductURL: the product URL is an http(s) URL or nothing; ""
+// removes it, and other edits leave it alone.
+func TestWorkspaceProductURL(t *testing.T) {
+	s, _, a, _ := setup(t)
+	ctx := context.Background()
+	if ws, _ := s.GetWorkspace(ctx, a.WorkspaceID); ws.ProductURL != "" {
+		t.Fatalf("a new workspace's product URL = %q", ws.ProductURL)
+	}
+	ws, evs, err := s.UpdateWorkspace(ctx, a.WorkspaceID, a.ID, WorkspacePatch{ProductURL: ptr("  https://unison.example.com/app ")})
+	if err != nil || ws.ProductURL != "https://unison.example.com/app" {
+		t.Fatalf("set product URL = %+v, %v", ws, err)
+	}
+	var seen Workspace
+	if len(evs) != 1 || evs[0].Type != "workspace.updated" || json.Unmarshal(evs[0].Data, &seen) != nil || seen.ProductURL != ws.ProductURL {
+		t.Errorf("events = %+v", evs)
+	}
+	for _, bad := range []string{"unison.example.com", "ftp://unison.example.com", "https://", "javascript:alert(1)"} {
+		if _, _, err := s.UpdateWorkspace(ctx, a.WorkspaceID, a.ID, WorkspacePatch{ProductURL: ptr(bad)}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("product URL %q: err = %v, want ErrInvalid", bad, err)
+		}
+	}
+	// Other edits keep it, and it lists with the workspace.
+	ws, _, err = s.UpdateWorkspace(ctx, a.WorkspaceID, a.ID, WorkspacePatch{Name: ptr("Renamed")})
+	if err != nil || ws.Name != "Renamed" || ws.ProductURL != "https://unison.example.com/app" {
+		t.Errorf("after a rename = %+v, %v", ws, err)
+	}
+	if all, _ := s.ListWorkspaces(ctx); len(all) != 1 || all[0].ProductURL != "https://unison.example.com/app" {
+		t.Errorf("ListWorkspaces = %+v", all)
+	}
+	if ws, _, err = s.UpdateWorkspace(ctx, a.WorkspaceID, a.ID, WorkspacePatch{ProductURL: ptr(" ")}); err != nil || ws.ProductURL != "" {
+		t.Errorf("clearing the product URL = %+v, %v", ws, err)
 	}
 }

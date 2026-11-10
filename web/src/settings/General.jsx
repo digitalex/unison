@@ -3,16 +3,16 @@ import Button from "../ui/Button.jsx";
 import Field from "../ui/Field.jsx";
 import { Input } from "../ui/Input.jsx";
 
-// Settings → General: the workspace's name and canvas URL.
+// Settings → General: the workspace's name, canvas URL and product URL.
 export default function General({ workspace, call, onError }) {
-  const saved = { name: workspace.name, canvas_url: workspace.canvas_url };
+  const saved = { name: workspace.name, canvas_url: workspace.canvas_url, product_url: workspace.product_url || "" };
   const [form, setForm] = useState(saved);
   const [status, setStatus] = useState("");
-  const dirty = form.name !== saved.name || form.canvas_url !== saved.canvas_url;
+  const dirty = form.name !== saved.name || form.canvas_url !== saved.canvas_url || form.product_url !== saved.product_url;
   // Follow edits made elsewhere (live updates) while nothing is typed here.
   useEffect(() => {
     if (!dirty) setForm(saved);
-  }, [workspace.name, workspace.canvas_url]);
+  }, [workspace.name, workspace.canvas_url, workspace.product_url]);
   const save = async (e) => {
     e.preventDefault();
     try {
@@ -36,6 +36,9 @@ export default function General({ workspace, call, onError }) {
       </Field>
       <Field label="Canvas URL">
         <Input placeholder="https://isocan.io/p/…" {...field("canvas_url")} />
+      </Field>
+      <Field label="Product URL">
+        <Input type="url" placeholder="https://example.com" {...field("product_url")} />
       </Field>
       <div className="actions-row">
         <Button variant="primary" type="submit" disabled={!dirty}>
