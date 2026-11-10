@@ -10,7 +10,7 @@ import (
 )
 
 // TestAgentLoggedOut: an agent idle past 24 hours gets the reason and exit
-// code 4 from every command, `wait` included, so loops stop; its human is
+// code 4 from every command, `wait` and `peek` included, so loops stop; its human is
 // unaffected.
 func TestAgentLoggedOut(t *testing.T) {
 	e := newTestEnv(t)
@@ -27,7 +27,7 @@ func TestAgentLoggedOut(t *testing.T) {
 
 	later := time.Now().Add(store.AgentIdleTimeout + time.Minute)
 	e.st.SetClock(func() time.Time { return later })
-	for _, cmd := range [][]string{{"wait", "--timeout", "30"}, {"chat", "send", "still here?"}, {"backlog"}} {
+	for _, cmd := range [][]string{{"wait", "--timeout", "30"}, {"peek"}, {"chat", "send", "still here?"}, {"backlog"}} {
 		_, errOut, code := e.run(agent, cmd...)
 		if code != exitLoggedOut || !strings.Contains(errOut, "logged out after 24 hours without any activity") || !strings.Contains(errOut, "exit code 4") {
 			t.Errorf("%v: exit %d, stderr %q", cmd, code, errOut)

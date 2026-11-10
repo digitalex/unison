@@ -664,6 +664,20 @@ func (s *Store) Touch(ctx context.Context, id int64) error {
 	return err
 }
 
+// ExtendCredential slides an agent credential's expiry AgentCredentialTTL
+// ahead, as Touch does, without marking the participant seen: for requests
+// that must not show presence (a peek). Writes are throttled to one a
+// minute; credentials that never expire are left alone.
+func (s *Store) ExtendCredential(ctx context.Context, p *Participant) error {
+	expires := s.nowMillis() + AgentCredentialTTL.Milliseconds()
+	if p.TokenExpiresAt == 0 || expires-p.TokenExpiresAt < activityResolution.Milliseconds() {
+		return nil
+	}
+	p.TokenExpiresAt = expires
+	_, err := s.db.ExecContext(ctx, `UPDATE participants SET token_expires_at = ? WHERE id = ? AND token_expires_at IS NOT NULL`, expires, p.ID)
+	return err
+}
+
 // ListParticipants returns a workspace's participants, most recently seen
 // first.
 func (s *Store) ListParticipants(ctx context.Context, wsID string) ([]Participant, error) {
@@ -824,6 +838,13 @@ func clampLimit(limit, def, maxLimit int) int {
 func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
 	limit = clampLimit(limit, 200, 1000)
 	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
+}
+
+// MessagesAfter returns up to limit messages (default 200, clamped to 1000)
+// with an id above after, oldest first.
+func (s *Store) MessagesAfter(ctx context.Context, wsID string, after int64, limit int) ([]Message, error) {
+	limit = clampLimit(limit, 200, 1000)
+	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.id > ? ORDER BY m.id LIMIT ?`, wsID, after, limit)))
 }
 
 // withDetails returns a function that fills in the reactions and actions

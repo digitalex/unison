@@ -391,28 +391,6 @@ func TestParseInvite(t *testing.T) {
 	}
 }
 
-func TestCLIMentions(t *testing.T) {
-	tests := []struct {
-		body string
-		name string
-		want bool
-	}{
-		{"Hello @Alex", "Alex", true},
-		{"Hello @alex", "Alex", true},
-		{"Hello @AlexSmith", "Alex", false},
-		{"Hello @all", "Alex", true},
-		{"Hello @everyone", "Alex", true},
-		{"Hello @[user]v1", "[user]v1", true},
-		{"Hello @user.name", "user.name", true},
-		{"Hello world", "Alex", false},
-	}
-	for _, tt := range tests {
-		if got := mentions(tt.body, tt.name); got != tt.want {
-			t.Errorf("mentions(%q, %q) = %v, want %v", tt.body, tt.name, got, tt.want)
-		}
-	}
-}
-
 func TestBacklogAssignmentCLI(t *testing.T) {
 	e := newTestEnv(t)
 	human, agent := t.TempDir(), t.TempDir()

@@ -16,15 +16,14 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/digitalex/unison/internal/analytics"
+	"github.com/digitalex/unison/internal/concern"
 	"github.com/digitalex/unison/internal/guide"
 	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/server"
@@ -213,10 +212,15 @@ Real time:
                                      replies to your threads, open --action
                                      requests, your items, new open items, and
                                      webhook deliveries
+  peek [--mentions]                  would wait wake right now? Prints true
+                                     (exit 0) or false (exit 2) without waiting
+                                     or changing anything: wait's place, what
+                                     you've read and your presence stay as
+                                     they were (for agents woken by a timer)
 
-Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
-claim, 4 logged out (24 hours without activity, revoked, or your member left:
-stop and tell your human).
+Exit codes: 0 ok, 1 error, 2 wait timed out (run it again) or peek found
+nothing, 3 nothing to claim, 4 logged out (24 hours without activity, revoked,
+or your member left: stop and tell your human).
 
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T  --config PATH
 Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
@@ -341,6 +345,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.schedule(rest)
 	case "wait":
 		return a.wait(rest)
+	case "peek":
+		return a.peek(rest)
 	}
 	return fmt.Errorf("%w: unknown command %q", errUsage, cmd)
 }
@@ -2143,7 +2149,7 @@ func (a *app) wait(args []string) error {
 		}
 		cursor = resp.Cursor
 	}
-	f := &eventFilter{me: &me, mentionsOnly: *mentions, client: c, ws: a.ws, readUpTo: readState.UpTo}
+	f := newEventFilter(c, a.ws, &me, *mentions, readState.UpTo)
 	unread, err := f.unreadMessageEvents()
 	if err != nil {
 		return err
@@ -2168,7 +2174,7 @@ func (a *app) wait(args []string) error {
 		}
 		var relevant []store.Event
 		for _, e := range resp.Events {
-			if f.relevant(e) {
+			if f.Concerns(e) {
 				relevant = append(relevant, e)
 			}
 		}
@@ -2196,80 +2202,23 @@ func (a *app) wait(args []string) error {
 	}
 }
 
+// eventFilter is wait's concern.Filter, with the chat lookups it needs.
 type eventFilter struct {
-	me           *store.Participant
-	mentionsOnly bool
-	client       *client
-	ws           string
-	readUpTo     int64
-	authors      map[int64]int64 // message ID → author ID, fetched lazily.
+	concern.Filter
+	client  *client
+	ws      string
+	authors map[int64]int64 // message ID → author ID, fetched lazily.
 }
 
-func (f *eventFilter) relevant(e store.Event) bool {
-	if e.ActorID == f.me.ID {
-		return false
-	}
-	switch {
-	case e.Type == "message.created":
-		var m store.Message
-		if json.Unmarshal(e.Data, &m) != nil {
-			return false
-		}
-		return m.ID > f.readUpTo && f.messageConcernsMe(m)
-	case e.Type == "comment.added":
-		var ce store.CommentEvent
-		if json.Unmarshal(e.Data, &ce) != nil || ce.Comment == nil {
-			return false
-		}
-		mine := ce.Item != nil && ce.Item.AssigneeID != nil && *ce.Item.AssigneeID == f.me.ID
-		return !f.mentionsOnly || mentions(ce.Comment.Body, f.me.Name) || mine
-	case e.Type == "comment.deleted", strings.HasPrefix(e.Type, "pr."):
-		return !f.mentionsOnly
-	case strings.HasPrefix(e.Type, "backlog."):
-		if !f.mentionsOnly {
-			return true
-		}
-		var it store.Item
-		if json.Unmarshal(e.Data, &it) != nil {
-			return false
-		}
-		if e.Type == "backlog.added" {
-			// An unassigned item is work to pick up (#90); an item added for
-			// someone else wakes only that assignee (#146).
-			return it.AssigneeID == nil || *it.AssigneeID == f.me.ID
-		}
-		return (e.Type == "backlog.assigned" || e.Type == "backlog.started") && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
-	case e.Type == "webhook.received":
-		// Webhooks are instructions for agents: they wake even --mentions,
-		// except GitHub's setup ping.
-		var d store.DeliveryEvent
-		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
-	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
-		strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
-		return !f.mentionsOnly
-	}
-	return false
-}
-
-func (f *eventFilter) messageConcernsMe(m store.Message) bool {
-	if m.AuthorID == f.me.ID {
-		return false
-	}
-	if !f.mentionsOnly {
-		return true
-	}
-	if mentions(m.Body, f.me.Name) {
-		return true
-	}
-	if m.ParentID != nil && f.authorOf(*m.ParentID) == f.me.ID {
-		return true
-	}
-	return slices.Contains(m.ActionFor, f.me.ID) && !slices.Contains(m.DoneBy, f.me.ID)
+func newEventFilter(c *client, ws string, me *store.Participant, mentionsOnly bool, readUpTo int64) *eventFilter {
+	f := &eventFilter{client: c, ws: ws}
+	f.Filter = concern.Filter{Me: me, MentionsOnly: mentionsOnly, ReadUpTo: readUpTo, AuthorOf: f.authorOf}
+	return f
 }
 
 func (f *eventFilter) unreadMessageEvents() ([]store.Event, error) {
 	latest, err := latestMessageID(f.client, f.ws)
-	if err != nil || latest <= f.readUpTo {
+	if err != nil || latest <= f.ReadUpTo {
 		return nil, err
 	}
 	var msgs []store.Message
@@ -2284,7 +2233,7 @@ func (f *eventFilter) unreadMessageEvents() ([]store.Event, error) {
 	}
 	var out []store.Event
 	for _, m := range msgs {
-		if m.ID > f.readUpTo && f.messageConcernsMe(m) {
+		if f.MessageConcerns(m) {
 			out = append(out, messageEvent(m))
 		}
 	}
@@ -2362,19 +2311,6 @@ func (f *eventFilter) authorOf(msgID int64) int64 {
 	}
 	f.authors[msgID] = 0
 	return 0
-}
-
-var mentionRegexCache sync.Map
-
-func mentions(body, name string) bool {
-	v, ok := mentionRegexCache.Load(name)
-	var re *regexp.Regexp
-	if !ok {
-		re = regexp.MustCompile(`(?i)@(` + regexp.QuoteMeta(name) + `|all|everyone)\b`)
-		v, _ = mentionRegexCache.LoadOrStore(name, re)
-	}
-	re = v.(*regexp.Regexp)
-	return re.MatchString(body)
 }
 
 func (a *app) printEvents(evs []store.Event) error {

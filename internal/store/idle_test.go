@@ -127,3 +127,33 @@ func TestIdleUntrackedAgent(t *testing.T) {
 		t.Errorf("24h01m after first sight: err = %v", err)
 	}
 }
+
+// TestExtendCredential: it slides an agent credential's expiry like Touch,
+// but leaves last_seen_at alone; humans' tokens never expire and stay so.
+func TestExtendCredential(t *testing.T) {
+	s, now, human, agent, tok := newAgent(t)
+	ctx := context.Background()
+	joined := now.UnixMilli()
+	*now = now.Add(48 * time.Hour)
+	s.MarkActive(ctx, agent)
+	p, err := s.Authenticate(ctx, tok)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.ExtendCredential(ctx, p); err != nil {
+		t.Fatal(err)
+	}
+	got, _ := s.GetParticipant(ctx, agent.WorkspaceID, agent.ID)
+	if want := now.Add(AgentCredentialTTL).UnixMilli(); got.TokenExpiresAt != want || p.TokenExpiresAt != want {
+		t.Errorf("token_expires_at = %d (in memory %d), want %d", got.TokenExpiresAt, p.TokenExpiresAt, want)
+	}
+	if got.LastSeenAt != joined {
+		t.Errorf("last_seen_at = %d, want it unchanged (%d)", got.LastSeenAt, joined)
+	}
+	if err := s.ExtendCredential(ctx, human); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := s.GetParticipant(ctx, human.WorkspaceID, human.ID); got.TokenExpiresAt != 0 || got.LastSeenAt != joined {
+		t.Errorf("human after ExtendCredential = %+v", got)
+	}
+}
