@@ -215,8 +215,8 @@ Real time:
                                      webhook deliveries
 
 Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
-claim, 4 logged out (24 hours without activity, revoked, or your member left:
-stop and tell your human).
+claim, 4 logged out or not joined (24 hours without activity, revoked, your
+member left, or no session: stop and tell your human).
 
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T  --config PATH
 Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
@@ -2107,7 +2107,31 @@ func (a *app) printDelivery(d *store.Delivery) {
 
 // ---- wait ----
 
-func (a *app) wait(args []string) error {
+// waitSessionErr upgrades 401/403 API errors during `wait` that are not
+// already handled by loggedOut() into exit code 4 so agent wait loops stop
+// instead of spinning on an unauthenticated or unauthorized session.
+func waitSessionErr(err error) error {
+	if err == nil || loggedOut(err) {
+		return err
+	}
+	var ae *apiError
+	if errors.As(err, &ae) && (ae.Status == http.StatusUnauthorized || ae.Status == http.StatusForbidden) {
+		return noWorkspaceSessionErr(err)
+	}
+	return err
+}
+
+func noWorkspaceSessionErr(err error) error {
+	return &exitError{
+		code: exitLoggedOut,
+		msg:  fmt.Sprintf("unison: %v\nCannot wait without a valid workspace session: stop, and tell your human (exit code 4).", err),
+	}
+}
+
+func (a *app) wait(args []string) (err error) {
+	defer func() {
+		err = waitSessionErr(err)
+	}()
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
 	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, open --action requests, your items, new open items, and webhook deliveries")
 	timeout := fs.Int("timeout", 600, "give up after this many seconds (exit code 2)")
@@ -2115,12 +2139,12 @@ func (a *app) wait(args []string) error {
 		return err
 	}
 	if err := a.needToken(); err != nil {
-		return err
+		return noWorkspaceSessionErr(err)
 	}
 	var me store.Participant
 	path, err := a.wsPath("/me")
 	if err != nil {
-		return err
+		return noWorkspaceSessionErr(err)
 	}
 	c := a.client()
 	if err := c.do("GET", path, nil, &me); err != nil {
