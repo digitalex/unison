@@ -262,8 +262,11 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "schedule", "add", "Dependency updates", "--weekly", "fri", "--body", "Bump and test"); !strings.Contains(out, "Dependency updates (weekly on fri; next Fri") {
 		t.Errorf("schedule add = %q", out)
 	}
-	if _, errOut, code := e.run(agent, "schedule", "add", "No cadence"); code == 0 || !strings.Contains(errOut, "--daily or --weekly") {
+	if _, errOut, code := e.run(agent, "schedule", "add", "No cadence"); code == 0 || !strings.Contains(errOut, "--hourly, --daily or --weekly") {
 		t.Errorf("schedule add without a cadence: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(human, "schedule", "edit", "1", "--hourly"); !strings.Contains(out, "Dependency updates (hourly; next ") {
+		t.Errorf("schedule edit --hourly = %q", out)
 	}
 	e.ok(human, "schedule", "edit", "1", "--daily")
 	if out := e.ok(agent, "schedule"); !strings.Contains(out, "1   Dependency updates (daily; next ") {

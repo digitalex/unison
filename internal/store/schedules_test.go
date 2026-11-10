@@ -21,6 +21,9 @@ func TestNextDue(t *testing.T) {
 		{CadenceWeekly, "wed", wed, time.Date(2026, 11, 4, 0, 0, 0, 0, loc)},
 		{CadenceWeekly, "thu", wed, time.Date(2026, 10, 29, 0, 0, 0, 0, loc)},
 		{CadenceWeekly, "sun", time.Date(2026, 12, 31, 9, 0, 0, 0, loc), time.Date(2027, 1, 3, 0, 0, 0, 0, loc)},
+		{CadenceHourly, "", wed, time.Date(2026, 10, 28, 16, 0, 0, 0, loc)},
+		{CadenceHourly, "", time.Date(2026, 10, 28, 15, 0, 0, 0, loc), time.Date(2026, 10, 28, 16, 0, 0, 0, loc)},
+		{CadenceHourly, "", time.Date(2026, 12, 31, 23, 59, 0, 0, loc), time.Date(2027, 1, 1, 0, 0, 0, 0, loc)},
 	} {
 		if got := nextDue(c.now, c.cadence, c.weekday); !got.Equal(c.want) {
 			t.Errorf("nextDue(%v, %s %s) = %v, want %v", c.now, c.cadence, c.weekday, got, c.want)
@@ -33,7 +36,8 @@ func TestSchedules(t *testing.T) {
 	ctx := context.Background()
 	for _, in := range []ScheduleInput{
 		{Title: " ", Cadence: CadenceDaily},
-		{Title: "x", Cadence: "hourly"},
+		{Title: "x", Cadence: "monthly"},
+		{Title: "x", Cadence: CadenceHourly, Weekday: "mon"},
 		{Title: "x", Cadence: CadenceWeekly},
 		{Title: "x", Cadence: CadenceWeekly, Weekday: "someday"},
 		{Title: "x", Cadence: CadenceDaily, Weekday: "mon"},
@@ -245,4 +249,88 @@ func TestRunSchedule(t *testing.T) {
 	if _, _, _, err := s.RunSchedule(ctx, b, 999); !errors.Is(err, ErrNotFound) {
 		t.Errorf("unknown schedule: %v, want ErrNotFound", err)
 	}
+}
+
+// TestHourlySchedule (#295): an hourly schedule runs at the top of every
+// hour; while its run stays open only the first missed hour is noted, the
+// rest pass quietly (Run now still notes), until the run closes.
+func TestHourlySchedule(t *testing.T) {
+	s, now, a, _ := setup(t)
+	ctx := context.Background()
+	sweep := func() []string {
+		t.Helper()
+		evs, err := s.MaterializeSchedules(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return eventTypes(evs)
+	}
+	nextHour := func() {
+		t.Helper()
+		list, _ := s.ListSchedules(ctx, a.WorkspaceID)
+		*now = time.UnixMilli(list[0].NextDueAt + 1000)
+	}
+
+	hourly, _, err := s.AddSchedule(ctx, a, ScheduleInput{Title: "Check the queue", Cadence: CadenceHourly})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := nextDue(*now, CadenceHourly, ""); hourly.NextDueAt != want.UnixMilli() || want.Minute() != 0 || want.Sub(*now) > time.Hour {
+		t.Fatalf("next due = %v, want the next top of the hour after %v", time.UnixMilli(hourly.NextDueAt), *now)
+	}
+	nextHour()
+	if got := sweep(); !equal(got, []string{"backlog.added"}) {
+		t.Fatalf("due: events %v", got)
+	}
+	run := firstItem(t, s, a.WorkspaceID)
+	if list, _ := s.ListSchedules(ctx, a.WorkspaceID); list[0].NextDueAt-now.UnixMilli() > time.Hour.Milliseconds() {
+		t.Errorf("next due %d is more than an hour away", list[0].NextDueAt)
+	}
+
+	nextHour()
+	if got := sweep(); !equal(got, []string{"comment.added"}) {
+		t.Fatalf("first missed hour: events %v, want a note", got)
+	}
+	for i := 0; i < 3; i++ {
+		nextHour()
+		if got := sweep(); len(got) != 0 {
+			t.Fatalf("later missed hour %d: events %v, want none", i, got)
+		}
+	}
+	if _, added, _, err := s.RunSchedule(ctx, a, hourly.ID); err != nil || added {
+		t.Fatalf("run now: added %v, %v", added, err)
+	}
+	comments, _ := s.ListComments(ctx, a.WorkspaceID, run.ID)
+	if len(comments) != 2 || !strings.Contains(comments[0].Body, "Missed") || !strings.Contains(comments[1].Body, "ran this recurring task now") {
+		t.Errorf("comments = %+v, want one missed-run note and one run-now note", comments)
+	}
+
+	// Closed: the next hour adds a new run, whose first miss is noted again.
+	if _, _, err := s.CloseItem(ctx, a, run.ID, "done"); err != nil {
+		t.Fatal(err)
+	}
+	nextHour()
+	if got := sweep(); !equal(got, []string{"backlog.added"}) {
+		t.Fatalf("after close: events %v", got)
+	}
+	nextHour()
+	if got := sweep(); !equal(got, []string{"comment.added"}) {
+		t.Errorf("new run's first miss: events %v", got)
+	}
+
+	// Switching cadence to hourly drops the weekday.
+	weekly, _, _ := s.AddSchedule(ctx, a, ScheduleInput{Title: "Weekly", Cadence: CadenceWeekly, Weekday: "fri"})
+	h := CadenceHourly
+	if got, _, err := s.EditSchedule(ctx, a, weekly.ID, SchedulePatch{Cadence: &h}); err != nil || got.Weekday != "" || got.Cadence != CadenceHourly {
+		t.Errorf("weekly → hourly = %+v, %v", got, err)
+	}
+}
+
+func firstItem(t *testing.T, s *Store, ws string) Item {
+	t.Helper()
+	items, _, err := s.ListBacklog(context.Background(), ws, "")
+	if err != nil || len(items) == 0 {
+		t.Fatalf("backlog = %+v, %v", items, err)
+	}
+	return items[0]
 }

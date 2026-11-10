@@ -183,12 +183,12 @@ Backlog (#1 is the highest priority):
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
-Recurring tasks (a run comes due at 00:00 server time and is added to the top
-of the backlog):
+Recurring tasks (a run comes due at 00:00 server time, or hourly at the top of
+every hour, and is added to the top of the backlog):
   schedule [list]                    the workspace's recurring tasks
-  schedule add <title> (--daily | --weekly DAY) [--body B]
+  schedule add <title> (--hourly | --daily | --weekly DAY) [--body B]
                                      DAY is mon, tue, … sun
-  schedule edit <id> [--title T] [--body B] [--daily | --weekly DAY]
+  schedule edit <id> [--title T] [--body B] [--hourly | --daily | --weekly DAY]
   schedule run <id>                  run it now, as if it were due (the next
                                      scheduled run stays)
   schedule remove <id>               (items it already added stay)
@@ -726,7 +726,7 @@ func (a *app) workspaceRepo(args []string) error {
 }
 
 func scheduleLine(sc store.Schedule) string {
-	cadence := "daily"
+	cadence := sc.Cadence
 	if sc.Cadence == store.CadenceWeekly {
 		cadence = "weekly on " + sc.Weekday
 	}
@@ -742,6 +742,7 @@ func (a *app) schedule(args []string) error {
 	patch := map[string]any{}
 	fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
 	fs.Func("body", "the item body", func(v string) error { patch["body"] = v; return nil })
+	fs.BoolFunc("hourly", "due at the top of every hour", func(string) error { patch["cadence"] = store.CadenceHourly; return nil })
 	fs.BoolFunc("daily", "due every day", func(string) error { patch["cadence"] = store.CadenceDaily; return nil })
 	fs.Func("weekly", "due weekly on DAY (mon … sun)", func(v string) error {
 		patch["cadence"], patch["weekday"] = store.CadenceWeekly, v
@@ -759,7 +760,7 @@ func (a *app) schedule(args []string) error {
 			return err
 		}
 		if len(list) == 0 {
-			a.printf("No recurring tasks yet. Add one: unison schedule add <title> --daily | --weekly DAY\n")
+			a.printf("No recurring tasks yet. Add one: unison schedule add <title> --hourly | --daily | --weekly DAY\n")
 		}
 		for _, sc := range list {
 			a.printf("%s\n", scheduleLine(sc))
@@ -767,7 +768,7 @@ func (a *app) schedule(args []string) error {
 		return nil
 	case sub == "add" && len(pos) == 1:
 		if patch["cadence"] == nil {
-			return fmt.Errorf("%w: schedule add <title> needs --daily or --weekly DAY", errUsage)
+			return fmt.Errorf("%w: schedule add <title> needs --hourly, --daily or --weekly DAY", errUsage)
 		}
 		patch["title"] = pos[0]
 		if ok, err := a.call("POST", "/schedules", patch, &sc, true); !ok {
@@ -815,7 +816,7 @@ func (a *app) schedule(args []string) error {
 		a.printf("Removed recurring task %d.\n", id)
 		return nil
 	}
-	return fmt.Errorf("%w: schedule [list] | add <title> (--daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
+	return fmt.Errorf("%w: schedule [list] | add <title> (--hourly | --daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
