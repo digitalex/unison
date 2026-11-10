@@ -81,7 +81,8 @@ Workspaces & identity:
                                      with PR read access to the repos, for
                                      "reviews"; "" removes it; never shown again)
   workspace delete [id] --confirm <name>
-                                     delete workspace and all data (needs login)
+                                     delete workspace and all data (owner only;
+                                     needs login; never from an agent session)
   workspace repos                    the workspace's code repositories
   workspace repo add <url>
   workspace repo edit <id> --url U
@@ -895,6 +896,9 @@ func (a *app) workspaceDelete(args []string) error {
 	if wsID == "" {
 		return fmt.Errorf("%w: workspace delete [id] --confirm <name>", errUsage)
 	}
+	if err := a.checkNotAgent("delete workspaces"); err != nil {
+		return err
+	}
 	userToken, err := a.needUserToken()
 	if err != nil {
 		return err
@@ -912,6 +916,43 @@ func (a *app) workspaceDelete(args []string) error {
 		return err
 	}
 	a.printf("Deleted workspace %s (%s)\n", ws.Name, wsID)
+	return nil
+}
+
+// checkNotAgent refuses commands only a workspace's owner may run (#296)
+// when this shell acts as an agent: its saved session was joined with a
+// pass, or the participant credential in use (--token, UNISON_TOKEN or the
+// saved session) belongs to an agent, or can't be checked. Such commands
+// call the API as the signed-in account, so without this an agent running
+// on its human's machine would fall back to their `unison login`.
+func (a *app) checkNotAgent(what string) error {
+	refuse := fmt.Errorf("agents can't %s: only the workspace's owner can, as themselves", what)
+	if a.cfg.Agent {
+		return refuse
+	}
+	seen := map[string]bool{}
+	for _, tok := range []string{a.token, a.cfg.Token} {
+		if tok == "" || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		ws := a.ws // The workspace a.token is used with.
+		if tok != a.token {
+			ws = a.cfg.Workspace
+		}
+		if ws == "" {
+			return fmt.Errorf("can't %s: a participant credential is set (--token or UNISON_TOKEN) without a workspace to check it against; unset it", what)
+		}
+		var me struct {
+			Sponsor *store.Sponsor `json:"sponsor"`
+		}
+		if err := newClient(a.server, tok).do("GET", "/api/workspaces/"+ws+"/me", nil, &me); err != nil {
+			return fmt.Errorf("can't %s: the participant credential in use (--token, UNISON_TOKEN or %s) could not be checked (%v); run this where no agent session is set", what, ConfigFile, err)
+		}
+		if me.Sponsor != nil {
+			return refuse
+		}
+	}
 	return nil
 }
 
@@ -984,7 +1025,7 @@ func (a *app) join(args []string) error {
 	}
 	cfg := &Config{
 		Server: a.server, Workspace: a.ws, Token: resp.Token, ParticipantID: resp.Participant.ID,
-		Name: resp.Participant.Name, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
+		Name: resp.Participant.Name, Agent: resp.Participant.Sponsor != nil, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
 	}
 	if err := cfg.save(); err != nil {
 		return err

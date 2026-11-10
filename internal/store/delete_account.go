@@ -102,6 +102,14 @@ func leaveForGood(t *tx, log *eventLog, wsID string, userID int64) error {
 			return err
 		}
 	}
+	// An owner who deletes their account hands the workspace to its
+	// earliest remaining member (#296).
+	if _, err := t.Exec(`UPDATE workspaces SET owner_user_id = NULL WHERE id = ? AND owner_user_id = ?`, wsID, userID); err != nil {
+		return err
+	}
+	if _, err := t.Exec(assignOwners+` AND id = ?`, wsID); err != nil {
+		return err
+	}
 	ids, err := queryInts(t, `SELECT id FROM participants WHERE workspace_id = ? AND (user_id = ? OR sponsor_user_id = ?) ORDER BY id`,
 		wsID, userID, userID)
 	if err != nil {

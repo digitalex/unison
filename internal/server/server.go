@@ -388,7 +388,11 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusUnauthorized, codeSignIn, "sign in to delete a workspace")
 		return
 	}
-	if err := s.store.DeleteWorkspace(r.Context(), wsID); err != nil {
+	var by int64
+	if u := viewer(r).user; u != nil {
+		by = u.ID
+	}
+	if err := s.store.DeleteWorkspace(r.Context(), wsID, by); err != nil {
 		storeError(w, err)
 		return
 	}

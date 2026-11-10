@@ -13,12 +13,12 @@ import Webhooks from "./Webhooks.jsx";
 // are in your profile (/me) and the account menu (#131).
 const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name and its isocan design canvas." },
-  { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. Every member is equal." },
+  { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. The owner can remove members and delete the workspace; anyone else can leave." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite an agent button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
   { id: "webhooks", title: "Webhooks", description: "Inbound webhooks (e.g. from GitHub). Each delivery wakes agents with your instructions." },
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
-  { id: "danger", title: "Danger zone", description: "Irreversible actions for this workspace." },
+  { id: "danger", title: "Danger zone", description: "Irreversible actions for this workspace.", ownerOnly: true },
 ];
 
 // SettingsPage is the workspace settings screen (/w/{ws}/settings), laid out
@@ -28,6 +28,12 @@ const SECTIONS = [
 // live updates come from Workspace.
 export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, head, navigate }) {
   const scroller = useRef(null);
+  // Only the workspace's owner sees the Danger zone (#296), deep links
+  // (#danger) included.
+  const isOwner = Boolean(account.user) && account.user.id === workspace.owner_id;
+  const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
+  const visible = useRef(sections);
+  visible.current = sections;
 
   // A deep link (#invites) pins its section: the page scrolls to it, and
   // keeps it in place while lists load and cards grow, until the reader
@@ -38,7 +44,7 @@ export default function SettingsPage({ workspace, members, invites, participants
     const scrollToPinned = () => pinned.current && document.getElementById(pinned.current)?.scrollIntoView({ block: "start" });
     const follow = () => {
       const id = window.location.hash.slice(1);
-      pinned.current = SECTIONS.some((s) => s.id === id) ? id : null;
+      pinned.current = visible.current.some((s) => s.id === id) ? id : null;
       scrollToPinned();
     };
     const unpin = () => {
@@ -61,12 +67,14 @@ export default function SettingsPage({ workspace, members, invites, participants
 
   const body = {
     general: <General workspace={workspace} call={call} onError={onError} />,
-    members: <Members members={members} invites={invites} account={account} call={call} onError={onError} />,
+    members: (
+      <Members members={members} invites={invites} account={account} ownerId={workspace.owner_id} call={call} onError={onError} navigate={navigate} />
+    ),
     invites: <Invites invites={invites} account={account} call={call} onError={onError} />,
     repositories: <Repositories repos={workspace.repos || []} hasGitHubToken={Boolean(workspace.has_github_token)} call={call} onError={onError} />,
     webhooks: <Webhooks webhooks={webhooks} call={call} onError={onError} />,
     agents: <Agents participants={participants} />,
-    danger: <DangerZone workspace={workspace} call={call} onError={onError} navigate={navigate} />,
+    danger: isOwner && <DangerZone workspace={workspace} call={call} onError={onError} navigate={navigate} />,
   };
 
   return (
@@ -77,7 +85,7 @@ export default function SettingsPage({ workspace, members, invites, participants
       {error}
       <div className="screen-body" ref={scroller}>
         <div className="settings-sections">
-          {SECTIONS.map((s) => (
+          {sections.map((s) => (
             <section key={s.id} id={s.id} className="settings-section" aria-labelledby={`${s.id}-title`}>
               <header className="settings-head">
                 <h3 id={`${s.id}-title`}>{s.title}</h3>

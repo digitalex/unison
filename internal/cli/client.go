@@ -24,6 +24,9 @@ type Config struct {
 	Token         string `json:"token,omitempty"`
 	ParticipantID int64  `json:"participant_id,omitempty"`
 	Name          string `json:"name,omitempty"`
+	// Agent marks a session joined with a pass (an agent's credential):
+	// commands for the owner only refuse to run from it (#296).
+	Agent bool `json:"agent,omitempty"`
 	// Cursor is the last event seq `unison wait` has seen.
 	Cursor int64 `json:"cursor,omitempty"`
 

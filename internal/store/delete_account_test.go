@@ -46,6 +46,11 @@ func TestDeleteAccount(t *testing.T) {
 		t.Errorf("events = %v", eventTypes(evs))
 	}
 
+	// Ada owned the shared workspace; it passes to Bo (#296).
+	if w, _ := s.GetWorkspace(ctx, shared.ID); w.OwnerID != bo.ID {
+		t.Errorf("shared owner after deletion = %d, want Bo %d", w.OwnerID, bo.ID)
+	}
+
 	// The solo workspace is gone; the shared one keeps Ada's message.
 	if _, err := s.GetWorkspace(ctx, solo.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("solo workspace: %v, want gone", err)
