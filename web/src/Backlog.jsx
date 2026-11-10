@@ -1,19 +1,22 @@
 import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, GitPullRequest, GripVertical, MessageSquare, Plus } from "lucide-react";
+import { ChevronDown, ChevronRight, Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { meta, name, prLabel } from "./backlogFormat.js";
+import Kanban from "./Kanban.jsx";
 import { OPEN_ITEM } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
-// The prioritized backlog, grouped into In progress, Open, and Done.
+// The prioritized backlog, grouped into In progress, Open, and Done: as a
+// list, or as a board (Kanban.jsx), as the header's switch picks.
 // Queued items (open + in_progress) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
 export default function Backlog({ items, participants, me, workspace, call, onError, head, error }) {
+  const [view, setView] = useBacklogView();
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
   const [created, setCreated] = useState(null); // The item just added: scrolled to and highlighted.
@@ -69,9 +72,11 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
     if (pendingRows.length < adding.length) setAdding(pendingRows);
   }, [pendingRows.length, adding.length]);
 
+  const repos = workspace?.repos || [];
+
   return (
     <section className="screen" aria-label="Backlog">
-      <ScreenHead title="Backlog">
+      <ScreenHead title="Backlog" tools={<ViewSwitch view={view} onChange={setView} />}>
         {head}
         <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog" aria-label="New item">
           <Plus aria-hidden="true" />
@@ -79,7 +84,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         </Button>
       </ScreenHead>
       {error}
-      <div className="screen-body">
+      <div className={view === "kanban" ? "screen-body kanban-body" : "screen-body"}>
         {notice && (
           <p role="status" className="error-bar notice-bar">
             {notice}{" "}
@@ -95,28 +100,80 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
           {reorder.announcement}
         </p>
 
-        <GroupHead status="in_progress" label="In progress" count={groups.in_progress.length} />
-        {rows("in_progress", groups.in_progress)}
+        {view === "kanban" ? (
+          <Kanban
+            {...{ groups, done, participants, me, repos, run, reorder, hintId, created }}
+            pending={pendingRows}
+            onOpen={openItem}
+            onAdd={create}
+          />
+        ) : (
+          <>
+            <GroupHead status="in_progress" label="In progress" count={groups.in_progress.length} />
+            {rows("in_progress", groups.in_progress)}
 
-        <GroupHead status="open" label="Open" count={groups.open.length} />
-        {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
-        {rows("open", groups.open)}
-        {pendingRows.map((x) => (
-          <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
-        ))}
+            <GroupHead status="open" label="Open" count={groups.open.length} />
+            {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
+            {rows("open", groups.open)}
+            {pendingRows.map((x) => (
+              <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
+            ))}
 
-        <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
-          {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-          <span className="status done" />
-          Done
-          <span className="count">{done.length}</span>
-        </button>
-        {showDone && rows("done", done)}
+            <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
+              {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
+              <span className="status done" />
+              Done
+              <span className="count">{done.length}</span>
+            </button>
+            {showDone && rows("done", done)}
+          </>
+        )}
       </div>
 
       {creating && <NewItemDialog initial={creating === true ? null : creating} participants={participants} onClose={() => setCreating(false)} onCreate={create} />}
       {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
     </section>
+  );
+}
+
+// ---- List | Kanban (#293): remembered per browser ----
+
+const VIEW_KEY = "unison.backlog.view";
+const VIEWS = [
+  { id: "list", label: "List", Icon: List },
+  { id: "kanban", label: "Kanban", Icon: Columns3 },
+];
+
+function useBacklogView() {
+  const [view, setView] = useState(() => {
+    try {
+      return localStorage.getItem(VIEW_KEY) === "kanban" ? "kanban" : "list";
+    } catch {
+      return "list";
+    }
+  });
+  const choose = (v) => {
+    setView(v);
+    try {
+      localStorage.setItem(VIEW_KEY, v);
+    } catch {
+      // Storage blocked: the choice lasts until reload.
+    }
+  };
+  return [view, choose];
+}
+
+// ViewSwitch is a segmented List | Kanban switch; phones show icons only.
+function ViewSwitch({ view, onChange }) {
+  return (
+    <div className="seg view-switch" role="group" aria-label="Backlog view">
+      {VIEWS.map(({ id, label, Icon }) => (
+        <button key={id} type="button" aria-pressed={view === id} aria-label={label} title={label} onClick={() => onChange(id)}>
+          <Icon aria-hidden="true" />
+          <span className="label">{label}</span>
+        </button>
+      ))}
+    </div>
   );
 }
 
@@ -359,7 +416,7 @@ function swallowNextClick() {
   setTimeout(() => window.removeEventListener("click", swallow, { capture: true }), 0);
 }
 
-// useReorder reorders within a group (moving an open item among in-progress
+// useReorder reorders within a group (a list group or a board column; moving an open item among in-progress
 // ones would need an assignment, not a move), through the move endpoint.
 //   - Mouse: drag a row (or its grip).
 //   - Touch: long-press the grip, then drag; the grip has touch-action: none
@@ -402,7 +459,7 @@ function useReorder(groups, moveTo) {
   };
 
   const trackPointer = (down, item, touch) => {
-    const scroller = down.currentTarget.closest(".screen-body");
+    const scroller = down.currentTarget.closest(".kanban-col-body, .screen-body");
     const start = { x: down.clientX, y: down.clientY, id: down.pointerId };
     let started = false;
     const timer = touch
