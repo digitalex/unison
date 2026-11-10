@@ -74,8 +74,10 @@ Server:
 Workspaces & identity:
   workspace [show]                   show the current workspace
   workspace list                     your workspaces (needs login)
-  workspace create <name> [--repo URL]... [--canvas URL]
-                                     (needs login; you become its first member)
+  workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]
+                                     (needs login; you become its first member;
+                                     --create-canvas makes a new isocan canvas
+                                     with the isocan CLI and attaches it)
   workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
                 [--github-token T]   (--repo: the first repo; --product: where the
                                      product you build is deployed, "" removes
@@ -837,18 +839,32 @@ func (a *app) workspaceCreate(args []string) error {
 		return nil
 	})
 	canvas := fs.String("canvas", "", "isocan canvas URL")
+	createCanvas := fs.Bool("create-canvas", false, "make a new isocan canvas named after the workspace (needs the isocan CLI)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("%w: workspace create <name>", errUsage)
+		return fmt.Errorf("%w: workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]", errUsage)
+	}
+	if *createCanvas && *canvas != "" {
+		return fmt.Errorf("%w: --canvas and --create-canvas are alternatives: pass one", errUsage)
+	}
+	name := strings.Join(pos, " ")
+	if *createCanvas {
+		if *canvas, err = newCanvas(name); err != nil {
+			return err
+		}
 	}
 	var raw json.RawMessage
-	body := map[string]any{"name": strings.Join(pos, " "), "repos": repos, "canvas_url": *canvas}
+	body := map[string]any{"name": name, "repos": repos, "canvas_url": *canvas}
 	// Servers may limit creation to signed-in accounts (UNISON_CREATORS).
 	c := newClient(a.server, firstNonEmpty(a.userToken(), a.token))
 	if err := c.do("POST", "/api/workspaces", body, &raw); err != nil {
+		if *createCanvas {
+			// The canvas exists all the same: don't lose its address.
+			return fmt.Errorf("%w (the new canvas is %s)", err, *canvas)
+		}
 		return err
 	}
 	if a.jsonOut {
