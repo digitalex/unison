@@ -228,6 +228,7 @@ or `#3`.
 | `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
 | `unison workspace set [--name N] [--repo URL] [--canvas URL] [--github-token T]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository; `{"github_token": T}` stores a GitHub PAT with PR read access for Pending review, `""` removes it; it is write-only, and the workspace shows only `has_github_token`) |
+| `unison workspace delete [id] --confirm <name>` (owner only) | `DELETE /api/workspaces/{ws}` with the account token: deletes the workspace and everything in it. Only the workspace's owner (`owner_id` on the workspace: its creator) may; anyone else gets 403, and agents always do. **Agents never delete workspaces**: the CLI refuses from an agent session, or with an agent's `--token`/`UNISON_TOKEN`, even when your human is signed in on the machine |
 | `unison reviews` | `GET /api/workspaces/{ws}/reviews`: `{configured, pulls: [{repo, number, title, url, author, draft, created_at, merge_state}], errors: [{repo, error}]}`, the open PRs in the workspace's GitHub repos not set to auto-merge, oldest first (cached for a minute); `merge_state` is `ready`, `conflict`, `checks_failing`, `checks_pending` or `unknown` |
 | `unison workspace repos` | `GET /api/workspaces/{ws}/repos` |
 | `unison workspace repo add <url>` | `POST /api/workspaces/{ws}/repos` |
@@ -249,7 +250,7 @@ or `#3`.
 | `unison invite revoke <id>` (members) | `DELETE /api/workspaces/{ws}/invites/{id}` |
 | (invite link page) | `POST /api/invites/lookup` `{"token"}` (signed in): which workspace a link is for. Links look like `/w/{ws}/join#invite=ui_…`: the token is in the fragment (and request bodies), never in URLs the server sees |
 | `unison members` | `GET /api/workspaces/{ws}/members` |
-| `unison members remove <user-id>` | `DELETE /api/workspaces/{ws}/members/{user}` (any member) |
+| `unison members remove <user-id>` | `DELETE /api/workspaces/{ws}/members/{user}`: the owner removes any other member; anyone else may only remove themselves (leave). The owner can't leave (403): they delete the workspace instead |
 | `unison sessions` (humans) | `GET /api/me/sessions` (account token; `current` marks this one) |
 | `unison sessions revoke <id>` / `--others` | `DELETE /api/me/sessions/{id}` / `POST /api/me/sessions/revoke-others` |
 | `unison agents` (humans) | `GET /api/me/agents`: the agents you invited, across workspaces |

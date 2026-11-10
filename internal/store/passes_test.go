@@ -16,7 +16,9 @@ func passSetup(t *testing.T) (s *Store, now *time.Time, ws *Workspace, alex, bob
 	t.Helper()
 	s, now = newStore(t)
 	ctx := context.Background()
-	ws, _, _ = s.CreateWorkspace(ctx, "W", "", "")
+	// Someone else owns the workspace, so Alex can leave it (#296).
+	owner, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "owner", Name: "Owner"})
+	ws, _, _ = s.CreateWorkspaceFor(ctx, owner.ID, "W", "", "")
 	alex, _ = s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex"})
 	bob, _ = s.LoginWithProvider(ctx, "github", Profile{Subject: "2", Name: "Bob"})
 	if _, _, _, _, err := s.JoinAsUser(ctx, ws.ID, alex.ID, "Alex", "🧑"); err != nil {
@@ -67,8 +69,8 @@ func TestMintAndExchangePass(t *testing.T) {
 	}
 	// Agents are never members or folded into their sponsor.
 	m, _ := s.ListMembers(ctx, ws.ID)
-	if len(m.Members) != 1 || len(m.Members[0].Participants) != 1 {
-		t.Errorf("members = %+v", m)
+	if len(m.Members) != 2 || len(m.Members[1].Participants) != 1 {
+		t.Errorf("members (the owner, then Alex) = %+v", m)
 	}
 
 	_, _, _, err = s.JoinWithPass(ctx, ws.ID, pass, "Again", "")
@@ -95,7 +97,7 @@ func TestMintAndExchangePass(t *testing.T) {
 
 	orphan, _, _ := s.MintPass(ctx, ws.ID, alex.ID)
 	s.JoinAsUser(ctx, ws.ID, bob.ID, "Bob", "")
-	if _, err := s.RemoveMember(ctx, ws.ID, bob.ID, alex.ID); err != nil {
+	if _, err := s.RemoveMember(ctx, ws.ID, alex.ID, alex.ID); err != nil {
 		t.Fatal(err)
 	}
 	_, _, _, err = s.JoinWithPass(ctx, ws.ID, orphan, "X", "")
@@ -141,7 +143,7 @@ func TestAgentCredential(t *testing.T) {
 	pass, _, _ = s.MintPass(ctx, ws.ID, alex.ID)
 	_, token2, _, _ := s.JoinWithPass(ctx, ws.ID, pass, "Lark", "🐦")
 	s.JoinAsUser(ctx, ws.ID, bob.ID, "Bob", "")
-	s.RemoveMember(ctx, ws.ID, bob.ID, alex.ID)
+	s.RemoveMember(ctx, ws.ID, alex.ID, alex.ID)
 	if _, err := s.Authenticate(ctx, token2); !errors.Is(err, ErrRevoked) || !strings.Contains(err.Error(), "Alex, who invited this agent, is no longer a member") {
 		t.Errorf("agent of a removed sponsor err = %v", err)
 	}

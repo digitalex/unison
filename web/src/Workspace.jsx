@@ -76,8 +76,10 @@ function collectionFor({ type, data }) {
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
   if (type.startsWith("participant.")) return ["participants", "members"];
-  if (type === "member.removed") return ["members", "activity"];
-  if (type.startsWith("member.")) return ["members"];
+  // Membership changes can change the owner (the first member, or a
+  // handoff when the owner's account is deleted, #296).
+  if (type === "member.removed") return ["members", "activity", "workspace"];
+  if (type.startsWith("member.")) return ["members", "workspace"];
   if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
   return [];
 }

@@ -59,7 +59,7 @@ func TestImages(t *testing.T) {
 		}
 	}
 
-	if err := s.DeleteWorkspace(ctx, a.WorkspaceID); err != nil {
+	if err := s.DeleteWorkspace(ctx, a.WorkspaceID, 0); err != nil {
 		t.Fatalf("DeleteWorkspace with images: %v", err)
 	}
 	if _, _, err := s.GetImage(ctx, a.WorkspaceID, im.ID); !errors.Is(err, ErrNotFound) {

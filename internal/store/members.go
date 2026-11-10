@@ -8,7 +8,8 @@ import (
 )
 
 // Membership: the accounts that belong to a workspace. Every member is equal
-// (no roles). A member's per-workspace name and emoji are those of their
+// (no roles), except the owner (#296): the only one who may delete the
+// workspace or remove other members, and who can't leave without deleting. A member's per-workspace name and emoji are those of their
 // participants, which they link by joining while signed in or by claiming.
 // Nothing is enforced yet: participants without accounts work as before.
 
@@ -43,7 +44,8 @@ func displayName(t *tx, userID int64) (string, error) {
 }
 
 // ensureMembership makes userID a member of wsID (recording member.added
-// the first time).
+// the first time). The first member of a workspace without an owner
+// becomes its owner.
 func ensureMembership(t *tx, log *eventLog, wsID string, userID, actor int64) error {
 	var n int
 	if err := t.QueryRow(`SELECT COUNT(*) FROM memberships WHERE workspace_id = ? AND user_id = ?`, wsID, userID).Scan(&n); err != nil {
@@ -57,6 +59,9 @@ func ensureMembership(t *tx, log *eventLog, wsID string, userID, actor int64) er
 		return err
 	}
 	if _, err := t.Exec(`INSERT INTO memberships (workspace_id, user_id, created_at) VALUES (?, ?, ?)`, wsID, userID, log.now); err != nil {
+		return err
+	}
+	if _, err := t.Exec(`UPDATE workspaces SET owner_user_id = ? WHERE id = ? AND owner_user_id IS NULL`, userID, wsID); err != nil {
 		return err
 	}
 	return log.add(wsID, "member.added", actor, memberEvent{UserID: userID, DisplayName: name})
@@ -157,9 +162,10 @@ func (s *Store) IsMember(ctx context.Context, wsID string, userID int64) (bool, 
 	return n > 0, err
 }
 
-// RemoveMember removes userID from the workspace's members; any member may
-// remove any member (including themselves). Their participants stay, still
-// linked, so history keeps its authors.
+// RemoveMember removes userID from the workspace's members. The owner may
+// remove any other member; everyone else may only remove themselves
+// (leave). The owner can't leave: they delete the workspace instead (#296).
+// Their participants stay, still linked, so history keeps its authors.
 func (s *Store) RemoveMember(ctx context.Context, wsID string, byUserID, userID int64) ([]Event, error) {
 	return s.tx(ctx, func(t *tx, log *eventLog) error {
 		var n int
@@ -168,6 +174,18 @@ func (s *Store) RemoveMember(ctx context.Context, wsID string, byUserID, userID 
 		}
 		if n == 0 {
 			return fmt.Errorf("%w: only members can remove members (join or claim a participant first)", ErrForbidden)
+		}
+		owner, err := workspaceOwner(t, wsID)
+		if err != nil {
+			return err
+		}
+		switch {
+		case userID == owner && byUserID == owner:
+			return fmt.Errorf("%w: the owner can't leave the workspace; delete it instead", ErrForbidden)
+		case userID == owner:
+			return fmt.Errorf("%w: the workspace's owner can't be removed", ErrForbidden)
+		case byUserID != userID && byUserID != owner:
+			return fmt.Errorf("%w: only the workspace's owner can remove other members", ErrForbidden)
 		}
 		name, err := displayName(t, userID)
 		if err != nil {
@@ -212,4 +230,14 @@ func (s *Store) MemberParticipant(ctx context.Context, wsID string, userID int64
 func (s *Store) UserParticipant(ctx context.Context, wsID string, userID int64) (*Participant, error) {
 	return scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants
 		WHERE workspace_id = ? AND user_id = ?`, wsID, userID))
+}
+
+// workspaceOwner returns the workspace's owner, 0 if it has none.
+func workspaceOwner(t *tx, wsID string) (int64, error) {
+	var owner sql.NullInt64
+	err := t.QueryRow(`SELECT owner_user_id FROM workspaces WHERE id = ?`, wsID).Scan(&owner)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, ErrNotFound
+	}
+	return owner.Int64, err
 }

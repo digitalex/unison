@@ -180,6 +180,11 @@ func (d db) applySchema(lock, schema string) error {
 	if err := d.mergeAccountParticipants(t); err != nil {
 		return fmt.Errorf("merging each account's participants: %w", err)
 	}
+	// Workspaces got an owner (#296): each unowned workspace goes to its
+	// earliest member. Idempotent: owned workspaces are left alone.
+	if _, err := t.Exec(assignOwners); err != nil {
+		return fmt.Errorf("assigning workspace owners: %w", err)
+	}
 	// Assignment was decoupled from progress (#146): items being worked on
 	// now have status "in_progress" instead of "assigned".
 	if _, err := t.Exec(`UPDATE items SET status = 'in_progress' WHERE status = 'assigned'`); err != nil {
@@ -187,6 +192,12 @@ func (d db) applySchema(lock, schema string) error {
 	}
 	return t.Commit()
 }
+
+// assignOwners makes each workspace without an owner owned by its earliest
+// member (if it has any).
+const assignOwners = `UPDATE workspaces SET owner_user_id = (SELECT m.user_id FROM memberships m
+	WHERE m.workspace_id = workspaces.id ORDER BY m.created_at, m.id LIMIT 1)
+	WHERE owner_user_id IS NULL`
 
 // participantRefs are the columns that point at a participant, other than
 // reactions and message_actions (unique per participant; merged separately).
@@ -321,6 +332,9 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// for: "sandbox" or "production"; NULL for devices registered before,
 	// which get the server's default (APNS_SANDBOX).
 	{"devices", "apns_env", "TEXT", "TEXT"},
+	// workspaces.owner_user_id (#296) is the account that owns the
+	// workspace (see assignOwners); NULL until it has a member.
+	{"workspaces", "owner_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,

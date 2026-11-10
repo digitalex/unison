@@ -55,7 +55,12 @@ type Workspace struct {
 	RepoURL   string `json:"repo_url"` // The first repository's URL (legacy).
 	CanvasURL string `json:"canvas_url"`
 	CreatedAt int64  `json:"created_at"`
-	Repos     []Repo `json:"repos"`
+	// OwnerID is the account that owns the workspace (#296): its creator,
+	// or for workspaces created without one, the first member. Only the
+	// owner may delete the workspace or remove other members. 0 while the
+	// workspace has no members.
+	OwnerID int64  `json:"owner_id"`
+	Repos   []Repo `json:"repos"`
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
@@ -249,12 +254,12 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // workspaceCols are read by scanWorkspace; the last says whether a GitHub
 // token is set without reading it.
-const workspaceCols = `id, name, repo_url, canvas_url, created_at, CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
+const workspaceCols = `id, name, repo_url, canvas_url, created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
 	var hasToken int64
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt, &hasToken); err != nil {
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -272,7 +277,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL st
 }
 
 // CreateWorkspaceFor creates a workspace whose creator (a signed-in user)
-// becomes its first member, in the same transaction.
+// becomes its first member and its owner, in the same transaction.
 func (s *Store) CreateWorkspaceFor(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
 	return s.createWorkspace(ctx, creatorID, name, repoURL, canvasURL, repos...)
 }
@@ -287,9 +292,13 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 	}
 	id := "ws_" + randomHex(4)
 	var w *Workspace
+	var owner any // NULL without a creator: the first member becomes owner.
+	if creatorID != 0 {
+		owner = creatorID
+	}
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at) VALUES (?, ?, '', ?, ?)`,
-			id, name, strings.TrimSpace(canvasURL), log.now); err != nil {
+		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at, owner_user_id) VALUES (?, ?, '', ?, ?, ?)`,
+			id, name, strings.TrimSpace(canvasURL), log.now, owner); err != nil {
 			return err
 		}
 		for _, in := range repos {
@@ -437,15 +446,20 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 
 // DeleteWorkspace permanently deletes a workspace and all its associated
 // data (messages, backlog items, comments, PRs, webhooks, passes, invites,
-// participants, events). Global user accounts are untouched.
-func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
+// participants, events). Global user accounts are untouched. Only the
+// workspace's owner (byUserID) may delete it (#296); a workspace without an
+// owner (no members ever) may be deleted by anyone the server lets through.
+func (s *Store) DeleteWorkspace(ctx context.Context, id string, byUserID int64) error {
 	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		var name string
-		if err := t.QueryRow(`SELECT name FROM workspaces WHERE id = ?`, id).Scan(&name); err != nil {
+		var owner sql.NullInt64
+		if err := t.QueryRow(`SELECT owner_user_id FROM workspaces WHERE id = ?`, id).Scan(&owner); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if owner.Valid && owner.Int64 != byUserID {
+			return fmt.Errorf("%w: only the workspace's owner can delete it", ErrForbidden)
 		}
 		return deleteWorkspace(t, id)
 	})

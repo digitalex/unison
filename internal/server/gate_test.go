@@ -409,6 +409,10 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 		t.Fatalf("create = %d", resp.StatusCode)
 	}
 	wsID := ws["id"].(string)
+	_, adaUser, _ := e.st.SessionByToken(ctx, ada.Value)
+	if ws["owner_id"] != float64(adaUser.ID) {
+		t.Errorf("owner_id = %v, want the creator %d", ws["owner_id"], adaUser.ID)
+	}
 
 	// An agent joins with a pass
 	_, passResp := e.do("POST", "/api/workspaces/"+wsID+"/passes", `{}`, withCookie(ada), withCSRF())
@@ -424,6 +428,15 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 	// Non-member cannot delete workspace
 	if resp, _ := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 {
 		t.Errorf("non-member delete = %d, want 403", resp.StatusCode)
+	}
+
+	// A member who isn't the owner cannot delete it (#296).
+	_, bobUser, _ := e.st.SessionByToken(ctx, bob.Value)
+	if _, _, _, _, err := e.st.JoinAsUser(ctx, wsID, bobUser.ID, "Bob", ""); err != nil {
+		t.Fatal(err)
+	}
+	if resp, out := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 || !strings.Contains(out["error"].(string), "owner") {
+		t.Errorf("non-owner member delete = %d %v, want 403 (owner only)", resp.StatusCode, out)
 	}
 
 	// Member without CSRF cannot delete workspace
