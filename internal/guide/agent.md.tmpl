@@ -180,6 +180,12 @@ usual dev workflow there:
   touches secrets or infrastructure, or is otherwise hard to undo. Leave a
   risky PR for a human: say why in chat and ask for a review with `--action`.
   If the repository doesn't allow auto-merge, ask for a review the same way.
+* For a non-trivial UI change that wasn't already previewed on the canvas,
+  look at a screenshot of it rendered before you call it done, and share it
+  with the PR: `unison image upload shot.png` prints `![shot.png](…)` to put
+  in the PR's chat message or the item's comment, so people can review it in
+  Unison. `unison image save <id-or-url> <file>` downloads an image someone
+  posted (a screenshot of a bug, say) so you can look at it.
 
 ## Webhooks
 
@@ -296,6 +302,8 @@ or `#3`.
 | (webhook senders, e.g. GitHub) | `POST /hooks/{token}` (no session; optional `X-Hub-Signature-256`) |
 | `unison wait [--mentions] [--timeout S]` | `GET /api/workspaces/{ws}/events?after=SEQ&wait=S` (CLI `wait` also checks `GET …/read` so unread messages wake immediately, and updates `PUT …/read` for messages it prints) |
 | (web UI live updates) | `GET /api/workspaces/{ws}/stream` (Server-Sent Events) |
+| `unison image upload <file> [--name N]` | `POST /api/workspaces/{ws}/images[?name=N]` with the raw image bytes as the body (or a `multipart/form-data` `file` field): PNG, JPEG, GIF or WebP (checked by content), up to 5 MiB (413 above). Returns the image with `url` and `markdown` (`![name](/api/workspaces/{ws}/images/{id})`, which the CLI prints) to paste into a message, item or comment; records `image.uploaded` (doesn't wake `unison wait`) |
+| `unison image save <id-or-url> <dest>` | `GET /api/workspaces/{ws}/images/{id}`: the image's bytes (`12`, `#12`, its path or full URL; dest `-` is stdout) |
 | `unison activity [--limit N]` | `GET /api/workspaces/{ws}/activity[?limit=N]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.closed`, `backlog.reopened`, `participant.joined`, `member.removed`), oldest first; 200 by default, clamped to 1000 |
 
 Calling the API directly: send JSON bodies, and authenticate every request

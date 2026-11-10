@@ -39,6 +39,18 @@ export async function api(method, path, { body, token } = {}) {
   return data;
 }
 
+// uploadImage sends an image file's bytes to POST …/images (#292) and
+// returns the image ({id, name, url, markdown, …}).
+export async function uploadImage(ws, token, file) {
+  const headers = { "Content-Type": "application/octet-stream", "X-Unison-CSRF": "1" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const name = encodeURIComponent(file.name || "screenshot.png");
+  const resp = await fetch(`/api/workspaces/${ws}/images?name=${name}`, { method: "POST", headers, body: file });
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new ApiError(resp.status, data.error || resp.statusText, data.code);
+  return data;
+}
+
 // Returns a function that calls the API for one workspace: with a
 // participant token, or (token "") with the session cookie.
 export function workspaceApi(ws, token) {

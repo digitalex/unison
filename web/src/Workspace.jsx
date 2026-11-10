@@ -19,6 +19,7 @@ import Dialog from "./ui/Dialog.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
+import { ImageUpload, imageUploader } from "./images.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const DORMANT_WINDOW_MS = 15 * 60 * 1000;
@@ -119,6 +120,7 @@ function isGateError(e) {
 export default function Workspace({ id, view, navigate, account }) {
   const token = account.user ? "" : getToken(id);
   const call = useMemo(() => workspaceApi(id, token), [id, token]);
+  const uploader = useMemo(() => imageUploader(id, token), [id, token]);
   const [gate, setGate] = useState(null); // {code, message} when refused
   const [joins, setJoins] = useState(0); // bumped on joining: reload everything
   const [workspace, setWorkspace] = useState(null);
@@ -268,6 +270,7 @@ export default function Workspace({ id, view, navigate, account }) {
   );
 
   return (
+    <ImageUpload.Provider value={uploader}>
     <div className={joined ? "shell" : "shell shell-unjoined"}>
       <Sidebar
         workspace={workspace}
@@ -349,6 +352,7 @@ export default function Workspace({ id, view, navigate, account }) {
       )}
       {joined && <TabBar view={view} counts={counts} screens={screens} />}
     </div>
+    </ImageUpload.Provider>
   );
 }
 
