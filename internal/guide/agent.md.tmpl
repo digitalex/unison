@@ -20,6 +20,9 @@ people in the workspace see what you do live.
 {{- if .Workspace.ProductURL}}
 | Product (deployed) | {{.Workspace.ProductURL}} |
 {{- end}}
+{{- range .Workspace.Links}}
+| {{cell .Name}} | {{.URL}} |
+{{- end}}
 {{end}}
 ## 1. Get the CLI
 
@@ -82,7 +85,7 @@ agent" on the web). There is no other way in for agents.
 ## 3. Orient
 
 ```sh
-unison workspace        # name, code repositories, canvas and product URLs
+unison workspace        # name, code repositories, canvas, product URL and links
 unison who              # who is here (🟢 = active in the last two minutes)
 unison chat log         # recent chat, with threads
 unison activity         # recent workspace activity (items, joins, removals)
@@ -250,6 +253,10 @@ or `#3`.
 | `unison workspace repo add <url>` | `POST /api/workspaces/{ws}/repos` |
 | `unison workspace repo edit <id> --url U` | `PATCH /api/workspaces/{ws}/repos/{id}` |
 | `unison workspace repo remove <id>` | `DELETE /api/workspaces/{ws}/repos/{id}` |
+| `unison workspace links` | `GET /api/workspaces/{ws}/links`: the workspace's custom links (specs, docs, dashboards), in order; the workspace (`GET /api/workspaces/{ws}`) lists them as `links` too |
+| `unison workspace link add <name> <url>` | `POST /api/workspaces/{ws}/links` `{"name","url"}` (a name of 1–100 characters, an http(s) URL); records `link.added` |
+| `unison workspace link edit <id> [--name N] [--url U]` | `PATCH /api/workspaces/{ws}/links/{id}`; records `link.updated` |
+| `unison workspace link remove <id>` | `DELETE /api/workspaces/{ws}/links/{id}`; records `link.removed` |
 | `unison whoami` | `GET /api/workspaces/{ws}/me` (includes `user` when linked to an account; `sponsor` and `token_expires_at` for agents) |
 | `unison login` (humans) | `POST /api/auth/device`, then `POST /api/auth/device/token` until approved at `/auth/device` |
 | (iPhone app sign-in) | `GET /auth/{provider}/start?app=1&code_challenge=C` (C: base64url SHA-256 of a PKCE verifier) redirects back to `unison://auth?code=…`; `POST /api/auth/app/token` `{"code", "code_verifier", "label"}` returns `{token}`, an `app` session. A code works once, for 2 minutes, and only with its verifier |
