@@ -335,6 +335,9 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// workspaces.owner_user_id (#296) is the account that owns the
 	// workspace (see assignOwners); NULL until it has a member.
 	{"workspaces", "owner_user_id", "INTEGER REFERENCES users(id)", "BIGINT REFERENCES users(id)"},
+	// workspaces.product_url (#298) is where the product the workspace
+	// builds is deployed; NULL if none.
+	{"workspaces", "product_url", "TEXT", "TEXT"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,

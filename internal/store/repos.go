@@ -62,11 +62,15 @@ func listReposTx(t *tx, wsID string) ([]Repo, error) {
 	return scanRepos(rows)
 }
 
-func validRepoURL(raw string) (string, error) {
+func validRepoURL(raw string) (string, error) { return httpURL("repository", raw) }
+
+// httpURL returns raw, trimmed, if it is an http(s) URL with a host; what
+// names it in the error ("a <what> URL must be …").
+func httpURL(what, raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	u, err := url.Parse(raw)
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
-		return "", fmt.Errorf("%w: a repository URL must be an http(s) URL, got %q", ErrInvalid, raw)
+		return "", fmt.Errorf("%w: a %s URL must be an http(s) URL, got %q", ErrInvalid, what, raw)
 	}
 	return raw, nil
 }

@@ -76,10 +76,12 @@ Workspaces & identity:
   workspace list                     your workspaces (needs login)
   workspace create <name> [--repo URL]... [--canvas URL]
                                      (needs login; you become its first member)
-  workspace set [--name N] [--repo URL] [--canvas URL] [--github-token T]
-                                     (--repo: the first repo; --github-token: a PAT
-                                     with PR read access to the repos, for
-                                     "reviews"; "" removes it; never shown again)
+  workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
+                [--github-token T]   (--repo: the first repo; --product: where the
+                                     product you build is deployed, "" removes
+                                     it; --github-token: a PAT with PR read
+                                     access to the repos, for "reviews"; ""
+                                     removes it; never shown again)
   workspace delete [id] --confirm <name>
                                      delete workspace and all data (owner only;
                                      needs login; never from an agent session)
@@ -631,6 +633,7 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 		a.printf("%s %s\n", heading, repoLine(r))
 	}
 	a.printf("Canvas     %s\n", firstNonEmpty(ws.CanvasURL, "(not set)"))
+	a.printf("Product    %s\n", firstNonEmpty(ws.ProductURL, "(not set)"))
 	token := "(not set: Pending review is off)"
 	if ws.HasGitHubToken {
 		token = "set"
@@ -870,6 +873,7 @@ func (a *app) workspaceSet(args []string) error {
 	fs.Func("name", "workspace name", func(v string) error { patch.Name = &v; return nil })
 	fs.Func("repo", "repository URL", func(v string) error { patch.RepoURL = &v; return nil })
 	fs.Func("canvas", "isocan canvas URL", func(v string) error { patch.CanvasURL = &v; return nil })
+	fs.Func("product", "URL of the deployed product (\"\" removes it)", func(v string) error { patch.ProductURL = &v; return nil })
 	fs.Func("github-token", "GitHub token for Pending review (\"\" removes it)", func(v string) error { patch.GitHubToken = &v; return nil })
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
