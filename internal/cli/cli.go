@@ -105,6 +105,9 @@ Workspaces & identity:
                                      member or with an invite (an invite link works
                                      as the URL; email invites need nothing more)
   whoami                             your identity in this workspace
+  name [<new-name>] [--emoji E]      change your name or emoji in this workspace
+                                     (one word, no @, not somebody else's); with
+                                     neither, show them
   status <text>                      set your status line ("" clears it)
   who [--all]                        participants and who is active (--all
                                      includes retired and revoked agents)
@@ -336,6 +339,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.devices(rest)
 	case "members", "member":
 		return a.members(rest)
+	case "name":
+		return a.name(rest)
 	case "status":
 		return a.status(rest)
 	case "who":
@@ -1223,6 +1228,61 @@ func (a *app) status(args []string) error {
 		return err
 	}
 	a.printf("%s %s: %s\n", p.Emoji, p.Name, firstNonEmpty(p.Status, "(no status)"))
+	return nil
+}
+
+// name changes your name and emoji in this workspace (#303), or shows them
+// when given neither. A rename is written to the saved session too, which
+// carries your name.
+func (a *app) name(args []string) error {
+	fs := flag.NewFlagSet("name", flag.ContinueOnError)
+	emoji := fs.String("emoji", "", "your new emoji")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 1 {
+		return fmt.Errorf("%w: a name is one word: unison name <new-name> [--emoji E]", errUsage)
+	}
+	patch := map[string]string{}
+	if len(rest) == 1 {
+		patch["name"] = rest[0]
+	}
+	if *emoji != "" {
+		patch["emoji"] = *emoji
+	}
+	path, err := a.wsPath("/me")
+	if err != nil {
+		return err
+	}
+	if err := a.needToken(); err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if len(patch) == 0 {
+		err = a.client().do("GET", path, nil, &raw)
+	} else {
+		err = a.client().do("PATCH", path, patch, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	var p store.Participant
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return err
+	}
+	// Only the session in the file is renamed: not one given by flag or
+	// environment, which may be somebody else's.
+	if a.cfg.path != "" && a.cfg.Workspace == a.ws && a.cfg.ParticipantID == p.ID && a.cfg.Name != p.Name {
+		a.cfg.Name = p.Name
+		if err := a.cfg.save(); err != nil {
+			return err
+		}
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	a.printf("You are %s %s\n", p.Emoji, p.Name)
 	return nil
 }
 
@@ -2345,6 +2405,17 @@ func (a *app) wait(args []string) error {
 		}
 		var relevant []store.Event
 		for _, e := range resp.Events {
+			// Renamed while waiting (#303): answer to the new name from here
+			// on, and don't write the old one back with the cursor below.
+			if e.Type == "participant.updated" {
+				var p store.Participant
+				if json.Unmarshal(e.Data, &p) == nil && p.ID == me.ID && p.Name != "" {
+					me.Name = p.Name
+					if a.cfg.ParticipantID == p.ID {
+						a.cfg.Name = p.Name
+					}
+				}
+			}
 			if f.Concerns(e) {
 				relevant = append(relevant, e)
 			}

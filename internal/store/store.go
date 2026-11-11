@@ -622,8 +622,8 @@ func nullString(v string) any {
 // insertParticipant creates a participant and records participant.joined.
 func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link participantLink) (*Participant, string, error) {
 	name, emoji = strings.TrimSpace(name), strings.TrimSpace(emoji)
-	if strings.ContainsAny(name, " \t\n@") {
-		return nil, "", fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+	if err := validName(name); err != nil {
+		return nil, "", err
 	}
 	if _, err := scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, wsID)); err != nil {
 		return nil, "", err
@@ -667,6 +667,16 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 	p := &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now,
 		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive}
 	return p, token, log.add(wsID, "participant.joined", id, p)
+}
+
+// validName applies the rule every participant name follows, at joining
+// and at renaming: one word, no '@', since names are how people are
+// mentioned.
+func validName(name string) error {
+	if strings.ContainsAny(name, " \t\n@") {
+		return fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+	}
+	return nil
 }
 
 func freeName(t *tx, wsID string) (string, error) {
@@ -770,19 +780,61 @@ func (s *Store) GetParticipant(ctx context.Context, wsID string, id int64) (*Par
 	return scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants WHERE workspace_id = ? AND id = ?`, wsID, id))
 }
 
-// SetStatus updates a participant's free-form status line.
-func (s *Store) SetStatus(ctx context.Context, p *Participant, status string) (*Participant, []Event, error) {
-	status = strings.TrimSpace(status)
+// ParticipantPatch is what participants may change about themselves in a
+// workspace (#303). A nil field stays as it is.
+type ParticipantPatch struct {
+	Name   *string
+	Emoji  *string
+	Status *string // "" clears it
+}
+
+// UpdateParticipant changes p's name, emoji and status line: whichever the
+// patch carries. A name follows the rules of joining: one word, no '@',
+// and not another participant's in this workspace whatever the case
+// (ErrConflict). Messages that @mention the old name stay as written.
+func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch ParticipantPatch) (*Participant, []Event, error) {
+	var set []string
+	var args []any
+	next := *p
+	if patch.Name != nil {
+		next.Name = strings.TrimSpace(*patch.Name)
+		if next.Name == "" {
+			return nil, nil, fmt.Errorf("%w: a name is required", ErrInvalid)
+		}
+		if err := validName(next.Name); err != nil {
+			return nil, nil, err
+		}
+		set, args = append(set, "name = ?"), append(args, next.Name)
+	}
+	if patch.Emoji != nil {
+		next.Emoji = strings.TrimSpace(*patch.Emoji)
+		if next.Emoji == "" {
+			return nil, nil, fmt.Errorf("%w: an emoji is required", ErrInvalid)
+		}
+		set, args = append(set, "emoji = ?"), append(args, next.Emoji)
+	}
+	if patch.Status != nil {
+		next.Status = strings.TrimSpace(*patch.Status)
+		set, args = append(set, "status = ?"), append(args, next.Status)
+	}
+	if len(set) == 0 {
+		return p, nil, nil
+	}
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`UPDATE participants SET status = ?, last_seen_at = ? WHERE id = ?`, status, log.now, p.ID); err != nil {
+		next.LastSeenAt = log.now
+		args := append(args, log.now, p.ID)
+		if _, err := t.Exec(`UPDATE participants SET `+strings.Join(set, ", ")+`, last_seen_at = ? WHERE id = ?`, args...); err != nil {
+			if isUniqueViolation(err) {
+				return fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, next.Name)
+			}
 			return err
 		}
-		p.Status, p.LastSeenAt = status, log.now
-		return log.add(p.WorkspaceID, "participant.updated", p.ID, p)
+		return log.add(p.WorkspaceID, "participant.updated", p.ID, &next)
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	*p = next
 	return p, evs, nil
 }
 
