@@ -74,6 +74,8 @@ Server:
 Workspaces & identity:
   workspace [show]                   show the current workspace
   workspace list                     your workspaces (needs login)
+  workspace stats                    how many workspaces this server has, and how
+                                     many are new (counts only; no login needed)
   workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]
                                      (needs login; you become its first member;
                                      --create-canvas makes a new isocan canvas
@@ -601,6 +603,8 @@ func (a *app) workspace(args []string) error {
 			a.printf("%s  %s  %s\n", ws.ID, ws.Name, repos)
 		}
 		return nil
+	case "stats":
+		return a.workspaceStats(args)
 	case "create":
 		return a.workspaceCreate(args)
 	case "set":
@@ -637,6 +641,29 @@ func (a *app) workspace(args []string) error {
 		return a.workspaceLink(args)
 	}
 	return fmt.Errorf("%w: unknown workspace subcommand %q", errUsage, sub)
+}
+
+// workspaceStats prints how many workspaces this server has (#301). The
+// endpoint is public, so it needs no login and no workspace.
+func (a *app) workspaceStats(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("%w: workspace stats takes no arguments", errUsage)
+	}
+	var raw json.RawMessage
+	if err := newClient(a.server, "").do("GET", "/api/workspaces/stats", nil, &raw); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var st store.WorkspaceStats
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return err
+	}
+	a.printf("Workspaces           %d\n", st.Total)
+	a.printf("Created last 7 days  %d\n", st.CreatedLast7Days)
+	a.printf("Created today        %d (the past 24 hours)\n", st.CreatedToday)
+	return nil
 }
 
 func (a *app) printWorkspace(ws *store.Workspace) {

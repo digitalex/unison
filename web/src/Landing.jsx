@@ -1,5 +1,7 @@
 import { Bot, Github, ListChecks, LogIn, PenTool, Repeat, SlidersHorizontal } from "lucide-react";
+import { useEffect, useState } from "react";
 import { AccountMenu, AppleLogo } from "./Account.jsx";
+import { api } from "./api.js";
 import { LegalLinks } from "./Legal.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 
@@ -75,6 +77,44 @@ function SignInButtons({ providers }) {
   );
 }
 
+// The public counters (#301), in the order they are shown. The windows are
+// rolling: "today" is the past 24 hours.
+const STATS = [
+  { key: "total", label: "Total workspaces" },
+  { key: "created_last_7_days", label: "Created in the last 7 days" },
+  { key: "created_today", label: "Created today" },
+];
+
+// WorkspaceStats shows how many workspaces this server has: counts only,
+// from GET /api/workspaces/stats, which needs no sign-in. The row holds its
+// place while the numbers load, and goes away if they can't be had: the
+// page reads fine without it.
+function WorkspaceStats() {
+  const [stats, setStats] = useState(null);
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let live = true;
+    api("GET", "/api/workspaces/stats").then(
+      (s) => live && setStats(s),
+      () => live && setFailed(true),
+    );
+    return () => {
+      live = false;
+    };
+  }, []);
+  if (failed) return null;
+  return (
+    <dl className="stats" aria-busy={!stats}>
+      {STATS.map(({ key, label }) => (
+        <div key={key} className="stat">
+          <dt>{label}</dt>
+          <dd>{stats ? Number(stats[key] || 0).toLocaleString() : "\u2013"}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
 // Landing is Home for signed-out visitors. `children` (workspace lists, and
 // the create form where sign-in isn't configured) render below the fold.
 export default function Landing({ account, children }) {
@@ -90,6 +130,7 @@ export default function Landing({ account, children }) {
             your agents use to claim work, report progress and wait for the next mention.
           </p>
           {account.ready && <SignInButtons providers={account.providers} />}
+          <WorkspaceStats />
         </section>
         <figure className="hero-shot">
           <img

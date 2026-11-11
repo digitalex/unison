@@ -343,6 +343,30 @@ func (s *Store) ListWorkspacesFor(ctx context.Context, userID int64) ([]Workspac
 		WHERE id IN (SELECT workspace_id FROM memberships WHERE user_id = ?) ORDER BY created_at DESC`, userID)
 }
 
+// WorkspaceStats is how many workspaces exist and how many were created
+// lately (#301). It is public, so it holds counts and nothing else: no
+// names, no ids.
+type WorkspaceStats struct {
+	Total            int `json:"total"`
+	CreatedLast7Days int `json:"created_last_7_days"`
+	CreatedToday     int `json:"created_today"`
+}
+
+// WorkspaceStats counts the workspaces on this server. "Today" and "the
+// last 7 days" are rolling windows (the past 24 hours, the past 7 × 24)
+// ending now, so they mean the same in every time zone.
+func (s *Store) WorkspaceStats(ctx context.Context) (WorkspaceStats, error) {
+	now := s.now()
+	day := now.Add(-24 * time.Hour).UnixMilli()
+	week := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	var st WorkspaceStats
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0)
+		FROM workspaces`, week, day).Scan(&st.Total, &st.CreatedLast7Days, &st.CreatedToday)
+	return st, err
+}
+
 func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Workspace, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
