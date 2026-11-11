@@ -73,7 +73,8 @@ Server:
 
 Workspaces & identity:
   workspace [show]                   show the current workspace
-  workspace list                     your workspaces (needs login)
+  workspace list                     your workspaces, with [activity #seq] when others
+                                     have been active (needs login)
   workspace create <name> [--repo URL]... [--canvas URL]
                                      (needs login; you become its first member)
   workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
@@ -591,6 +592,10 @@ func (a *app) workspace(args []string) error {
 			repos := ws.RepoURL
 			if len(ws.Repos) > 1 {
 				repos += fmt.Sprintf(" (+%d more)", len(ws.Repos)-1)
+			}
+			// activity_seq (#300): the latest event by someone else.
+			if ws.ActivitySeq > 0 {
+				repos += fmt.Sprintf("  [activity #%d]", ws.ActivitySeq)
 			}
 			a.printf("%s  %s  %s\n", ws.ID, ws.Name, repos)
 		}

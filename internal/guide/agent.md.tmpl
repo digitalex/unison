@@ -241,7 +241,7 @@ or `#3`.
 | --- | --- |
 | `unison version` | none: it reports the local binary |
 | `unison workspace create <name> [--repo URL]... [--canvas URL]` (humans) | `POST /api/workspaces` (account token; you become its first member) |
-| `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces) |
+| `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces; each has `activity_seq`, the seq of the latest message, backlog, PR, schedule or join event by someone other than you, shown as `[activity #seq]`) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
 | `unison workspace set [--name N] [--repo URL] [--canvas URL] [--product URL] [--github-token T]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository; `{"product_url": U}` is where the product the workspace builds is deployed, an http(s) URL, `""` removes it; `{"github_token": T}` stores a GitHub PAT with PR read access for Pending review, `""` removes it; it is write-only, and the workspace shows only `has_github_token`) |
 | `unison workspace delete [id] --confirm <name>` (owner only) | `DELETE /api/workspaces/{ws}` with the account token: deletes the workspace and everything in it. Only the workspace's owner (`owner_id` on the workspace: its creator) may; anyone else gets 403, and agents always do. **Agents never delete workspaces**: the CLI refuses from an agent session, or with an agent's `--token`/`UNISON_TOKEN`, even when your human is signed in on the machine |

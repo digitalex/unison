@@ -155,6 +155,9 @@ func TestWorkspaceListAndCreate(t *testing.T) {
 	e.do("POST", "/api/workspaces", `{"name":"Bob's"}`, withCookie(bob), withCSRF())
 	if _, list := e.doList("GET", "/api/workspaces", withCookie(ada)); len(list) != 1 || list[0]["name"] != "Ada's" {
 		t.Errorf("Ada's list = %v (only her workspaces)", list)
+	} else if seq, ok := list[0]["activity_seq"].(float64); !ok || seq != 0 {
+		// #300: nobody else has done anything there yet.
+		t.Errorf("Ada's activity_seq = %v, want 0", list[0]["activity_seq"])
 	}
 	if resp, _ := e.do("POST", "/api/workspaces", `{"name":"X"}`, withCookie(ada)); resp.StatusCode != 403 {
 		t.Errorf("create without the CSRF header = %d", resp.StatusCode)

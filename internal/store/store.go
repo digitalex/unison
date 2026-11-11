@@ -67,6 +67,11 @@ type Workspace struct {
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
+	// ActivitySeq is the seq of the workspace's latest collaboration event
+	// by someone else (#300), 0 if none. Only workspace lists fill it in:
+	// clients compare it with the last seq they saw to show unread
+	// activity.
+	ActivitySeq int64 `json:"activity_seq"`
 }
 
 // Participant is a registered human or agent. Unison makes no distinction
@@ -329,17 +334,44 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 
 // ListWorkspaces returns all workspaces, newest first.
 func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
-	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
+	return s.listWorkspaces(ctx, 0, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
 }
 
 // ListWorkspacesFor returns the workspaces userID is a member of, newest
 // first.
 func (s *Store) ListWorkspacesFor(ctx context.Context, userID int64) ([]Workspace, error) {
-	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces
+	return s.listWorkspaces(ctx, userID, `SELECT `+workspaceCols+` FROM workspaces
 		WHERE id IN (SELECT workspace_id FROM memberships WHERE user_id = ?) ORDER BY created_at DESC`, userID)
 }
 
-func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Workspace, error) {
+// activityTypes are the events that count as collaboration activity
+// (#300): what people say and do to the work. Presence and bookkeeping
+// (status updates, message.done, lease expiry, renewals) don't.
+var activityTypes = []string{
+	"message.created",
+	"backlog.added", "backlog.updated", "backlog.started", "backlog.stopped", "backlog.released",
+	"backlog.assigned", "backlog.unassigned", "backlog.closed", "backlog.reopened", "backlog.moved", "backlog.deleted",
+	"comment.added", "pr.linked", "pr.unlinked",
+	"schedule.added", "schedule.updated", "schedule.removed",
+	"participant.joined", "participant.revoked",
+}
+
+// activitySeq returns the seq of wsID's latest activity event not by
+// userID's own participants (userID 0: by anyone).
+func (s *Store) activitySeq(ctx context.Context, wsID string, userID int64) (int64, error) {
+	q := `SELECT COALESCE(MAX(seq), 0) FROM events WHERE workspace_id = ? AND type IN (?` + strings.Repeat(", ?", len(activityTypes)-1) + `)
+		AND COALESCE(actor_id, 0) NOT IN (SELECT id FROM participants WHERE workspace_id = ? AND user_id = ?)`
+	args := []any{wsID}
+	for _, t := range activityTypes {
+		args = append(args, t)
+	}
+	args = append(args, wsID, userID)
+	var seq int64
+	err := s.db.QueryRowContext(ctx, q, args...).Scan(&seq)
+	return seq, err
+}
+
+func (s *Store) listWorkspaces(ctx context.Context, userID int64, q string, args ...any) ([]Workspace, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -362,6 +394,9 @@ func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Wo
 	}
 	out := make([]Workspace, 0, len(list))
 	for _, w := range list {
+		if w.ActivitySeq, err = s.activitySeq(ctx, w.ID, userID); err != nil {
+			return nil, err
+		}
 		out = append(out, *w)
 	}
 	return out, nil
