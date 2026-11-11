@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // LeaseDuration is how long an assignment holds a backlog item before it is
@@ -80,8 +82,11 @@ type Participant struct {
 	Name        string `json:"name"`
 	Emoji       string `json:"emoji"`
 	Status      string `json:"status"`
-	CreatedAt   int64  `json:"created_at"`
-	LastSeenAt  int64  `json:"last_seen_at"`
+	// Model is the AI model an agent says it runs on (#304): its own word,
+	// shown next to its name. "" when it hasn't said.
+	Model      string `json:"model,omitempty"`
+	CreatedAt  int64  `json:"created_at"`
+	LastSeenAt int64  `json:"last_seen_at"`
 	// UserID is the account this participant is linked to (by joining while
 	// signed in, or by a claim); 0 when unlinked.
 	UserID int64 `json:"user_id,omitempty"`
@@ -554,15 +559,15 @@ func deleteWorkspace(t *tx, id string) error {
 // participantCols are selected FROM participants (unaliased).
 const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at, user_id, sponsor_user_id,
 	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at, revoked_at,
-	revoke_reason, last_active_at`
+	revoke_reason, last_active_at, model`
 
 // scanParticipant scans participantCols, then any extra columns into extra.
 func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Participant, error) {
 	var p Participant
 	var userID, sponsorID, expires, revoked, active sql.NullInt64
-	var sponsorName, reason sql.NullString
+	var sponsorName, reason, model sql.NullString
 	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires, &revoked,
-		&reason, &active}, extra...)
+		&reason, &active, &model}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -570,7 +575,7 @@ func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Partic
 		return nil, err
 	}
 	p.UserID, p.TokenExpiresAt, p.RevokedAt = userID.Int64, expires.Int64, revoked.Int64
-	p.RevokeReason, p.LastActiveAt = reason.String, active.Int64
+	p.RevokeReason, p.LastActiveAt, p.Model = reason.String, active.Int64, model.String
 	if sponsorID.Valid {
 		p.Sponsor = &Sponsor{UserID: sponsorID.Int64, DisplayName: sponsorName.String}
 	}
@@ -603,6 +608,16 @@ func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participan
 // sliding token expiry). The zero value is a plain, unlinked participant.
 type participantLink struct {
 	UserID, SponsorUserID, TokenExpiresAt int64
+	// Model is the model an agent joining with a pass says it runs on.
+	Model string
+}
+
+// nullableText is s, or NULL for "".
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func nullable(v int64) any {
@@ -655,9 +670,9 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 	if link.SponsorUserID != 0 {
 		lastActive = now
 	}
-	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at, last_active_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
-		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt), nullable(lastActive))
+	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at, last_active_at, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt), nullable(lastActive), nullableText(link.Model))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, "", fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
@@ -665,7 +680,7 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 		return nil, "", err
 	}
 	p := &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now,
-		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive}
+		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive, Model: link.Model}
 	return p, token, log.add(wsID, "participant.joined", id, p)
 }
 
@@ -677,6 +692,23 @@ func validName(name string) error {
 		return fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
 	}
 	return nil
+}
+
+// ModelMax is the longest model name a participant may report, in
+// characters.
+const ModelMax = 64
+
+// validModel tidies the model a participant reports (#304): one line of at
+// most ModelMax characters. It is the agent's own word, shown as given.
+func validModel(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if strings.IndexFunc(model, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%w: a model is one line of text", ErrInvalid)
+	}
+	if utf8.RuneCountInString(model) > ModelMax {
+		return "", fmt.Errorf("%w: a model is at most %d characters", ErrInvalid, ModelMax)
+	}
+	return model, nil
 }
 
 func freeName(t *tx, wsID string) (string, error) {
@@ -786,10 +818,11 @@ type ParticipantPatch struct {
 	Name   *string
 	Emoji  *string
 	Status *string // "" clears it
+	Model  *string // the model an agent runs on (#304); "" clears it
 }
 
-// UpdateParticipant changes p's name, emoji and status line: whichever the
-// patch carries. A name follows the rules of joining: one word, no '@',
+// UpdateParticipant changes p's name, emoji, status line and model:
+// whichever the patch carries. A name follows the rules of joining: one word, no '@',
 // and not another participant's in this workspace whatever the case
 // (ErrConflict). Messages that @mention the old name stay as written.
 func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch ParticipantPatch) (*Participant, []Event, error) {
@@ -816,6 +849,14 @@ func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch Par
 	if patch.Status != nil {
 		next.Status = strings.TrimSpace(*patch.Status)
 		set, args = append(set, "status = ?"), append(args, next.Status)
+	}
+	if patch.Model != nil {
+		model, err := validModel(*patch.Model)
+		if err != nil {
+			return nil, nil, err
+		}
+		next.Model = model
+		set, args = append(set, "model = ?"), append(args, nullableText(model))
 	}
 	if len(set) == 0 {
 		return p, nil, nil

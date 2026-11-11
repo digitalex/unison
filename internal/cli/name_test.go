@@ -79,6 +79,31 @@ func TestName(t *testing.T) {
 		t.Errorf("saved session name after refusals = %q, want Wren", got)
 	}
 
+	// The model an agent runs on (#304): said at joining or later, shown
+	// after its name, kept across a rename, cleared with "-".
+	modelDir := t.TempDir()
+	if out := e.ok(modelDir, "join", url, "--pass", e.passFor(human), "--name", "Lark", "--model", "sonnet-5"); !strings.Contains(out, "Lark (sonnet-5) (participant") {
+		t.Errorf("join --model = %q", out)
+	}
+	if out := e.ok(human, "who"); !strings.Contains(out, "Lark (sonnet-5) · agent of Alex") || !strings.Contains(out, "🐤 Wren · agent of Alex") {
+		t.Errorf("who = %q", out)
+	}
+	if out := e.ok(modelDir, "name", "--model", "opus-5"); !strings.HasSuffix(out, "Lark (opus-5)\n") {
+		t.Errorf("name --model = %q", out)
+	}
+	if out := e.ok(modelDir, "name", "Skylark"); !strings.HasSuffix(out, "Skylark (opus-5)\n") {
+		t.Errorf("a rename dropped the model: %q", out)
+	}
+	if out := e.ok(modelDir, "whoami"); !strings.Contains(out, "Model: opus-5\n") {
+		t.Errorf("whoami = %q", out)
+	}
+	if out := e.ok(modelDir, "name", "--model", "-"); !strings.HasSuffix(out, " Skylark\n") {
+		t.Errorf("name --model - = %q", out)
+	}
+	if _, errOut, code := e.run(modelDir, "name", "--model", strings.Repeat("m", 65)); code == 0 || !strings.Contains(errOut, "at most 64 characters") {
+		t.Errorf("a 65-character model: exit %d %q", code, errOut)
+	}
+
 	// Renamed elsewhere (the web UI) while parked: wait wakes for the new
 	// name and writes it, not the old one, back with its cursor.
 	other := t.TempDir()

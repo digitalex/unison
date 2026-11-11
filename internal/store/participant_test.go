@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -125,4 +126,91 @@ func flipCase(s string) string {
 		}
 	}
 	return string(b)
+}
+
+// An agent says which model it runs on, at joining or later (#304).
+func TestParticipantModel(t *testing.T) {
+	s, _, ws, alex, _ := passSetup(t)
+	ctx := context.Background()
+	human, _, _, err := s.Join(ctx, ws.ID, "Human", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	pass := func() string {
+		t.Helper()
+		p, _, err := s.MintPass(ctx, ws.ID, alex.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	quill, _, evs, err := s.JoinAgent(ctx, ws.ID, pass(), AgentJoin{Name: "Quill", Model: "  sonnet-5  "})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if quill.Model != "sonnet-5" || len(evs) == 0 {
+		t.Fatalf("joined: %+v", quill)
+	}
+	var joined Participant
+	if err := json.Unmarshal(evs[0].Data, &joined); err != nil || joined.Model != "sonnet-5" {
+		t.Fatalf("participant.joined carries %s (%v)", evs[0].Data, err)
+	}
+	stored := func(id int64) Participant {
+		t.Helper()
+		list, err := s.ListParticipants(ctx, ws.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, p := range list {
+			if p.ID == id {
+				return p
+			}
+		}
+		t.Fatalf("participant %d is gone", id)
+		return Participant{}
+	}
+	if got := stored(quill.ID); got.Model != "sonnet-5" {
+		t.Fatalf("stored: %+v", got)
+	}
+	if got := stored(human.ID); got.Model != "" {
+		t.Fatalf("a participant who never said a model has %q", got.Model)
+	}
+
+	// Changing it leaves the rest alone, and tells everyone.
+	got, evs, err := s.UpdateParticipant(ctx, quill, ParticipantPatch{Model: ptr("opus-5")})
+	if err != nil || got.Model != "opus-5" || got.Name != "Quill" || len(evs) != 1 || evs[0].Type != "participant.updated" {
+		t.Fatalf("model only: %+v, %v, %v", got, evs, err)
+	}
+	// A rename keeps it; "" clears it.
+	if got, _, err := s.UpdateParticipant(ctx, quill, ParticipantPatch{Name: ptr("Plume")}); err != nil || got.Model != "opus-5" {
+		t.Fatalf("after a rename: %+v, %v", got, err)
+	}
+	if got, _, err := s.UpdateParticipant(ctx, quill, ParticipantPatch{Model: ptr(" ")}); err != nil || got.Model != "" || stored(quill.ID).Model != "" {
+		t.Fatalf("cleared: %+v, %v", got, err)
+	}
+
+	// One line, at most ModelMax characters (not bytes).
+	longest := strings.Repeat("é", ModelMax)
+	if got, _, err := s.UpdateParticipant(ctx, quill, ParticipantPatch{Model: &longest}); err != nil || got.Model != longest {
+		t.Fatalf("a %d-character model: %v", ModelMax, err)
+	}
+	for _, bad := range []string{longest + "é", "two\nlines", "tab\tbed"} {
+		if _, evs, err := s.UpdateParticipant(ctx, quill, ParticipantPatch{Model: &bad}); !errors.Is(err, ErrInvalid) || len(evs) != 0 {
+			t.Errorf("model %q: %v, want ErrInvalid", bad, err)
+		}
+		if _, _, _, err := s.JoinAgent(ctx, ws.ID, pass(), AgentJoin{Name: "Bad", Model: bad}); !errors.Is(err, ErrInvalid) {
+			t.Errorf("joining with model %q: %v, want ErrInvalid", bad, err)
+		}
+	}
+
+	// Coming back under the same name keeps the model unless a new one is given.
+	back, _, _, err := s.JoinAgent(ctx, ws.ID, pass(), AgentJoin{Name: "Plume"})
+	if err != nil || back.ID != quill.ID || back.Model != longest {
+		t.Fatalf("re-joined: %+v, %v", back, err)
+	}
+	back, _, _, err = s.JoinAgent(ctx, ws.ID, pass(), AgentJoin{Name: "Plume", Model: "haiku-5"})
+	if err != nil || back.Model != "haiku-5" || stored(quill.ID).Model != "haiku-5" {
+		t.Fatalf("re-joined with a model: %+v, %v", back, err)
+	}
 }

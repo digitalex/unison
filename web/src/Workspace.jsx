@@ -339,7 +339,7 @@ export default function Workspace({ id, view, navigate, account }) {
           // The roster's row is the live one: `me` is as of the last load.
           me={participants.find((p) => p.id === me.id) || me}
           call={call}
-          onSaved={(p) => setMe((m) => (m ? { ...m, name: p.name, emoji: p.emoji, status: p.status } : m))}
+          onSaved={(p) => setMe((m) => (m ? { ...m, name: p.name, emoji: p.emoji, status: p.status, model: p.model } : m))}
           onClose={() => setEditingMe(false)}
         />
       )}
@@ -964,8 +964,12 @@ function byName(participants) {
   return [...participants].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id - b.id);
 }
 
+// " (model)" for a participant that says which model it runs on (#304).
+const modelOf = (p) => (p.model ? ` (${p.model})` : "");
+
 // People: who's here among the humans or the agents (kind), one row per participant (an account has one per
-// workspace, #99), with a presence dot and their status. Inactive users
+// workspace, #99), with a presence dot and, for an agent that reports it, its model (#304); the status line is in
+// the row's tooltip, so rows stay one name wide. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
 // at the end of the list; hovering one says when they were last seen. Agents
 // not seen in 24 hours aren't listed (#125). Your own row opens MeDialog (your name, emoji and status, #303);
@@ -995,7 +999,7 @@ function People({ kind, participants, me, onEditMe, onMention }) {
         const mine = me && p.id === me.id;
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
         const status = p.status || (active ? "active" : "away");
-        const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — ${status}${active ? "" : ` · ${lastSeen(p)}`}`;
+        const label = `${p.name}${modelOf(p)}${agentOf}${mine ? " (you)" : ""} — ${status}${active ? "" : ` · ${lastSeen(p)}`}`;
         const content = (
           <>
             <span className={active ? "avatar active" : "avatar"} aria-hidden="true">
@@ -1003,7 +1007,7 @@ function People({ kind, participants, me, onEditMe, onMention }) {
               <span className="dot" />
             </span>
             <span className="person-name">{p.name}</span>
-            {p.status && <span className="person-status">{p.status}</span>}
+            {p.model && <span className="person-model">{p.model}</span>}
           </>
         );
         return (
@@ -1026,7 +1030,7 @@ function People({ kind, participants, me, onEditMe, onMention }) {
             {dormantPeople.map((p) => {
               const mine = me && p.id === me.id;
               const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-              const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — inactive · ${lastSeen(p)}`;
+              const label = `${p.name}${modelOf(p)}${agentOf}${mine ? " (you)" : ""} — inactive · ${lastSeen(p)}`;
               return (
                 <button
                   key={p.id}
