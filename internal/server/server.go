@@ -101,6 +101,9 @@ func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/workspaces", s.listWorkspaces)
 	m.HandleFunc("POST /api/workspaces", s.createWorkspace)
+	// Counts only, for the landing page: no sign-in (#301). The literal path
+	// wins over {ws} below, and no workspace id is ever "stats".
+	m.HandleFunc("GET /api/workspaces/stats", s.workspaceStats)
 	// Everything under a workspace goes through the gate (gate.go)...
 	m.Handle(ws, s.gate(s.ws))
 	m.Handle(ws+"/", s.gate(s.ws))
@@ -342,6 +345,13 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	}
 	list, err := s.store.ListWorkspacesFor(r.Context(), a.user.ID)
 	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+// workspaceStats is public: how many workspaces there are and how many are
+// new, never which ones (#301).
+func (s *Server) workspaceStats(w http.ResponseWriter, r *http.Request) {
+	st, err := s.store.WorkspaceStats(r.Context())
+	s.respond(w, http.StatusOK, st, nil, err)
 }
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {

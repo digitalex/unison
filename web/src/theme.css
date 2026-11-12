@@ -3756,6 +3756,38 @@ html.reordering * {
   padding-top: var(--space-xs);
 }
 
+/* The public counters under the hero (#301): the number over its label. */
+.stats {
+  margin: 0;
+  padding-top: var(--space-s);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s) var(--space-xl);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column-reverse;
+  /* Reversed, so "end" is the top: numbers line up when a label wraps. */
+  justify-content: flex-end;
+}
+
+.stat dt {
+  color: var(--text-secondary);
+  font-size: var(--size-xs);
+  line-height: var(--line-xs);
+}
+
+.stat dd {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  letter-spacing: var(--letter-spacing-l);
+  font-weight: var(--weight-brand-heavy);
+  font-variant-numeric: tabular-nums;
+}
+
 .button-large {
   height: 40px;
   padding: 0 var(--space-m);
@@ -3977,6 +4009,12 @@ html.reordering * {
 
   .hero-actions .button-large {
     flex: 1 1 100%;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-m);
   }
 
   .features {
