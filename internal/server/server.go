@@ -591,13 +591,16 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
+	// Each field is optional, and one left out stays as it is (#303).
 	var req struct {
-		Status string `json:"status"`
+		Name   *string `json:"name"`
+		Emoji  *string `json:"emoji"`
+		Status *string `json:"status"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	p, evs, err := s.store.SetStatus(r.Context(), actor(r), req.Status)
+	p, evs, err := s.store.UpdateParticipant(r.Context(), actor(r), store.ParticipantPatch{Name: req.Name, Emoji: req.Emoji, Status: req.Status})
 	s.respond(w, http.StatusOK, p, evs, err)
 }
 

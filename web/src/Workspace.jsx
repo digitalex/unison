@@ -6,6 +6,7 @@ import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { LinkDialog } from "./Links.jsx";
+import MeDialog from "./MeDialog.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
@@ -164,6 +165,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat", call);
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
+  const [editingMe, setEditingMe] = useState(false); // MeDialog is open
   const joined = Boolean(me);
   const notify = useNotifier(me, participants, view);
   const reviews = usePendingReviews(call, joined ? workspace : null);
@@ -231,6 +233,8 @@ export default function Workspace({ id, view, navigate, account }) {
   // stream open also keeps us present in the roster.
   const messagesNow = useRef(messages);
   messagesNow.current = messages;
+  const meNow = useRef(me);
+  meNow.current = me;
   // Item events carry the item (comment events too, as data.item).
   const applyItemEvent = ({ type, data }) => {
     if (type === "backlog.deleted" && data?.id) return setBacklog((list) => list.filter((it) => it.id !== data.id));
@@ -268,6 +272,8 @@ export default function Workspace({ id, view, navigate, account }) {
       applyMessageEvent(event);
       applyItemEvent(event);
       collectionFor(event).forEach(reload);
+      // Renamed, or a new emoji or status, from here or anywhere else (#303).
+      if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
     };
     const roster = setInterval(() => reload("participants"), 30000);
     return () => {
@@ -317,8 +323,7 @@ export default function Workspace({ id, view, navigate, account }) {
                 kind={kind}
                 participants={participants}
                 me={me}
-                call={call}
-                onError={setError}
+                onEditMe={() => setEditingMe(true)}
                 onMention={(name) => {
                   setMention(name);
                   screens.show("chat");
@@ -329,6 +334,15 @@ export default function Workspace({ id, view, navigate, account }) {
           ))
         }
       />
+      {editingMe && me && (
+        <MeDialog
+          // The roster's row is the live one: `me` is as of the last load.
+          me={participants.find((p) => p.id === me.id) || me}
+          call={call}
+          onSaved={(p) => setMe((m) => (m ? { ...m, name: p.name, emoji: p.emoji, status: p.status } : m))}
+          onClose={() => setEditingMe(false)}
+        />
+      )}
       {view === "settings" && joined ? (
         <main className="shell-main panel">
           <SettingsPage
@@ -954,18 +968,9 @@ function byName(participants) {
 // workspace, #99), with a presence dot and their status. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
 // at the end of the list; hovering one says when they were last seen. Agents
-// not seen in 24 hours aren't listed (#125). Your own row sets your status; anyone else's starts a
-// chat message to them (@Name).
-function People({ kind, participants, me, call, onError, onMention }) {
-  const setStatus = async () => {
-    const status = window.prompt("Your status", me?.status || "");
-    if (status === null) return;
-    try {
-      await call("PATCH", "/me", { status });
-    } catch (err) {
-      onError(err.message);
-    }
-  };
+// not seen in 24 hours aren't listed (#125). Your own row opens MeDialog (your name, emoji and status, #303);
+// anyone else's starts a chat message to them (@Name).
+function People({ kind, participants, me, onEditMe, onMention }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 15000);
@@ -1004,7 +1009,7 @@ function People({ kind, participants, me, call, onError, onMention }) {
         return (
           <li key={p.id}>
             {mine ? (
-              <button type="button" className="nav-link person" title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
+              <button type="button" className="nav-link person" title={`${label} · edit your name, emoji and status`} aria-label={`${label}. Edit your name, emoji and status`} onClick={onEditMe}>
                 {content}
               </button>
             ) : (
@@ -1027,9 +1032,9 @@ function People({ kind, participants, me, call, onError, onMention }) {
                   key={p.id}
                   type="button"
                   className="dormant-chip"
-                  title={mine ? `${label} · set status` : `${label} · message @${p.name}`}
-                  aria-label={mine ? `${label}. Set status` : `${label}. Message @${p.name}`}
-                  onClick={mine ? setStatus : () => onMention(p.name)}
+                  title={mine ? `${label} · edit your name, emoji and status` : `${label} · message @${p.name}`}
+                  aria-label={mine ? `${label}. Edit your name, emoji and status` : `${label}. Message @${p.name}`}
+                  onClick={mine ? onEditMe : () => onMention(p.name)}
                 >
                   <span className="avatar dormant" aria-hidden="true">
                     {p.emoji}
