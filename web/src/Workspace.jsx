@@ -117,6 +117,27 @@ function isGateError(e) {
 // phones) switches between its screens, and the current one fills the main
 // pane: view is "backlog", "recurring", "chat" or "settings". They all share
 // the data and live updates.
+// The title the page came with (index.html): what Home shows, and what a
+// tab goes back to on leaving a workspace.
+const HOME_TITLE = document.title;
+
+// useTabTitle names the browser tab for the workspace (#302), so tabs open
+// on several workspaces can be told apart: "<Workspace> | Unison" once it
+// has loaded (and again whenever it is renamed), plain "Unison" while it
+// loads or the gate is up, and Home's title again on leaving.
+function useTabTitle(name) {
+  const title = name ? `${name} | Unison` : "Unison";
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
+  useEffect(
+    () => () => {
+      document.title = HOME_TITLE;
+    },
+    [],
+  );
+}
+
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
@@ -127,6 +148,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [gate, setGate] = useState(null); // {code, message} when refused
   const [joins, setJoins] = useState(0); // bumped on joining: reload everything
   const [workspace, setWorkspace] = useState(null);
+  useTabTitle(gate ? "" : workspace?.name);
   const [me, setMe] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
