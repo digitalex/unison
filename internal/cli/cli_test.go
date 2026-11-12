@@ -202,7 +202,7 @@ func TestEndToEnd(t *testing.T) {
 	if errOut := <-done; errOut != "" {
 		t.Fatalf("backlog add: %s", errOut)
 	}
-	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog claim") {
+	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog start 3") {
 		t.Errorf("wait = %q, want the new item", out)
 	}
 	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
@@ -274,6 +274,35 @@ func TestEndToEnd(t *testing.T) {
 	}
 	if out := e.ok(agent, "workspace", "set", "--product", ""); !strings.Contains(out, "Product    (not set)\n") {
 		t.Errorf("workspace set --product \"\" = %q", out)
+	}
+	// Custom links (#299): added, listed, shown in the workspace and the
+	// guide, edited and removed.
+	if out := e.ok(agent, "workspace", "links"); !strings.Contains(out, "No links yet") {
+		t.Errorf("workspace links (none) = %q", out)
+	}
+	if _, errOut, code := e.run(agent, "workspace", "link", "add", "Spec", "spec.example.com"); code != 1 || !strings.Contains(errOut, "link URL must be an http(s) URL") {
+		t.Errorf("link add with a bad URL: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "workspace", "link", "add", "Design doc", "https://docs.example.com/design"); !strings.Contains(out, "Added link 1   Design doc  https://docs.example.com/design") {
+		t.Errorf("link add = %q", out)
+	}
+	if out := e.ok(human, "workspace"); !strings.Contains(out, "Links      1   Design doc  https://docs.example.com/design\n") {
+		t.Errorf("workspace show lacks the link: %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Design doc | https://docs.example.com/design |\n") {
+		t.Errorf("agent guide lacks the link:\n%s", out)
+	}
+	if out := e.ok(human, "workspace", "link", "edit", "1", "--name", "Spec | v2"); !strings.Contains(out, "Updated link 1   Spec | v2  https://docs.example.com/design") {
+		t.Errorf("link edit = %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Spec \\| v2 | https://docs.example.com/design |\n") {
+		t.Errorf("agent guide doesn't escape the link name:\n%s", out)
+	}
+	if out := e.ok(agent, "workspace", "links"); !strings.Contains(out, "1   Spec | v2  https://docs.example.com/design") {
+		t.Errorf("workspace links = %q", out)
+	}
+	if out := e.ok(agent, "workspace", "link", "remove", "1"); !strings.Contains(out, "Removed link 1.") {
+		t.Errorf("link remove = %q", out)
 	}
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison-web |") {
 		t.Errorf("agent help lacks the repositories:\n%s", out)

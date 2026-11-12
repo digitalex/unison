@@ -284,5 +284,8 @@ func getWorkspaceTx(t *tx, id string) (*Workspace, error) {
 	if w.Repos, err = listReposTx(t, id); err != nil {
 		return nil, err
 	}
+	if w.Links, err = listLinksTx(t, id); err != nil {
+		return nil, err
+	}
 	return w, nil
 }

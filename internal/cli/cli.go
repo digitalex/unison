@@ -91,6 +91,10 @@ Workspaces & identity:
   workspace repo add <url>
   workspace repo edit <id> --url U
   workspace repo remove <id>
+  workspace links                    the workspace's links (specs, docs, …)
+  workspace link add <name> <url>
+  workspace link edit <id> [--name N] [--url U]
+  workspace link remove <id>
   join <workspace-url> [--name N] [--emoji E] (--pass P | --account [--invite T])
                                      join; saves .unison.json here. Workspaces are
                                      private: agents need --pass (the pass from
@@ -617,6 +621,20 @@ func (a *app) workspace(args []string) error {
 		return nil
 	case "repo":
 		return a.workspaceRepo(args)
+	case "links":
+		var links []store.Link
+		if ok, err := a.call("GET", "/links", nil, &links, false); !ok {
+			return err
+		}
+		if len(links) == 0 {
+			a.printf("No links yet. Add one: unison workspace link add <name> <url>\n")
+		}
+		for _, l := range links {
+			a.printf("%s\n", linkLine(l))
+		}
+		return nil
+	case "link":
+		return a.workspaceLink(args)
 	}
 	return fmt.Errorf("%w: unknown workspace subcommand %q", errUsage, sub)
 }
@@ -636,6 +654,13 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 	}
 	a.printf("Canvas     %s\n", firstNonEmpty(ws.CanvasURL, "(not set)"))
 	a.printf("Product    %s\n", firstNonEmpty(ws.ProductURL, "(not set)"))
+	for i, l := range ws.Links {
+		heading := "Links     "
+		if i > 0 {
+			heading = "          "
+		}
+		a.printf("%s %s\n", heading, linkLine(l))
+	}
 	token := "(not set: Pending review is off)"
 	if ws.HasGitHubToken {
 		token = "set"
@@ -735,6 +760,64 @@ func (a *app) workspaceRepo(args []string) error {
 		return nil
 	}
 	return fmt.Errorf("%w: workspace repo add <url> | edit <id> --url U | remove <id>", errUsage)
+}
+
+func linkLine(l store.Link) string {
+	return fmt.Sprintf("%-3d %s  %s", l.ID, l.Name, l.URL)
+}
+
+// workspaceLink adds, edits and removes the workspace's links (#299).
+func (a *app) workspaceLink(args []string) error {
+	const usage = "workspace link add <name> <url> | edit <id> [--name N] [--url U] | remove <id>"
+	if len(args) == 0 {
+		return fmt.Errorf("%w: %s", errUsage, usage)
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("workspace link "+sub, flag.ContinueOnError)
+	patch := map[string]string{}
+	if sub == "edit" {
+		fs.Func("name", "new name", func(v string) error { patch["name"] = v; return nil })
+		fs.Func("url", "new URL", func(v string) error { patch["url"] = v; return nil })
+	}
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	var l store.Link
+	switch {
+	case sub == "add" && len(pos) == 2:
+		patch["name"], patch["url"] = pos[0], pos[1]
+		if ok, err := a.call("POST", "/links", patch, &l, true); !ok {
+			return err
+		}
+		a.printf("Added link %s\n", linkLine(l))
+		return nil
+	case sub == "edit" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		if len(patch) == 0 {
+			return fmt.Errorf("%w: workspace link edit <id> needs --name or --url", errUsage)
+		}
+		if ok, err := a.call("PATCH", fmt.Sprintf("/links/%d", id), patch, &l, true); !ok {
+			return err
+		}
+		a.printf("Updated link %s\n", linkLine(l))
+		return nil
+	case (sub == "remove" || sub == "rm") && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/links/%d", id), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Removed link %d.\n", id)
+		return nil
+	}
+	return fmt.Errorf("%w: %s", errUsage, usage)
 }
 
 func scheduleLine(sc store.Schedule) string {
@@ -2419,7 +2502,7 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
 			} else {
-				line += " (pick it up with `unison backlog claim` if you're free)"
+				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", it.ID)
 			}
 		case "backlog.assigned":
 			if it.AssigneeID != nil {
@@ -2468,6 +2551,10 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var r store.Repo
 		json.Unmarshal(e.Data, &r)
 		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
+	case strings.HasPrefix(e.Type, "link."):
+		var l store.Link
+		json.Unmarshal(e.Data, &l)
+		return fmt.Sprintf("🔗 %s %s link %s", who, strings.TrimPrefix(e.Type, "link."), linkLine(l))
 	case strings.HasPrefix(e.Type, "schedule."):
 		var sc store.Schedule
 		json.Unmarshal(e.Data, &sc)

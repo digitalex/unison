@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, ChevronDown, FolderGit2, Globe, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, FolderGit2, Globe, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
+import { LinkDialog } from "./Links.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
@@ -80,7 +81,7 @@ function collectionFor({ type, data }) {
   // handoff when the owner's account is deleted, #296).
   if (type === "member.removed") return ["members", "activity", "workspace"];
   if (type.startsWith("member.")) return ["members", "workspace"];
-  if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
+  if (type.startsWith("workspace.") || type.startsWith("repo.") || type.startsWith("link.")) return ["workspace"];
   return [];
 }
 
@@ -285,6 +286,7 @@ export default function Workspace({ id, view, navigate, account }) {
         navigate={navigate}
         participants={roster(participants, me)}
         reviews={reviews}
+        call={call}
         people={
           joined &&
           ((kind) => (
@@ -530,10 +532,12 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
-// token, #127), links out (product, canvas, repositories), then settings and your
-// account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews }) {
+// token, #127), links out (product, canvas, repositories, custom links #299),
+// then settings and your account at the bottom.
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews, call }) {
   const repos = workspace.repos || [];
+  const links = workspace.links || [];
+  const [editingLink, setEditingLink] = useState(null); // A link, or "new".
   const height = useWindowHeight();
   const isLowHeight = height < LOW_HEIGHT_THRESHOLD;
   const isVeryLowHeight = height < VERY_LOW_HEIGHT_THRESHOLD;
@@ -549,7 +553,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
 
   const peopleCount = (kind) => (participants ? participants.filter(KINDS[kind]).length : null);
-  const linksCount = (workspace.product_url ? 1 : 0) + (workspace.canvas_url ? 1 : 0) + repos.length;
+  const linksCount = (workspace.product_url ? 1 : 0) + (workspace.canvas_url ? 1 : 0) + repos.length + links.length;
   const needsToken = joined && !workspace.has_github_token;
 
   return (
@@ -614,7 +618,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             {reviewsOpen && (reviews ? <PendingReviewList reviews={reviews} id="sidebar-reviews" /> : <PendingReviewSetup workspaceId={workspace.id} id="sidebar-reviews" />)}
           </section>
         )}
-        {linksCount > 0 && (
+        {(linksCount > 0 || joined) && (
           <section className="sidebar-section" aria-label="Links">
             <SectionHeading
               title="Links"
@@ -652,10 +656,33 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
                     </a>
                   </li>
                 ))}
+                {links.map((l) => (
+                  <li key={`link-${l.id}`} className="nav-link-row">
+                    <a className="nav-link" href={l.url} target="_blank" rel="noreferrer" title={`${l.name}: ${l.url}`}>
+                      <Link2 aria-hidden="true" />
+                      <span className="nav-text">{l.name}</span>
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                    {joined && (
+                      <button type="button" className="nav-link-edit" aria-label={`Edit link ${l.name}`} title="Edit link" onClick={() => setEditingLink(l)}>
+                        <Pencil aria-hidden="true" />
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {joined && (
+                  <li>
+                    <button type="button" className="nav-link nav-invite" aria-haspopup="dialog" onClick={() => setEditingLink("new")}>
+                      <Plus aria-hidden="true" />
+                      Add link
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </section>
         )}
+        {editingLink && <LinkDialog link={editingLink === "new" ? null : editingLink} call={call} onClose={() => setEditingLink(null)} />}
         <span className="spacer" />
       </div>
       <div className="sidebar-foot">
