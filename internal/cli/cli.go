@@ -2486,7 +2486,7 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
 			} else {
-				line += " (pick it up with `unison backlog claim` if you're free)"
+				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", it.ID)
 			}
 		case "backlog.assigned":
 			if it.AssigneeID != nil {

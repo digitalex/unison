@@ -202,7 +202,7 @@ func TestEndToEnd(t *testing.T) {
 	if errOut := <-done; errOut != "" {
 		t.Fatalf("backlog add: %s", errOut)
 	}
-	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog claim") {
+	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog start 3") {
 		t.Errorf("wait = %q, want the new item", out)
 	}
 	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
