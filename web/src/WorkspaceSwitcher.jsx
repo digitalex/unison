@@ -2,7 +2,9 @@ import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { participantName } from "./Account.jsx";
 import { ApiError, api } from "./api.js";
+import { createCanvas } from "./isocan.js";
 import Button from "./ui/Button.jsx";
+import Checkbox from "./ui/Checkbox.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
@@ -145,18 +147,23 @@ function mainRepo(ws) {
 }
 
 // NewWorkspaceDialog creates a workspace and joins it as the signed-in
-// account (with the name and emoji given here), then opens it.
+// account (with the name and emoji given here), then opens it. Its canvas is
+// a URL you paste, or with "Create one" a new isocan canvas named after the
+// workspace, made in an isocan popup when you submit (#297).
 function NewWorkspaceDialog({ account, navigate, onClose }) {
   const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "", me: participantName(account.user), emoji: "" });
+  const [newCanvas, setNewCanvas] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
   const create = async (e) => {
     e.preventDefault();
+    // Before any await: the popup must open while this is still the submit.
+    const canvas = newCanvas ? createCanvas(form.name) : Promise.resolve(form.canvas_url);
     setError("");
     setBusy(true);
     try {
-      const ws = await api("POST", "/api/workspaces", { body: { name: form.name, repo_url: form.repo_url, canvas_url: form.canvas_url } });
+      const ws = await api("POST", "/api/workspaces", { body: { name: form.name, repo_url: form.repo_url, canvas_url: await canvas } });
       // Creating made you a member; joining gives you a participant there.
       // If it fails, the workspace page offers the join form instead.
       await api("POST", `/api/workspaces/${ws.id}/join`, { body: { name: form.me, emoji: form.emoji } }).catch(() => {});
@@ -181,9 +188,28 @@ function NewWorkspaceDialog({ account, navigate, onClose }) {
         <Field label="Repository URL (optional)">
           <Input type="url" placeholder="https://github.com/owner/repo" {...field("repo_url")} />
         </Field>
-        <Field label="Isocan canvas URL (optional)">
-          <Input type="url" placeholder="https://isocan.io/p/…" {...field("canvas_url")} />
-        </Field>
+        <div className="new-workspace-canvas">
+          <Field label="Isocan canvas URL (optional)">
+            <Input
+              type="url"
+              placeholder="https://isocan.io/p/…"
+              value={form.canvas_url}
+              onChange={(e) => {
+                setNewCanvas(false);
+                setForm({ ...form, canvas_url: e.target.value });
+              }}
+            />
+          </Field>
+          <Checkbox
+            checked={newCanvas}
+            onChange={(checked) => {
+              setNewCanvas(checked);
+              if (checked) setForm({ ...form, canvas_url: "" });
+            }}
+          >
+            Create one
+          </Checkbox>
+        </div>
         <div className="new-workspace-me">
           <Field label="Your name in it">
             <Input placeholder="one word" {...field("me")} />
@@ -198,7 +224,7 @@ function NewWorkspaceDialog({ account, navigate, onClose }) {
             Cancel
           </Button>
           <Button type="submit" variant="primary" disabled={busy}>
-            Create workspace
+            {busy && newCanvas ? "Waiting for isocan…" : "Create workspace"}
           </Button>
         </div>
       </form>

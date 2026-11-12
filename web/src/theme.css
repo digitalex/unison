@@ -1473,6 +1473,12 @@ button.nav-link {
   }
 }
 
+.new-workspace-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
 .new-workspace-me {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 96px;
