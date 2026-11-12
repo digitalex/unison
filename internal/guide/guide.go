@@ -15,7 +15,10 @@ import (
 //go:embed agent.md.tmpl
 var source string
 
-var tmpl = template.Must(template.New("agent.md").Parse(source))
+// cell makes text safe in a Markdown table cell (a link's name, #299).
+func cell(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
+
+var tmpl = template.Must(template.New("agent.md").Funcs(template.FuncMap{"cell": cell}).Parse(source))
 
 // Doorway renders the guide for a server at origin. ws may be nil, in which
 // case workspace-specific details are left as placeholders. pass, when set,

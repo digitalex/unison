@@ -64,6 +64,9 @@ type Workspace struct {
 	// workspace has no members.
 	OwnerID int64  `json:"owner_id"`
 	Repos   []Repo `json:"repos"`
+	// Links are the workspace's custom reference links (#299), filled in
+	// for a single workspace (GetWorkspace), not in workspace lists.
+	Links []Link `json:"links"`
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
@@ -269,6 +272,7 @@ func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 		return nil, err
 	}
 	w.Repos = []Repo{}
+	w.Links = []Link{}
 	w.HasGitHubToken = hasToken == 1
 	return &w, nil
 }
@@ -387,7 +391,15 @@ func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error)
 	if err != nil {
 		return nil, err
 	}
-	return w, s.attachRepos(ctx, []*Workspace{w})
+	if err := s.attachRepos(ctx, []*Workspace{w}); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+linkCols+` FROM workspace_links WHERE workspace_id = ? ORDER BY position, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	w.Links, err = scanLinks(rows)
+	return w, err
 }
 
 // WorkspacePatch holds optional workspace field updates. RepoURL is the
@@ -489,6 +501,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
 		`DELETE FROM webhooks WHERE workspace_id = ?`,
 		`DELETE FROM workspace_repos WHERE workspace_id = ?`,
+		`DELETE FROM workspace_links WHERE workspace_id = ?`,
 		`DELETE FROM images WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,

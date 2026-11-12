@@ -121,6 +121,10 @@ func (s *Server) routes() {
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
 	h("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
+	h("GET "+ws+"/links", s.listLinks)
+	h("POST "+ws+"/links", s.auth(s.addLink))
+	h("PATCH "+ws+"/links/{id}", s.auth(s.editLink))
+	h("DELETE "+ws+"/links/{id}", s.auth(s.removeLink))
 	h("GET "+ws+"/reviews", s.listReviews)
 	h("GET "+ws+"/schedules", s.listSchedules)
 	h("POST "+ws+"/schedules", s.auth(s.addSchedule))
@@ -433,6 +437,41 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	evs, err := s.store.RemoveRepo(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
+}
+
+// ---- Custom links (#299) ----
+
+func (s *Server) listLinks(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListLinks(r.Context(), r.PathValue("ws"))
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) addLink(w http.ResponseWriter, r *http.Request) {
+	var req store.LinkInput
+	if !decode(w, r, &req) {
+		return
+	}
+	link, evs, err := s.store.AddLink(r.Context(), actor(r), req)
+	s.respond(w, http.StatusCreated, link, evs, err)
+}
+
+func (s *Server) editLink(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var p store.LinkPatch
+	if !ok || !decode(w, r, &p) {
+		return
+	}
+	link, evs, err := s.store.EditLink(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, link, evs, err)
+}
+
+func (s *Server) removeLink(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	evs, err := s.store.RemoveLink(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
 }
 

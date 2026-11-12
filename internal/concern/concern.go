@@ -68,7 +68,7 @@ func (f *Filter) Concerns(e store.Event) bool {
 		var d store.DeliveryEvent
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
-		strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
+		strings.HasPrefix(e.Type, "link."), strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
 		return !f.MentionsOnly
 	}
 	return false
