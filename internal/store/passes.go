@@ -68,6 +68,26 @@ func isMember(t *tx, wsID string, userID int64) (bool, error) {
 // expired, already used, for another workspace, or sponsor no longer a
 // member.
 func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string) (*Participant, string, []Event, error) {
+	return s.JoinAgent(ctx, wsID, pass, AgentJoin{Name: name, Emoji: emoji})
+}
+
+// AgentJoin is what an agent says about itself on joining with a pass.
+// Everything is optional: a free name and an emoji are picked for it.
+type AgentJoin struct {
+	Name, Emoji string
+	// Model is the AI model it runs on (#304), if it cares to say.
+	Model string
+}
+
+// JoinAgent is JoinWithPass for an agent that may also report its model.
+// An agent re-joining under its old name keeps the emoji and the model it
+// had unless it gives new ones.
+func (s *Store) JoinAgent(ctx context.Context, wsID, pass string, who AgentJoin) (*Participant, string, []Event, error) {
+	name, emoji := who.Name, who.Emoji
+	model, err := validModel(who.Model)
+	if err != nil {
+		return nil, "", nil, err
+	}
 	var p *Participant
 	var token string
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
@@ -120,11 +140,14 @@ func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string
 			if emoji == "" {
 				emoji = existing.Emoji
 			}
+			if model == "" {
+				model = existing.Model
+			}
 			token = randomHex(16)
 			now := log.now
 			tokenExpiresAt := now + AgentCredentialTTL.Milliseconds()
-			_, err = t.Exec(`UPDATE participants SET name = ?, emoji = ?, token = ?, sponsor_user_id = ?, token_expires_at = ?, revoked_at = NULL, revoke_reason = NULL, last_seen_at = ?, last_active_at = ? WHERE id = ?`,
-				name, emoji, token, sponsor, tokenExpiresAt, now, now, existing.ID)
+			_, err = t.Exec(`UPDATE participants SET name = ?, emoji = ?, model = ?, token = ?, sponsor_user_id = ?, token_expires_at = ?, revoked_at = NULL, revoke_reason = NULL, last_seen_at = ?, last_active_at = ? WHERE id = ?`,
+				name, emoji, nullableText(model), token, sponsor, tokenExpiresAt, now, now, existing.ID)
 			if err != nil {
 				return err
 			}
@@ -134,6 +157,7 @@ func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string
 				Name:           name,
 				Emoji:          emoji,
 				Status:         existing.Status,
+				Model:          model,
 				CreatedAt:      existing.CreatedAt,
 				LastSeenAt:     now,
 				UserID:         existing.UserID,
@@ -146,7 +170,7 @@ func (s *Store) JoinWithPass(ctx context.Context, wsID, pass, name, emoji string
 			}
 		} else {
 			p, token, err = insertParticipant(t, log, wsID, name, emoji, participantLink{
-				SponsorUserID: sponsor, TokenExpiresAt: log.now + AgentCredentialTTL.Milliseconds(),
+				SponsorUserID: sponsor, TokenExpiresAt: log.now + AgentCredentialTTL.Milliseconds(), Model: model,
 			})
 			if err != nil {
 				return err

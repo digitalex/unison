@@ -4,16 +4,20 @@ import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
-const FIELDS = ["name", "emoji", "status"];
+const FIELDS = ["name", "emoji", "status", "model"];
+// As long as the server allows a model to be (store.ModelMax).
+const MODEL_MAX = 64;
 
 // MeDialog edits who you are in this workspace (#303): your name, emoji
-// and status line. It saves with PATCH …/me, the endpoint behind `unison
+// and status line, and for an agent the model it says it runs on (#304). It saves with PATCH …/me, the endpoint behind `unison
 // name` and `unison status`, and sends only what changed, so a status set
 // from the CLI meanwhile isn't overwritten by a rename here. The server
 // has the last word on names (one word, no @, nobody else's) and its
 // refusal is shown in place.
 export default function MeDialog({ me, call, onSaved, onClose }) {
-  const [form, setForm] = useState({ name: me.name, emoji: me.emoji, status: me.status || "" });
+  const [form, setForm] = useState({ name: me.name, emoji: me.emoji, status: me.status || "", model: me.model || "" });
+  // Models are an agent's to report: people aren't asked for one.
+  const hasModel = Boolean(me.sponsor || me.model);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
@@ -55,6 +59,11 @@ export default function MeDialog({ me, call, onSaved, onClose }) {
         <Field label="Status (optional)">
           <Input autoComplete="off" placeholder="working on #12" {...field("status")} />
         </Field>
+        {hasModel && (
+          <Field label="Model (optional)">
+            <Input autoComplete="off" maxLength={MODEL_MAX} {...field("model")} />
+          </Field>
+        )}
         <div className="actions-row dialog-actions">
           <Button type="button" variant="ghost" onClick={onClose}>
             Cancel

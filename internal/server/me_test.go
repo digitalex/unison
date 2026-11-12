@@ -62,3 +62,61 @@ func TestUpdateMe(t *testing.T) {
 		t.Errorf("an action for the old name = %d, want 400 (it names nobody now)", status)
 	}
 }
+
+// An agent reports its model on joining with a pass, and changes it with
+// PATCH …/me (#304).
+func TestAgentModel(t *testing.T) {
+	ts, st := newServer(t)
+	ctx := t.Context()
+	ws, _, _ := st.CreateWorkspace(ctx, "W", "", "")
+	alexP, alexTok, _, _ := joinMember(t, st, ws.ID, "Alex", "")
+	api := ts.URL + "/api/workspaces/" + ws.ID
+	pass := func() string {
+		t.Helper()
+		p, _, err := st.MintPass(ctx, ws.ID, alexP.UserID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return p
+	}
+
+	status, out := call(t, "POST", api+"/join", "", `{"pass":"`+pass()+`","name":"Quill","model":"sonnet-5"}`)
+	if status != http.StatusCreated {
+		t.Fatalf("join = %d %v", status, out)
+	}
+	quill, tok := out["participant"].(map[string]any), out["token"].(string)
+	if quill["model"] != "sonnet-5" {
+		t.Fatalf("joined participant = %v, want its model", quill)
+	}
+	// A bad model is refused before the pass is spent.
+	bad := pass()
+	if status, out := call(t, "POST", api+"/join", "", `{"pass":"`+bad+`","name":"Lark","model":"two\nlines"}`); status != http.StatusBadRequest {
+		t.Errorf("join with a two-line model = %d %v, want 400", status, out)
+	}
+	if status, out := call(t, "POST", api+"/join", "", `{"pass":"`+bad+`","name":"Lark"}`); status != http.StatusCreated {
+		t.Errorf("the same pass afterwards = %d %v, want it still good", status, out)
+	}
+
+	if status, p := call(t, "PATCH", api+"/me", tok, `{"model":"opus-5"}`); status != http.StatusOK || p["model"] != "opus-5" || p["name"] != "Quill" {
+		t.Fatalf("model only = %d %v", status, p)
+	}
+	if status, p := call(t, "PATCH", api+"/me", tok, `{"status":"on #4"}`); status != http.StatusOK || p["model"] != "opus-5" {
+		t.Fatalf("a status change dropped the model: %d %v", status, p)
+	}
+	if status, out := call(t, "PATCH", api+"/me", tok, `{"model":"`+strings.Repeat("m", 65)+`"}`); status != http.StatusBadRequest {
+		t.Errorf("a 65-character model = %d %v, want 400", status, out)
+	}
+	// Teammates see it on the roster; members who said nothing have no model.
+	_, roster := getAs(t, api+"/participants", alexTok)
+	if !strings.Contains(roster, `"model":"opus-5"`) || strings.Count(roster, `"model"`) != 1 {
+		t.Errorf("roster: %s", roster)
+	}
+	if status, p := call(t, "PATCH", api+"/me", tok, `{"model":""}`); status != http.StatusOK || p["model"] != nil {
+		t.Fatalf("clearing = %d %v", status, p)
+	}
+
+	// The invite a member pastes into an agent names the flag.
+	if prompt := invitePrompt(ts.URL, ws, "Alex", "up_x"); !strings.Contains(prompt, "--pass up_x --name <YourName> --emoji <emoji> --model <model>") {
+		t.Errorf("invite prompt = %q", prompt)
+	}
+}

@@ -1068,7 +1068,7 @@ button.nav-link {
   color: var(--text);
 }
 
-.person-status {
+.person-model {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -1143,7 +1143,7 @@ button.nav-link {
   color: var(--text-muted);
 }
 
-.nav-link.person.dormant .person-status {
+.nav-link.person.dormant .person-model {
   display: none;
 }
 

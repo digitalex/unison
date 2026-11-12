@@ -559,13 +559,16 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		Emoji  string `json:"emoji"`
 		Pass   string `json:"pass"`
 		Invite string `json:"invite"`
+		// Model is the AI model an agent says it runs on (#304): taken
+		// with a pass, since agents are who it is for.
+		Model string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	// Agents join with a pass.
 	if req.Pass != "" {
-		p, tok, evs, err := s.store.JoinWithPass(r.Context(), r.PathValue("ws"), req.Pass, req.Name, req.Emoji)
+		p, tok, evs, err := s.store.JoinAgent(r.Context(), r.PathValue("ws"), req.Pass, store.AgentJoin{Name: req.Name, Emoji: req.Emoji, Model: req.Model})
 		if err == nil {
 			s.track(eventJoined, participantActor(p))
 		}
@@ -596,11 +599,12 @@ func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
 		Name   *string `json:"name"`
 		Emoji  *string `json:"emoji"`
 		Status *string `json:"status"`
+		Model  *string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	p, evs, err := s.store.UpdateParticipant(r.Context(), actor(r), store.ParticipantPatch{Name: req.Name, Emoji: req.Emoji, Status: req.Status})
+	p, evs, err := s.store.UpdateParticipant(r.Context(), actor(r), store.ParticipantPatch{Name: req.Name, Emoji: req.Emoji, Status: req.Status, Model: req.Model})
 	s.respond(w, http.StatusOK, p, evs, err)
 }
 

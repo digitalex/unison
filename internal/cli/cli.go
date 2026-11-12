@@ -97,7 +97,8 @@ Workspaces & identity:
   workspace link add <name> <url>
   workspace link edit <id> [--name N] [--url U]
   workspace link remove <id>
-  join <workspace-url> [--name N] [--emoji E] (--pass P | --account [--invite T])
+  join <workspace-url> [--name N] [--emoji E] [--model M]
+       (--pass P | --account [--invite T])
                                      join; saves .unison.json here. Workspaces are
                                      private: agents need --pass (the pass from
                                      their invite: you act for the member who sent
@@ -105,9 +106,11 @@ Workspaces & identity:
                                      member or with an invite (an invite link works
                                      as the URL; email invites need nothing more)
   whoami                             your identity in this workspace
-  name [<new-name>] [--emoji E]      change your name or emoji in this workspace
-                                     (one word, no @, not somebody else's); with
-                                     neither, show them
+  name [<new-name>] [--emoji E] [--model M]
+                                     change your name or emoji in this workspace
+                                     (one word, no @, not somebody else's), or the
+                                     AI model you say you run on (--model - clears
+                                     it); with none of them, show who you are
   status <text>                      set your status line ("" clears it)
   who [--all]                        participants and who is active (--all
                                      includes retired and revoked agents)
@@ -1098,6 +1101,7 @@ func (a *app) join(args []string) error {
 	account := fs.Bool("account", false, "humans: join as your account (from `unison login`)")
 	pass := fs.String("pass", "", "agents: the single-use pass from your invite")
 	invite := fs.String("invite", "", "humans: an invite link's token (implies --account)")
+	model := fs.String("model", "", "agents: the AI model you run on, shown next to your name")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -1143,6 +1147,9 @@ func (a *app) join(args []string) error {
 		}
 	}
 	body := map[string]string{"name": *name, "emoji": *emoji, "pass": *pass, "invite": *invite}
+	if *model != "" {
+		body["model"] = *model
+	}
 	if err := newClient(a.server, userToken).do("POST", path, body, &resp); err != nil {
 		return err
 	}
@@ -1172,7 +1179,7 @@ func (a *app) join(args []string) error {
 	switch {
 	case resp.Participant.Sponsor != nil:
 		a.printf("Joined as %s %s (participant %d), agent of %s. Session saved to %s — keep it out of git.\n",
-			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
+			resp.Participant.Emoji, nameAndModel(&resp.Participant), resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
 		a.printf("Logged out after %d hours without activity; if your credential stops working, ask %s for a new invite.\n",
 			int(store.AgentIdleTimeout.Hours()), resp.Participant.Sponsor.DisplayName)
 	case resp.Existing:
@@ -1212,6 +1219,9 @@ func (a *app) whoami(args []string) error {
 	if p.Status != "" {
 		a.printf("Status: %s\n", p.Status)
 	}
+	if p.Model != "" {
+		a.printf("Model: %s\n", p.Model)
+	}
 	if p.User != nil {
 		a.printf("Account: %s (user %d)\n", firstNonEmpty(p.User.DisplayName, "(no name)"), p.User.ID)
 	}
@@ -1231,18 +1241,19 @@ func (a *app) status(args []string) error {
 	return nil
 }
 
-// name changes your name and emoji in this workspace (#303), or shows them
-// when given neither. A rename is written to the saved session too, which
+// name changes your name and emoji in this workspace (#303), and the model
+// you say you run on (#304), or shows them when given none. A rename is written to the saved session too, which
 // carries your name.
 func (a *app) name(args []string) error {
 	fs := flag.NewFlagSet("name", flag.ContinueOnError)
 	emoji := fs.String("emoji", "", "your new emoji")
+	model := fs.String("model", "", "the AI model you run on (- clears it)")
 	rest, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(rest) > 1 {
-		return fmt.Errorf("%w: a name is one word: unison name <new-name> [--emoji E]", errUsage)
+		return fmt.Errorf("%w: a name is one word: unison name <new-name> [--emoji E] [--model M]", errUsage)
 	}
 	patch := map[string]string{}
 	if len(rest) == 1 {
@@ -1250,6 +1261,13 @@ func (a *app) name(args []string) error {
 	}
 	if *emoji != "" {
 		patch["emoji"] = *emoji
+	}
+	switch *model {
+	case "":
+	case "-":
+		patch["model"] = ""
+	default:
+		patch["model"] = *model
 	}
 	path, err := a.wsPath("/me")
 	if err != nil {
@@ -1282,8 +1300,17 @@ func (a *app) name(args []string) error {
 	if a.jsonOut {
 		return a.printJSON(raw)
 	}
-	a.printf("You are %s %s\n", p.Emoji, p.Name)
+	a.printf("You are %s %s\n", p.Emoji, nameAndModel(&p))
 	return nil
+}
+
+// nameAndModel is "Name (model)" for a participant that says which model
+// it runs on (#304), and the name alone otherwise.
+func nameAndModel(p *store.Participant) string {
+	if p.Model == "" {
+		return p.Name
+	}
+	return fmt.Sprintf("%s (%s)", p.Name, p.Model)
 }
 
 // activeWindow is how recently a participant must have been seen to count
@@ -1308,7 +1335,7 @@ func (a *app) who(args []string) error {
 		if p.RevokedAt == 0 && !agentPastIdleTimeout(&p) && time.Since(time.UnixMilli(p.LastSeenAt)) < activeWindow {
 			dot = "🟢"
 		}
-		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, p.Name)
+		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, nameAndModel(&p))
 		if p.Sponsor != nil {
 			line += " · agent of " + p.Sponsor.DisplayName
 		}
