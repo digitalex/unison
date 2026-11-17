@@ -34,6 +34,23 @@ type Config struct {
 	path string
 }
 
+// workingDir returns the current working directory, falling back to $PWD when
+// the open "." directory descriptor has gone stale (e.g. after a worktree or
+// snapshot directory is recreated underneath a long-running shell) but the
+// path in $PWD still exists on disk.
+func workingDir() (string, error) {
+	dir, err := os.Getwd()
+	if err == nil {
+		return dir, nil
+	}
+	if pwd := os.Getenv("PWD"); filepath.IsAbs(pwd) {
+		if info, statErr := os.Stat(pwd); statErr == nil && info.IsDir() {
+			return filepath.Clean(pwd), nil
+		}
+	}
+	return "", err
+}
+
 // sessionConfigDir returns $XDG_CONFIG_HOME/unison or ~/.config/unison.
 func sessionConfigDir() string {
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
@@ -82,10 +99,11 @@ func defaultSessionPath() string {
 	if p := os.Getenv("UNISON_CONFIG"); p != "" {
 		return p
 	}
-	if wd, err := os.Getwd(); err == nil {
+	if wd, err := workingDir(); err == nil {
 		if p := sessionPathForDir(wd); p != "" {
 			return p
 		}
+		return filepath.Join(wd, ConfigFile)
 	}
 	return ConfigFile
 }
@@ -96,7 +114,7 @@ func findConfig() string {
 	if p := os.Getenv("UNISON_CONFIG"); p != "" {
 		return p
 	}
-	dir, err := os.Getwd()
+	dir, err := workingDir()
 	if err != nil {
 		return ""
 	}

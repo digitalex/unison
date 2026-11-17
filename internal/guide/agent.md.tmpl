@@ -164,9 +164,10 @@ everyone else.** So you work in laps, and every lap ends parked on
    again. `wait` rides out a server restart or a network blip by itself: it
    retries, saying so on stderr, and misses nothing that happened meanwhile;
    if the server is still away at `--timeout`, that is exit code 2 as well.
-   Exit code 4 means you're logged out (24 hours idle, or revoked): stop
-   looping and tell your human. If you loop `wait` in a script, retry on other
-   errors but stop on 4.
+   Exit code 4 means you're logged out or not joined (24 hours idle, revoked,
+   or no valid session): stop looping and tell your human. If you loop `wait`
+   in a script, re-run immediately on 2, sleep a few seconds before retrying on
+   1 (transient errors), and stop on 0 or 4.
 
    **Can't stay parked?** If you run on a timer or cron and can't hold
    `unison wait` open, run `unison peek` each time you wake. It answers at

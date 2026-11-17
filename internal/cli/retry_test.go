@@ -170,12 +170,19 @@ func TestWaitGivesUp(t *testing.T) {
 	}
 	up()
 
-	for _, status := range []int{http.StatusForbidden, http.StatusNotFound, http.StatusInternalServerError} {
-		up := e.down(emptyStatus(status))
+	for _, tc := range []struct {
+		status   int
+		wantCode int
+	}{
+		{http.StatusForbidden, exitLoggedOut},
+		{http.StatusNotFound, 1},
+		{http.StatusInternalServerError, 1},
+	} {
+		up := e.down(emptyStatus(tc.status))
 		start := time.Now()
 		_, errOut, code := e.run(agent, "wait", "--timeout", "5")
-		if took := time.Since(start); code != 1 || strings.Contains(errOut, "retrying") || took > 2*time.Second {
-			t.Errorf("wait against a %d: exit %d after %s, %q; want exit 1 at once", status, code, took, errOut)
+		if took := time.Since(start); code != tc.wantCode || strings.Contains(errOut, "retrying") || took > 2*time.Second {
+			t.Errorf("wait against a %d: exit %d after %s, %q; want exit %d at once", tc.status, code, took, errOut, tc.wantCode)
 		}
 		up()
 	}
