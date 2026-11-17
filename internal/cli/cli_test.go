@@ -79,6 +79,7 @@ func newTestEnv(t *testing.T) *testEnv {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
 	e.url, e.ts = ts.URL, ts
 	return e
 }
@@ -141,8 +142,18 @@ func TestEndToEnd(t *testing.T) {
 	invite := e.url + "/w/" + ws.ID
 	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑", "--account")
 	e.ok(agent, "join", invite, "--pass", e.passFor(human), "--name", "Ada", "--emoji", "🦊")
-	if _, err := os.Stat(filepath.Join(agent, ConfigFile)); err != nil {
-		t.Fatalf("join did not save a session: %v", err)
+	sessPath := sessionPathForDir(agent)
+	if _, err := os.Stat(sessPath); err != nil {
+		t.Fatalf("join did not save a session in config dir: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(agent, ConfigFile)); !os.IsNotExist(err) {
+		t.Fatalf("join should not write %s in working dir, err=%v", ConfigFile, err)
+	}
+	if info, err := os.Stat(filepath.Dir(sessPath)); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("config dir perm = %v (err=%v), want 0700", info.Mode().Perm(), err)
+	}
+	if info, err := os.Stat(sessPath); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("session file perm = %v (err=%v), want 0600", info.Mode().Perm(), err)
 	}
 	if out := e.ok(agent, "whoami"); !strings.Contains(out, "Ada") {
 		t.Errorf("whoami = %q", out)
@@ -453,7 +464,7 @@ func TestEndToEnd(t *testing.T) {
 
 func tokenOf(t *testing.T, dir string) string {
 	t.Helper()
-	cfg, err := loadConfig(filepath.Join(dir, ConfigFile))
+	cfg, err := loadConfig(sessionPathForDir(dir))
 	if err != nil {
 		t.Fatal(err)
 	}

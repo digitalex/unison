@@ -80,7 +80,7 @@ func TestWaitStopsWithoutValidSession(t *testing.T) {
 // TestFindConfigFallsBackToPWDWhenCWDInodeStale verifies that when the open
 // "." directory inode has been removed and recreated at the same path (so
 // os.Getwd() fails with ENOENT while $PWD still names the recreated path),
-// findConfig() still locates .unison.json via $PWD.
+// findConfig() still locates the directory's session file via $PWD.
 func TestFindConfigFallsBackToPWDWhenCWDInodeStale(t *testing.T) {
 	e := newTestEnv(t)
 	human := t.TempDir()
@@ -99,23 +99,16 @@ func TestFindConfigFallsBackToPWDWhenCWDInodeStale(t *testing.T) {
 	e.ok(human, "join", invite, "--name", "Alex", "--account")
 	e.ok(agentDir, "join", invite, "--pass", e.passFor(human), "--name", "Ada")
 
-	cfgBytes, err := os.ReadFile(filepath.Join(agentDir, ConfigFile))
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	// Move into agentDir, then remove and recreate agentDir at the same path so
 	// the process's open "." directory inode is unlinked (stale), while $PWD
-	// still points to the recreated directory containing .unison.json.
+	// still points to the recreated directory whose session file lives in
+	// ~/.config/unison/.
 	t.Chdir(agentDir)
 	t.Setenv("PWD", agentDir)
 	if err := os.RemoveAll(agentDir); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.MkdirAll(agentDir, 0o755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(agentDir, ConfigFile), cfgBytes, 0o600); err != nil {
 		t.Fatal(err)
 	}
 

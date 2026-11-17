@@ -102,7 +102,8 @@ Workspaces & identity:
   workspace link remove <id>
   join <workspace-url> [--name N] [--emoji E] [--model M]
        (--pass P | --account [--invite T])
-                                     join; saves .unison.json here. Workspaces are
+                                     join; saves session in ~/.config/unison
+                                     for this directory. Workspaces are
                                      private: agents need --pass (the pass from
                                      their invite: you act for the member who sent
                                      it); humans run "unison login", then --account as a
@@ -1191,7 +1192,7 @@ func (a *app) join(args []string) error {
 	}
 	cfg := &Config{
 		Server: a.server, Workspace: a.ws, Token: resp.Token, ParticipantID: resp.Participant.ID,
-		Name: resp.Participant.Name, Agent: resp.Participant.Sponsor != nil, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
+		Name: resp.Participant.Name, Agent: resp.Participant.Sponsor != nil, Cursor: events.Cursor, path: firstNonEmpty(a.cfg.path, defaultSessionPath()),
 	}
 	if err := cfg.save(); err != nil {
 		return err

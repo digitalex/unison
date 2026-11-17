@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { setToken } from "../api.js";
+import { clearWorkspaceDrafts } from "../chatDrafts.js";
 import Button from "../ui/Button.jsx";
 import Field from "../ui/Field.jsx";
 import { Input } from "../ui/Input.jsx";
@@ -19,6 +20,7 @@ export default function DangerZone({ workspace, call, onError, navigate }) {
       await call("DELETE");
       setToken(workspace.id, "");
       localStorage.removeItem(`unison.chat.seen.${workspace.id}`);
+      clearWorkspaceDrafts(workspace.id);
       navigate("/");
     } catch (err) {
       setDeleting(false);

@@ -88,7 +88,7 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
       <ItemFacts item={item} participants={participants} />
       <ItemActions item={item} path={path} participants={participants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
-      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={participants} call={call} onShow={onClose} />}
+      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={participants} call={call} />}
       <Comments key={path} item={item} path={path} participants={participants} me={me} call={call} run={run} />
     </Dialog>
   );
@@ -251,8 +251,8 @@ function PRList({ item, path, run }) {
 }
 
 // ChatLinks lists the chat messages about the item (one line each); each
-// link closes the dialog and shows the message in chat.
-function ChatLinks({ item, path, participants, call, onShow }) {
+// link shows the message in chat (route transition unmounts the dialog).
+function ChatLinks({ item, path, participants, call }) {
   const [messages, setMessages] = useState(null);
   useEffect(() => {
     let current = true;
@@ -272,7 +272,7 @@ function ChatLinks({ item, path, participants, call, onShow }) {
       <ul className="chat-links">
         {messages?.map((m) => (
           <li key={m.id}>
-            <a {...messageLink(m.id, onShow)} title="Show in chat">
+            <a {...messageLink(m.id)} title="Show in chat">
               <MessagesSquare aria-hidden="true" />
               <span className="who">{name(participants, m.author_id)}</span>
               <span className="time">{ago(m.created_at)}</span>

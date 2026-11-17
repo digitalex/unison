@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { clearDraft, getDraft, resolveImageUploadInDraft, setDraft } from "./chatDrafts.js";
 import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
@@ -36,11 +37,10 @@ const REACTIONS = [
   { emoji: "😂", label: "Laughing" },
 ];
 
-export default function Chat({ messages, activity = [], updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
+export default function Chat({ workspaceId, messages, activity = [], updateMessages, newAfter, mention, onMentioned, items, participants, me, call, onError, shown, head, error }) {
   const [actionsFor, setActionsFor] = useState(null); // Touch: the message whose actions are shown.
   const [threadId, setThreadId] = useState(null); // The thread open in the panel (its first message).
   const [prefill, setPrefill] = useState(null); // {text, at}: start the thread composer with this.
-  const flashed = useShowMessage(shown, messages);
   const bottom = useRef(null);
   // Messages you sent that the server hasn't confirmed yet (#128): shown at
   // once, kept out of messages so they never count as read or unread.
@@ -63,6 +63,10 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   const thread = threadId ? byId.get(threadId) : null;
 
   useOpenShownThread(shown, byId, setThreadId);
+  const shownMessage = shown ? byId.get(shown.id) : null;
+  const shownParent = shownMessage?.parent_id && byId.has(shownMessage.parent_id) ? shownMessage.parent_id : null;
+  const threadReady = !shownParent || thread?.id === shownParent;
+  const flashed = useShowMessage(shown, messages, threadReady);
   const readUpTo = useThreadsRead(thread, replies);
   useEffect(() => {
     if (!thread) return;
@@ -76,7 +80,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
   const startReply = (root, target) => {
     setThreadId(root.id);
     const author = participants.find((p) => p.id === target.author_id);
-    setPrefill({ text: author && author.id !== me?.id ? `@${author.name} ` : "", at: Date.now() });
+    setPrefill({ threadId: root.id, text: author && author.id !== me?.id ? `@${author.name} ` : "", at: Date.now() });
     setActionsFor(null);
   };
   // react toggles your reaction. It shows at once (optimistically); the
@@ -138,7 +142,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
     actionsOpen: actionsFor === m.id,
     onToggleActions: () => setActionsFor(actionsFor === m.id ? null : m.id),
   });
-  const composerProps = { items, send };
+  const composerProps = { workspaceId, items, send };
 
   return (
     <section className={thread ? "screen chat chat-thread-open" : "screen chat"} aria-label="Chat">
@@ -190,7 +194,7 @@ export default function Chat({ messages, activity = [], updateMessages, newAfter
                 ))}
               </div>
             </ThreadLog>
-            <Composer key={thread.id} {...composerProps} parent={thread} prefill={prefill} placeholder="Reply in thread…" autoFocus />
+            <Composer key={thread.id} {...composerProps} parent={thread} prefill={prefill} onPrefillConsumed={() => setPrefill(null)} placeholder="Reply in thread…" autoFocus />
           </aside>
         )}
       </div>
@@ -359,13 +363,30 @@ function useOpenShownThread(shown, byId, setThreadId) {
 // name) starts the text with "@Name "; onMentioned says it was used.
 // prefill ({text, at}) starts the text with text, e.g. the @mention of the
 // author being replied to.
-function Composer({ parent, items, send: post, mention, onMentioned, prefill, placeholder, autoFocus }) {
-  const [text, setText] = useState("");
-  const [linked, setLinked] = useState(Boolean(parent?.item)); // Tie the message to the item it mentions.
-  const [needsAction, setNeedsAction] = useState(false); // Ask the people the message mentions to act.
+function Composer({ workspaceId, parent, items, send: post, mention, onMentioned, prefill, onPrefillConsumed, placeholder, autoFocus }) {
+  const saved = getDraft(workspaceId, parent?.id);
+  const [text, setText] = useState(() => saved?.text || "");
+  const [linked, setLinked] = useState(() => (saved?.linked !== null && saved?.linked !== undefined ? saved.linked : Boolean(parent?.item))); // Tie the message to the item it mentions.
+  const [needsAction, setNeedsAction] = useState(() => Boolean(saved?.needsAction)); // Ask the people the message mentions to act.
   const composer = useRef(null);
+  const mounted = useRef(true);
   const mentionedItem = itemMentioned(text, items) || parent?.item || null;
   const canAsk = /@\S/.test(text);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!text && !needsAction && (!parent?.item ? !linked : linked === Boolean(parent?.item))) {
+      clearDraft(workspaceId, parent?.id);
+      return;
+    }
+    setDraft(workspaceId, parent?.id, { text, linked, needsAction });
+  }, [workspaceId, parent?.id, text, linked, needsAction]);
 
   const startWith = (prefix) => {
     if (prefix) setText((t) => (t.startsWith(prefix) ? t : prefix + t));
@@ -382,8 +403,12 @@ function Composer({ parent, items, send: post, mention, onMentioned, prefill, pl
     onMentioned();
   }, [mention]);
   useEffect(() => {
-    if (prefill) startWith(prefill.text);
-    else if (autoFocus) composer.current?.focus();
+    if (prefill && (!parent || prefill.threadId === parent.id)) {
+      startWith(prefill.text);
+      onPrefillConsumed?.();
+    } else if (autoFocus) {
+      composer.current?.focus();
+    }
   }, [prefill?.at]);
 
   // The message shows at once and the composer clears; if sending fails,
@@ -392,20 +417,27 @@ function Composer({ parent, items, send: post, mention, onMentioned, prefill, pl
     e.preventDefault();
     if (!text.trim()) return;
     const sent = text;
+    const wasLinked = linked;
+    const wasNeedsAction = needsAction;
     const item = linked && mentionedItem ? mentionedItem : null;
     setText("");
     setNeedsAction(false);
     if (!parent) setLinked(false);
+    clearDraft(workspaceId, parent?.id);
     const ok = await post(
       {
         body: sent,
         parent_id: parent?.id,
         item_id: item?.id,
-        action_required: needsAction && canAsk ? true : undefined,
+        action_required: wasNeedsAction && canAsk ? true : undefined,
       },
       { item: item ? { id: item.id, title: item.title, status: item.status } : undefined },
     );
-    if (!ok) setText((t) => t || sent);
+    if (!ok) {
+      setText((t) => t || sent);
+      setNeedsAction(wasNeedsAction);
+      setLinked(wasLinked);
+    }
   };
 
   return (
@@ -415,6 +447,9 @@ function Composer({ parent, items, send: post, mention, onMentioned, prefill, pl
         aria-label={parent ? `Reply in thread #${parent.id}` : "Message"}
         value={text}
         onChange={(e) => setText(e.target.value)}
+        onUploadSettled={(ph, replacement) => {
+          if (!mounted.current) resolveImageUploadInDraft(workspaceId, parent?.id, ph, replacement);
+        }}
         onKeyDown={(e) => {
           if (e.key === "Enter" && !e.shiftKey) send(e);
         }}
@@ -468,9 +503,9 @@ function itemMentioned(text, items) {
 
 // useShowMessage scrolls to the shown message once it is rendered, focuses
 // it, and returns its id while it should be highlighted.
-function useShowMessage(shown, messages) {
+function useShowMessage(shown, messages, ready = true) {
   const [flashed, setFlashed] = useState(null);
-  const present = Boolean(shown && messages.some((m) => m.id === shown.id));
+  const present = Boolean(shown && ready && messages.some((m) => m.id === shown.id));
   useEffect(() => {
     if (!present) return;
     setFlashed(shown.id);

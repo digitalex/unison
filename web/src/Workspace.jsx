@@ -371,6 +371,7 @@ export default function Workspace({ id, view, navigate, account }) {
             </>
           ) : view === "chat" ? (
             <Chat
+              workspaceId={id}
               messages={messages}
               activity={activity}
               updateMessages={setMessages}

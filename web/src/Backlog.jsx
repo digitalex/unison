@@ -321,10 +321,10 @@ function urlWithItem(id) {
 // items through the OPEN_ITEM event.
 function useItemParam() {
   const [id, setId] = useState(itemFromURL);
-  const pushed = useRef(false);
+  const pushDepth = useRef(0);
   useEffect(() => {
     const onPop = () => {
-      pushed.current = false;
+      pushDepth.current = 0;
       setId(itemFromURL());
     };
     const onOpen = (e) => open(e.detail);
@@ -337,13 +337,14 @@ function useItemParam() {
   }, []);
   function open(next) {
     window.history.pushState(null, "", urlWithItem(next));
-    pushed.current = true;
+    pushDepth.current += 1;
     setId(next);
   }
   const close = () => {
-    if (pushed.current) {
-      pushed.current = false;
-      window.history.back();
+    if (pushDepth.current > 0) {
+      const steps = pushDepth.current;
+      pushDepth.current = 0;
+      window.history.go(-steps);
     } else {
       window.history.replaceState(null, "", urlWithItem(null));
     }

@@ -2,7 +2,6 @@ package cli
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +25,7 @@ func TestName(t *testing.T) {
 	e.ok(agent, "join", url, "--pass", e.passFor(human), "--name", "Quill", "--emoji", "🪶")
 	savedName := func() string {
 		t.Helper()
-		cfg, err := loadConfig(filepath.Join(agent, ConfigFile))
+		cfg, err := loadConfig(sessionPathForDir(agent))
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -110,7 +109,7 @@ func TestName(t *testing.T) {
 	e.ok(other, "join", url, "--pass", e.passFor(human), "--name", "Finch")
 	token := func(dir string) string {
 		t.Helper()
-		cfg, err := loadConfig(filepath.Join(dir, ConfigFile))
+		cfg, err := loadConfig(sessionPathForDir(dir))
 		if err != nil || cfg.Token == "" {
 			t.Fatalf("no session in %s: %v", dir, err)
 		}

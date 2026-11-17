@@ -24,24 +24,27 @@ export function spaLink(to, onNavigate) {
 export const OPEN_ITEM = "unison:open-item";
 export const SHOW_MESSAGE = "unison:show-message";
 
-function eventLink(href, type, id, onNavigate) {
+function workspaceBase() {
+  return window.location.pathname.match(/^(\/w\/[^/]+)/)?.[1] || "";
+}
+
+function eventLink(href, type, id) {
   return {
     href,
     onClick: (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
       e.preventDefault();
-      onNavigate?.();
       window.dispatchEvent(new CustomEvent(type, { detail: id }));
     },
   };
 }
 
-// itemLink returns props for an <a> that opens backlog item id (?item=id).
-export function itemLink(id, onNavigate) {
-  return eventLink(`?item=${id}`, OPEN_ITEM, id, onNavigate);
+// itemLink returns props for an <a> that opens backlog item id (/w/:ws?item=id).
+export function itemLink(id) {
+  return eventLink(`${workspaceBase()}?item=${id}`, OPEN_ITEM, id);
 }
 
-// messageLink returns props for an <a> that shows chat message id (#msg-id).
-export function messageLink(id, onNavigate) {
-  return eventLink(`#msg-${id}`, SHOW_MESSAGE, id, onNavigate);
+// messageLink returns props for an <a> that shows chat message id (/w/:ws/chat#msg-id).
+export function messageLink(id) {
+  return eventLink(`${workspaceBase()}/chat#msg-${id}`, SHOW_MESSAGE, id);
 }

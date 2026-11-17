@@ -27,7 +27,7 @@ function imageFiles(list) {
 // files on it, or pick them with its button. Each upload first inserts an
 // "uploading" placeholder at the cursor, then swaps in the Markdown when it
 // is done, so typing meanwhile is fine. value/onChange as for Textarea.
-export function ImageTextarea({ value, onChange, className = "", ...props }) {
+export function ImageTextarea({ value, onChange, onUploadSettled, className = "", ...props }) {
   const upload = useContext(ImageUpload);
   const ref = useRef(null);
   const latest = useRef(value);
@@ -61,9 +61,13 @@ export function ImageTextarea({ value, onChange, className = "", ...props }) {
       const sep = before && !/\s$/.test(before) ? "\n" : "";
       set(before + sep + placeholder + cur.slice(at));
       upload(file).then(
-        (im) => set(latest.current.replace(placeholder, im.markdown)),
+        (im) => {
+          set(latest.current.replace(placeholder, im.markdown));
+          onUploadSettled?.(placeholder, im.markdown);
+        },
         (e) => {
           set(latest.current.replace(placeholder, ""));
+          onUploadSettled?.(placeholder, "");
           setError(`Couldn't upload ${file.name || "the image"}: ${e.message}`);
         },
       );

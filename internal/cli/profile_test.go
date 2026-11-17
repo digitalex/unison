@@ -31,6 +31,7 @@ func TestProfileCommands(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
 	human, agent := t.TempDir(), t.TempDir()
 
 	if _, errOut, code := e.run(human, "sessions"); code == 0 || !strings.Contains(errOut, "unison login") {

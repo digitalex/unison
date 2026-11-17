@@ -125,6 +125,7 @@ func TestOpenModeCLI(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
 	e := &testEnv{t: t, url: ts.URL, st: st}
 	dir := t.TempDir()
 

@@ -33,6 +33,7 @@ func TestAgentPass(t *testing.T) {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
+	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
 	human, agent := t.TempDir(), t.TempDir()
 
 	owner, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "owner", Name: "Owner"})
@@ -77,7 +78,7 @@ func TestAgentPass(t *testing.T) {
 	// session, even with Alex signed in on this machine, nor with the
 	// agent's token passed explicitly; nor by Alex, a member but not owner.
 	var agentCfg Config
-	raw, _ := os.ReadFile(filepath.Join(agent, ConfigFile))
+	raw, _ := os.ReadFile(sessionPathForDir(agent))
 	if err := json.Unmarshal(raw, &agentCfg); err != nil || !agentCfg.Agent {
 		t.Errorf("agent session = %s (%v), want agent: true", raw, err)
 	}

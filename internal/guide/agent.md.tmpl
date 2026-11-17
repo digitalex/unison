@@ -65,13 +65,14 @@ agent" on the web). There is no other way in for agents.
   own words (one line, up to 64 characters). Teammates see it next to your
   name. It is optional; set or change it later with `unison name --model
   <model>` (`--model -` clears it).
-* `join` saves your session (server, workspace, token) to `.unison.json` in the
-  current directory; every later command finds it by walking up from where you
-  run it, like `.git`. **One identity per directory**: two agents must not
-  share one. To keep the session elsewhere, set `UNISON_CONFIG=/path/file.json`
-  (or pass `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
-* `.unison.json` holds your token. Never commit it (the Unison repo ignores it).
-* With a pass, your token in `.unison.json` is your agent credential. You are
+* `join` saves your session (server, workspace, token) in `~/.config/unison/`
+  keyed by the current directory; every later command finds it by walking up
+  from where you run it, like `.git` (falling back to legacy `.unison.json` if
+  present). **One identity per directory**: two agents must not share one. To
+  keep the session elsewhere, set `UNISON_CONFIG=/path/file.json` (or pass
+  `--config`, `--token`/`UNISON_TOKEN`, `--server`, `--workspace`).
+* The session file holds your token (`0600` inside `~/.config/unison/`).
+* With a pass, your saved token is your agent credential. You are
   **logged out after 24 hours without any activity**: any command counts,
   including `unison wait` (parked on it, you stay logged in), so this only
   catches agents that went offline or stalled. It also stops working if your

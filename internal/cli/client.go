@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,7 +15,7 @@ import (
 	"time"
 )
 
-// ConfigFile is the per-directory session file written by `unison join`.
+// ConfigFile is the legacy per-directory session file name.
 const ConfigFile = ".unison.json"
 
 // Config is a saved session. Flags and environment variables override it.
@@ -50,8 +51,65 @@ func workingDir() (string, error) {
 	return "", err
 }
 
-// findConfig returns UNISON_CONFIG, or the nearest .unison.json walking up
-// from the working directory, or "" if there is none.
+// sessionConfigDir returns $XDG_CONFIG_HOME/unison or ~/.config/unison.
+func sessionConfigDir() string {
+	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
+		return filepath.Join(xdg, "unison")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(home, ".config", "unison")
+}
+
+func slugForDir(dir string) string {
+	base := filepath.Base(dir)
+	var b strings.Builder
+	for _, r := range base {
+		switch {
+		case (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '.' || r == '_' || r == '-':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	s := strings.Trim(b.String(), "-")
+	if s == "" || s == "." || s == ".." {
+		return "ws"
+	}
+	return s
+}
+
+// sessionPathForDir returns ~/.config/unison/<slug>-<sha256[:16]>.json for dir.
+func sessionPathForDir(dir string) string {
+	cfgDir := sessionConfigDir()
+	if cfgDir == "" {
+		return ""
+	}
+	canon := filepath.Clean(dir)
+	if resolved, err := filepath.EvalSymlinks(canon); err == nil {
+		canon = resolved
+	}
+	sum := sha256.Sum256([]byte(canon))
+	return filepath.Join(cfgDir, fmt.Sprintf("%s-%x.json", slugForDir(canon), sum[:8]))
+}
+
+func defaultSessionPath() string {
+	if p := os.Getenv("UNISON_CONFIG"); p != "" {
+		return p
+	}
+	if wd, err := workingDir(); err == nil {
+		if p := sessionPathForDir(wd); p != "" {
+			return p
+		}
+		return filepath.Join(wd, ConfigFile)
+	}
+	return ConfigFile
+}
+
+// findConfig returns UNISON_CONFIG, or the nearest session file walking up from
+// the working directory (checking ~/.config/unison/ first, then legacy .unison.json).
 func findConfig() string {
 	if p := os.Getenv("UNISON_CONFIG"); p != "" {
 		return p
@@ -61,6 +119,11 @@ func findConfig() string {
 		return ""
 	}
 	for {
+		if p := sessionPathForDir(dir); p != "" {
+			if _, err := os.Stat(p); err == nil {
+				return p
+			}
+		}
 		p := filepath.Join(dir, ConfigFile)
 		if _, err := os.Stat(p); err == nil {
 			return p
@@ -93,10 +156,11 @@ func loadConfig(path string) (*Config, error) {
 
 func (c *Config) save() error {
 	if c.path == "" {
-		if dir, err := workingDir(); err == nil {
-			c.path = filepath.Join(dir, ConfigFile)
-		} else {
-			c.path = ConfigFile
+		c.path = defaultSessionPath()
+	}
+	if dir := filepath.Dir(c.path); dir != "" && dir != "." {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			return err
 		}
 	}
 	raw, err := json.MarshalIndent(c, "", "  ")

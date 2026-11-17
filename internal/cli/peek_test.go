@@ -3,7 +3,6 @@ package cli
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -37,7 +36,7 @@ func TestPeek(t *testing.T) {
 	}
 	config := func() string {
 		t.Helper()
-		raw, err := os.ReadFile(filepath.Join(agent, ConfigFile))
+		raw, err := os.ReadFile(sessionPathForDir(agent))
 		if err != nil {
 			t.Fatal(err)
 		}

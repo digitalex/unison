@@ -114,7 +114,7 @@ func TestVersionMismatchWarningAndWait(t *testing.T) {
 
 	stdout.Reset()
 	stderr.Reset()
-	_ = Run([]string{"--config", dir + "/.unison.json", "wait", "--timeout", "0"}, &stdout, &stderr)
+	_ = Run([]string{"--config", sessionPathForDir(dir), "wait", "--timeout", "0"}, &stdout, &stderr)
 	if !strings.Contains(stderr.String(), "older than the server (v1.5.0)") {
 		t.Fatalf("expected wait to warn at start, got %q", stderr.String())
 	}
