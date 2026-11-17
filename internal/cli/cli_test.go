@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -27,6 +28,33 @@ type testEnv struct {
 	t   *testing.T
 	url string
 	st  *store.Store
+	srv *server.Server
+	ts  *httptest.Server
+	// outage, when set, answers every new request in the server's place:
+	// see (*testEnv).down.
+	outage atomic.Pointer[http.HandlerFunc]
+}
+
+// down makes the server answer every new request with fail (and up, the
+// function it returns, ends that), as a restarting server or the gateway
+// in front of it would. Requests already being served are not touched;
+// e.ts.CloseClientConnections() cuts those.
+func (e *testEnv) down(fail http.HandlerFunc) (up func()) {
+	e.outage.Store(&fail)
+	return func() { e.outage.Store(nil) }
+}
+
+// noAnswer cuts the connection without a response.
+func noAnswer(w http.ResponseWriter, r *http.Request) {
+	conn, _, err := w.(http.Hijacker).Hijack()
+	if err == nil {
+		conn.Close()
+	}
+}
+
+// emptyStatus answers with a bare status, as a gateway does.
+func emptyStatus(code int) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) { w.WriteHeader(code) }
 }
 
 func newTestEnv(t *testing.T) *testEnv {
@@ -38,13 +66,21 @@ func newTestEnv(t *testing.T) *testEnv {
 	t.Cleanup(func() { st.Close() })
 	srv := server.New(st, nil)
 	srv.SetAuth(server.AuthConfig{DeviceInterval: time.Second})
-	ts := httptest.NewServer(srv)
+	e := &testEnv{t: t, st: st, srv: srv}
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if fail := e.outage.Load(); fail != nil {
+			(*fail)(w, r)
+			return
+		}
+		srv.ServeHTTP(w, r)
+	}))
 	t.Cleanup(ts.Close)
 	for _, k := range []string{"UNISON_SERVER", "UNISON_WORKSPACE", "UNISON_TOKEN", "UNISON_CONFIG"} {
 		t.Setenv(k, "")
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
-	return &testEnv{t: t, url: ts.URL, st: st}
+	e.url, e.ts = ts.URL, ts
+	return e
 }
 
 // login signs the CLI in (`unison login`) as a new account named name, with
@@ -202,7 +238,7 @@ func TestEndToEnd(t *testing.T) {
 	if errOut := <-done; errOut != "" {
 		t.Fatalf("backlog add: %s", errOut)
 	}
-	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog claim") {
+	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog start 3") {
 		t.Errorf("wait = %q, want the new item", out)
 	}
 	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
@@ -255,6 +291,55 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Repos      1   https://github.com/digitalex/unison\n") || !strings.Contains(out, "unison-web") {
 		t.Errorf("workspace show = %q", out)
 	}
+	// The product URL (#298): unset by default, set and cleared with
+	// `workspace set --product`, and shown in the guide while set.
+	if out := e.ok(agent, "workspace"); !strings.Contains(out, "Product    (not set)\n") {
+		t.Errorf("workspace show = %q", out)
+	}
+	if out := e.ok(agent, "--agent-help"); strings.Contains(out, "| Product (deployed) |") {
+		t.Errorf("agent guide lists a product URL that isn't set:\n%s", out)
+	}
+	if _, errOut, code := e.run(agent, "workspace", "set", "--product", "unison.example.com"); code != 1 || !strings.Contains(errOut, "product URL must be an http(s) URL") {
+		t.Errorf("workspace set --product unison.example.com: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "workspace", "set", "--product", "https://unison.example.com"); !strings.Contains(out, "Product    https://unison.example.com\n") {
+		t.Errorf("workspace set --product = %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Product (deployed) | https://unison.example.com |\n") {
+		t.Errorf("agent guide lacks the product URL:\n%s", out)
+	}
+	if out := e.ok(agent, "workspace", "set", "--product", ""); !strings.Contains(out, "Product    (not set)\n") {
+		t.Errorf("workspace set --product \"\" = %q", out)
+	}
+	// Custom links (#299): added, listed, shown in the workspace and the
+	// guide, edited and removed.
+	if out := e.ok(agent, "workspace", "links"); !strings.Contains(out, "No links yet") {
+		t.Errorf("workspace links (none) = %q", out)
+	}
+	if _, errOut, code := e.run(agent, "workspace", "link", "add", "Spec", "spec.example.com"); code != 1 || !strings.Contains(errOut, "link URL must be an http(s) URL") {
+		t.Errorf("link add with a bad URL: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "workspace", "link", "add", "Design doc", "https://docs.example.com/design"); !strings.Contains(out, "Added link 1   Design doc  https://docs.example.com/design") {
+		t.Errorf("link add = %q", out)
+	}
+	if out := e.ok(human, "workspace"); !strings.Contains(out, "Links      1   Design doc  https://docs.example.com/design\n") {
+		t.Errorf("workspace show lacks the link: %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Design doc | https://docs.example.com/design |\n") {
+		t.Errorf("agent guide lacks the link:\n%s", out)
+	}
+	if out := e.ok(human, "workspace", "link", "edit", "1", "--name", "Spec | v2"); !strings.Contains(out, "Updated link 1   Spec | v2  https://docs.example.com/design") {
+		t.Errorf("link edit = %q", out)
+	}
+	if out := e.ok(human, "--agent-help"); !strings.Contains(out, "| Spec \\| v2 | https://docs.example.com/design |\n") {
+		t.Errorf("agent guide doesn't escape the link name:\n%s", out)
+	}
+	if out := e.ok(agent, "workspace", "links"); !strings.Contains(out, "1   Spec | v2  https://docs.example.com/design") {
+		t.Errorf("workspace links = %q", out)
+	}
+	if out := e.ok(agent, "workspace", "link", "remove", "1"); !strings.Contains(out, "Removed link 1.") {
+		t.Errorf("link remove = %q", out)
+	}
 	if out := e.ok(agent, "--agent-help"); !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison |") || !strings.Contains(out, "| Code repository | https://github.com/digitalex/unison-web |") {
 		t.Errorf("agent help lacks the repositories:\n%s", out)
 	}
@@ -262,8 +347,11 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(agent, "schedule", "add", "Dependency updates", "--weekly", "fri", "--body", "Bump and test"); !strings.Contains(out, "Dependency updates (weekly on fri; next Fri") {
 		t.Errorf("schedule add = %q", out)
 	}
-	if _, errOut, code := e.run(agent, "schedule", "add", "No cadence"); code == 0 || !strings.Contains(errOut, "--daily or --weekly") {
+	if _, errOut, code := e.run(agent, "schedule", "add", "No cadence"); code == 0 || !strings.Contains(errOut, "--hourly, --daily or --weekly") {
 		t.Errorf("schedule add without a cadence: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(human, "schedule", "edit", "1", "--hourly"); !strings.Contains(out, "Dependency updates (hourly; next ") {
+		t.Errorf("schedule edit --hourly = %q", out)
 	}
 	e.ok(human, "schedule", "edit", "1", "--daily")
 	if out := e.ok(agent, "schedule"); !strings.Contains(out, "1   Dependency updates (daily; next ") {
@@ -385,28 +473,6 @@ func TestParseInvite(t *testing.T) {
 	}
 	if _, _, err := parseInvite("ws_abc"); err == nil {
 		t.Error("parseInvite(bare id) succeeded, want error")
-	}
-}
-
-func TestCLIMentions(t *testing.T) {
-	tests := []struct {
-		body string
-		name string
-		want bool
-	}{
-		{"Hello @Alex", "Alex", true},
-		{"Hello @alex", "Alex", true},
-		{"Hello @AlexSmith", "Alex", false},
-		{"Hello @all", "Alex", true},
-		{"Hello @everyone", "Alex", true},
-		{"Hello @[user]v1", "[user]v1", true},
-		{"Hello @user.name", "user.name", true},
-		{"Hello world", "Alex", false},
-	}
-	for _, tt := range tests {
-		if got := mentions(tt.body, tt.name); got != tt.want {
-			t.Errorf("mentions(%q, %q) = %v, want %v", tt.body, tt.name, got, tt.want)
-		}
 	}
 }
 

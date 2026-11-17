@@ -54,6 +54,15 @@ type Server struct {
 	reviews reviewCache
 	// reviewFails slows down guessing the App Review code (review.go).
 	reviewFails reviewLimiter
+
+	version string
+}
+
+// SetVersion sets the build version advertised by X-Unison-Version and /api/version.
+func (s *Server) SetVersion(v string) { s.version = v }
+
+func isStampedVersion(v string) bool {
+	return v != "" && v != "dev" && !strings.HasPrefix(v, "dev-")
 }
 
 // New returns a Server backed by st. web holds the built UI (index.html at
@@ -66,8 +75,50 @@ func New(st *store.Store, web fs.FS) *Server {
 	return s
 }
 
+// statusClientClosedRequest is the non-standard HTTP status for a client
+// disconnecting before the server finishes (#320).
+const statusClientClosedRequest = 499
+
+const slowRequestThreshold = 2 * time.Second
+
+type statusRecorder struct {
+	http.ResponseWriter
+	status int
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	r.status = code
+	r.ResponseWriter.WriteHeader(code)
+}
+
+func (r *statusRecorder) Flush() {
+	if f, ok := r.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+func (r *statusRecorder) Unwrap() http.ResponseWriter { return r.ResponseWriter }
+
 // ServeHTTP implements http.Handler.
-func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) { s.mux.ServeHTTP(w, r) }
+func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if isStampedVersion(s.version) && strings.HasPrefix(r.URL.Path, "/api/") {
+		w.Header().Set("X-Unison-Version", s.version)
+	}
+	start := time.Now()
+	rw := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	s.mux.ServeHTTP(rw, r)
+	dur := time.Since(start)
+	route := r.Pattern
+	if route == "" {
+		route = r.URL.Path
+	}
+	longPoll := strings.HasSuffix(r.URL.Path, "/events") || strings.HasSuffix(r.URL.Path, "/stream")
+	if rw.status >= 500 {
+		log.Printf("WARN %s %s status=%d dur=%s", r.Method, route, rw.status, dur.Round(time.Millisecond))
+	} else if !longPoll && dur > slowRequestThreshold {
+		log.Printf("WARN slow %s %s status=%d dur=%s", r.Method, route, rw.status, dur.Round(time.Millisecond))
+	}
+}
 
 // RunLeaseSweeper releases expired backlog leases every interval until ctx
 // is done, so clients watching the stream see items return to the queue. It
@@ -82,18 +133,31 @@ func (s *Server) RunLeaseSweeper(ctx context.Context, interval time.Duration) {
 			return
 		case <-t.C:
 			evs, err := s.store.ExpireLeases(ctx)
-			if err != nil {
+			if err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("lease sweeper: %v", err)
 			}
 			s.published(evs)
 			// Due recurring tasks become backlog items on the same tick (#112).
 			evs, err = s.store.MaterializeSchedules(ctx)
-			if err != nil {
+			if err != nil && !errors.Is(err, context.Canceled) {
 				log.Printf("schedule sweeper: %v", err)
+			}
+			if n := countEventType(evs, "backlog.added"); n > 0 {
+				log.Printf("INFO materialized %d scheduled backlog item(s)", n)
 			}
 			s.published(evs)
 		}
 	}
+}
+
+func countEventType(evs []store.Event, typ string) int {
+	n := 0
+	for _, e := range evs {
+		if e.Type == typ {
+			n++
+		}
+	}
+	return n
 }
 
 func (s *Server) routes() {
@@ -101,6 +165,10 @@ func (s *Server) routes() {
 	m := s.mux
 	m.HandleFunc("GET /api/workspaces", s.listWorkspaces)
 	m.HandleFunc("POST /api/workspaces", s.createWorkspace)
+	// Counts only, for the landing page: no sign-in (#301). The literal path
+	// wins over {ws} below, and no workspace id is ever "stats".
+	m.HandleFunc("GET /api/workspaces/stats", s.workspaceStats)
+	m.HandleFunc("GET /api/version", s.getVersion)
 	// Everything under a workspace goes through the gate (gate.go)...
 	m.Handle(ws, s.gate(s.ws))
 	m.Handle(ws+"/", s.gate(s.ws))
@@ -121,6 +189,10 @@ func (s *Server) routes() {
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
 	h("DELETE "+ws+"/repos/{id}", s.auth(s.removeRepo))
+	h("GET "+ws+"/links", s.listLinks)
+	h("POST "+ws+"/links", s.auth(s.addLink))
+	h("PATCH "+ws+"/links/{id}", s.auth(s.editLink))
+	h("DELETE "+ws+"/links/{id}", s.auth(s.removeLink))
 	h("GET "+ws+"/reviews", s.listReviews)
 	h("GET "+ws+"/schedules", s.listSchedules)
 	h("POST "+ws+"/schedules", s.auth(s.addSchedule))
@@ -174,7 +246,10 @@ func (s *Server) routes() {
 	h("GET "+ws+"/webhooks/{id}/secret", s.auth(s.webhookSecret))
 	h("GET "+ws+"/webhooks/{id}/deliveries", s.listDeliveries)
 	h("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
+	h("POST "+ws+"/images", s.auth(s.uploadImage))
+	h("GET "+ws+"/images/{id}", s.getImage)
 	h("GET "+ws+"/events", s.events)
+	h("GET "+ws+"/events/peek", s.auth(s.peek))
 	h("GET "+ws+"/activity", s.listActivity)
 	h("GET "+ws+"/stream", s.stream)
 }
@@ -235,7 +310,7 @@ func (s *Server) touch(ctx context.Context, p *store.Participant) {
 	if time.Since(time.UnixMilli(p.LastSeenAt)) < 5*time.Second {
 		return
 	}
-	if err := s.store.Touch(ctx, p.ID); err != nil {
+	if err := s.store.Touch(ctx, p.ID); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("touch participant %d: %v", p.ID, err)
 	}
 }
@@ -252,7 +327,7 @@ func (s *Server) markActive(r *http.Request, p *store.Participant) {
 	if !countsAsActivity(r) {
 		return
 	}
-	if err := s.store.MarkActive(r.Context(), p); err != nil {
+	if err := s.store.MarkActive(r.Context(), p); err != nil && !errors.Is(err, context.Canceled) {
 		log.Printf("mark participant %d active: %v", p.ID, err)
 	}
 }
@@ -281,6 +356,8 @@ func storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusBadRequest, err.Error())
 	case errors.Is(err, store.ErrForbidden):
 		writeError(w, http.StatusForbidden, err.Error())
+	case errors.Is(err, context.Canceled):
+		writeError(w, statusClientClosedRequest, "client closed request")
 	default:
 		log.Printf("internal error: %v", err)
 		writeError(w, http.StatusInternalServerError, "internal error")
@@ -337,6 +414,13 @@ func (s *Server) listWorkspaces(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, http.StatusOK, list, nil, err)
 }
 
+// workspaceStats is public: how many workspaces there are and how many are
+// new, never which ones (#301).
+func (s *Server) workspaceStats(w http.ResponseWriter, r *http.Request) {
+	st, err := s.store.WorkspaceStats(r.Context())
+	s.respond(w, http.StatusOK, st, nil, err)
+}
+
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string            `json:"name"`
@@ -385,7 +469,11 @@ func (s *Server) deleteWorkspace(w http.ResponseWriter, r *http.Request) {
 		writeErrorCode(w, http.StatusUnauthorized, codeSignIn, "sign in to delete a workspace")
 		return
 	}
-	if err := s.store.DeleteWorkspace(r.Context(), wsID); err != nil {
+	var by int64
+	if u := viewer(r).user; u != nil {
+		by = u.ID
+	}
+	if err := s.store.DeleteWorkspace(r.Context(), wsID, by); err != nil {
 		storeError(w, err)
 		return
 	}
@@ -426,6 +514,41 @@ func (s *Server) removeRepo(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	evs, err := s.store.RemoveRepo(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
+}
+
+// ---- Custom links (#299) ----
+
+func (s *Server) listLinks(w http.ResponseWriter, r *http.Request) {
+	list, err := s.store.ListLinks(r.Context(), r.PathValue("ws"))
+	s.respond(w, http.StatusOK, list, nil, err)
+}
+
+func (s *Server) addLink(w http.ResponseWriter, r *http.Request) {
+	var req store.LinkInput
+	if !decode(w, r, &req) {
+		return
+	}
+	link, evs, err := s.store.AddLink(r.Context(), actor(r), req)
+	s.respond(w, http.StatusCreated, link, evs, err)
+}
+
+func (s *Server) editLink(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var p store.LinkPatch
+	if !ok || !decode(w, r, &p) {
+		return
+	}
+	link, evs, err := s.store.EditLink(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, link, evs, err)
+}
+
+func (s *Server) removeLink(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	evs, err := s.store.RemoveLink(r.Context(), actor(r), id)
 	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
 }
 
@@ -503,13 +626,16 @@ func (s *Server) join(w http.ResponseWriter, r *http.Request) {
 		Emoji  string `json:"emoji"`
 		Pass   string `json:"pass"`
 		Invite string `json:"invite"`
+		// Model is the AI model an agent says it runs on (#304): taken
+		// with a pass, since agents are who it is for.
+		Model string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
 	// Agents join with a pass.
 	if req.Pass != "" {
-		p, tok, evs, err := s.store.JoinWithPass(r.Context(), r.PathValue("ws"), req.Pass, req.Name, req.Emoji)
+		p, tok, evs, err := s.store.JoinAgent(r.Context(), r.PathValue("ws"), req.Pass, store.AgentJoin{Name: req.Name, Emoji: req.Emoji, Model: req.Model})
 		if err == nil {
 			s.track(eventJoined, participantActor(p))
 		}
@@ -535,13 +661,17 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) updateMe(w http.ResponseWriter, r *http.Request) {
+	// Each field is optional, and one left out stays as it is (#303).
 	var req struct {
-		Status string `json:"status"`
+		Name   *string `json:"name"`
+		Emoji  *string `json:"emoji"`
+		Status *string `json:"status"`
+		Model  *string `json:"model"`
 	}
 	if !decode(w, r, &req) {
 		return
 	}
-	p, evs, err := s.store.SetStatus(r.Context(), actor(r), req.Status)
+	p, evs, err := s.store.UpdateParticipant(r.Context(), actor(r), store.ParticipantPatch{Name: req.Name, Emoji: req.Emoji, Status: req.Status, Model: req.Model})
 	s.respond(w, http.StatusOK, p, evs, err)
 }
 
@@ -1038,4 +1168,12 @@ func (s *Server) serveWeb(w http.ResponseWriter, r *http.Request) {
 	}
 	// Single-page app: every other path renders index.html.
 	http.ServeFileFS(w, r, s.web, "index.html")
+}
+
+func (s *Server) getVersion(w http.ResponseWriter, r *http.Request) {
+	v := s.version
+	if v == "" {
+		v = "dev"
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"version": v})
 }

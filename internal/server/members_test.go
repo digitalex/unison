@@ -3,6 +3,7 @@ package server
 import (
 	"net/http"
 	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/digitalex/unison/internal/store"
@@ -83,13 +84,25 @@ func TestMembersAPI(t *testing.T) {
 		t.Fatalf("members = %d %v", resp.StatusCode, m)
 	}
 
-	// Bob joins with an invite link, then removes Alex.
+	// Bob joins with an invite link; Alex, the owner, then removes him.
 	bob, _ := e.login("google", "/", bobGoogle, nil)
 	_, inv := e.do("POST", base+"/invites", `{"link":true}`, withCookie(alex), withCSRF())
-	if resp, out := e.do("POST", base+"/join", `{"name":"Bob","invite":"`+inv["token"].(string)+`"}`, withCookie(bob), withCSRF()); resp.StatusCode != 201 {
+	resp, out := e.do("POST", base+"/join", `{"name":"Bob","invite":"`+inv["token"].(string)+`"}`, withCookie(bob), withCSRF())
+	if resp.StatusCode != 201 {
 		t.Fatalf("join with link = %d %v", resp.StatusCode, out)
 	}
-	remove := base + "/members/" + strconv.FormatInt(alexID, 10)
+	bobTok := out["token"].(string)
+	_, bobMe := e.do("GET", "/api/me/user", "", withCookie(bob))
+	bobID := int64(bobMe["id"].(float64))
+	// Only the owner removes others (#296), and the owner can't leave.
+	removeAlex := base + "/members/" + strconv.FormatInt(alexID, 10)
+	if resp, out := e.do("DELETE", removeAlex, "", withCookie(bob), withCSRF()); resp.StatusCode != 403 || !strings.Contains(out["error"].(string), "owner") {
+		t.Errorf("non-owner removing the owner = %d %v, want 403", resp.StatusCode, out)
+	}
+	if resp, out := e.do("DELETE", removeAlex, "", withCookie(alex), withCSRF()); resp.StatusCode != 403 || !strings.Contains(out["error"].(string), "delete it instead") {
+		t.Errorf("owner leaving = %d %v, want 403", resp.StatusCode, out)
+	}
+	remove := base + "/members/" + strconv.FormatInt(bobID, 10)
 	if resp, _ := e.do("DELETE", remove, ""); resp.StatusCode != http.StatusUnauthorized {
 		t.Errorf("anonymous remove = %d", resp.StatusCode)
 	}
@@ -98,23 +111,23 @@ func TestMembersAPI(t *testing.T) {
 	if resp, _ := e.do("DELETE", remove, "", withBearer(carolTok)); resp.StatusCode != 403 {
 		t.Errorf("non-member remove = %d, want 403", resp.StatusCode)
 	}
-	if resp, _ := e.do("DELETE", base+"/members/abc", "", withCookie(bob), withCSRF()); resp.StatusCode != 400 {
+	if resp, _ := e.do("DELETE", base+"/members/abc", "", withCookie(alex), withCSRF()); resp.StatusCode != 400 {
 		t.Errorf("bad id = %d", resp.StatusCode)
 	}
-	if resp, out := e.do("DELETE", remove, "", withCookie(bob), withCSRF()); resp.StatusCode != 200 {
+	if resp, out := e.do("DELETE", remove, "", withCookie(alex), withCSRF()); resp.StatusCode != 200 {
 		t.Fatalf("remove = %d %v", resp.StatusCode, out)
 	}
-	if resp, _ := e.do("DELETE", remove, "", withCookie(bob), withCSRF()); resp.StatusCode != 404 {
+	if resp, _ := e.do("DELETE", remove, "", withCookie(alex), withCSRF()); resp.StatusCode != 404 {
 		t.Errorf("remove twice = %d, want 404", resp.StatusCode)
 	}
-	// Removal is enforced now: Alex's participant and cookie are out.
-	if resp, out := e.do("GET", base+"/me", "", withBearer(alexTok)); resp.StatusCode != 403 || out["code"] != codeMember {
+	// Removal is enforced now: Bob's participant and cookie are out.
+	if resp, out := e.do("GET", base+"/me", "", withBearer(bobTok)); resp.StatusCode != 403 || out["code"] != codeMember {
 		t.Errorf("removed member's participant /me = %d %v", resp.StatusCode, out)
 	}
-	if resp, _ := e.do("GET", base, "", withCookie(alex)); resp.StatusCode != 403 {
+	if resp, _ := e.do("GET", base, "", withCookie(bob)); resp.StatusCode != 403 {
 		t.Errorf("removed member's cookie = %d", resp.StatusCode)
 	}
-	if resp, _ := e.do("POST", base+"/join", `{}`, withCookie(alex), withCSRF()); resp.StatusCode != 403 {
+	if resp, _ := e.do("POST", base+"/join", `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 {
 		t.Errorf("removed member rejoining without an invite = %d", resp.StatusCode)
 	}
 }

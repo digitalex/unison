@@ -24,6 +24,9 @@ type Config struct {
 	Token         string `json:"token,omitempty"`
 	ParticipantID int64  `json:"participant_id,omitempty"`
 	Name          string `json:"name,omitempty"`
+	// Agent marks a session joined with a pass (an agent's credential):
+	// commands for the owner only refuse to run from it (#296).
+	Agent bool `json:"agent,omitempty"`
 	// Cursor is the last event seq `unison wait` has seen.
 	Cursor int64 `json:"cursor,omitempty"`
 
@@ -105,9 +108,10 @@ func (c *Config) save() error {
 
 // client talks to the Unison HTTP API.
 type client struct {
-	server string
-	token  string
-	http   *http.Client
+	server    string
+	token     string
+	http      *http.Client
+	onVersion func(string)
 }
 
 // apiError is an error response from the server.
@@ -119,33 +123,83 @@ type apiError struct {
 
 func (e *apiError) Error() string { return e.Message }
 
+// transportError is a request that got no answer: the connection was
+// refused, reset or cut off (a deploy, a restart, a network blip).
+type transportError struct {
+	server string
+	err    error
+}
+
+func (e *transportError) Error() string {
+	return fmt.Sprintf("cannot reach the Unison server at %s (is it running? `unison serve`): %v", e.server, e.err)
+}
+
+func (e *transportError) Unwrap() error { return e.err }
+
+// readRetryDelay is how long a read waits before its one retry (#317).
+var readRetryDelay = 150 * time.Millisecond
+
 func (c *client) do(method, path string, body, out any) error {
 	var rd io.Reader
+	contentType := ""
 	if body != nil {
 		raw, err := json.Marshal(body)
 		if err != nil {
 			return err
 		}
-		rd = bytes.NewReader(raw)
+		rd, contentType = bytes.NewReader(raw), "application/json"
 	}
-	req, err := http.NewRequest(method, strings.TrimRight(c.server, "/")+path, rd)
-	if err != nil {
+	raw, err := c.raw(method, path, contentType, rd)
+	if err != nil || out == nil {
 		return err
 	}
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
+	return json.Unmarshal(raw, out)
+}
+
+// raw sends body as is (with contentType, if any) and returns the response
+// body. path is relative to the server, or a full URL on the server's host
+// (the token is never sent to another host).
+//
+// A read (GET, HEAD) that gets no answer is tried once more after a moment
+// (#317): a server restarting under a request is common, and asking again
+// is harmless. Writes are never retried: the first try may have landed.
+func (c *client) raw(method, path, contentType string, body io.Reader) ([]byte, error) {
+	raw, err := c.send(method, path, contentType, body)
+	var te *transportError
+	if (method == http.MethodGet || method == http.MethodHead) && errors.As(err, &te) {
+		time.Sleep(readRetryDelay)
+		raw, err = c.send(method, path, contentType, body)
 	}
-	if c.token != "" {
+	return raw, err
+}
+
+func (c *client) send(method, path, contentType string, body io.Reader) ([]byte, error) {
+	target := strings.TrimRight(c.server, "/") + path
+	if strings.HasPrefix(path, "http://") || strings.HasPrefix(path, "https://") {
+		target = path
+	}
+	req, err := http.NewRequest(method, target, body)
+	if err != nil {
+		return nil, err
+	}
+	if contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
+	if srv, err := url.Parse(c.server); c.token != "" && err == nil && srv.Host == req.URL.Host {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
 	resp, err := c.http.Do(req)
 	if err != nil {
-		return fmt.Errorf("cannot reach the Unison server at %s (is it running? `unison serve`): %w", c.server, err)
+		return nil, &transportError{server: c.server, err: err}
 	}
 	defer resp.Body.Close()
+	if v := resp.Header.Get("X-Unison-Version"); v != "" && c.onVersion != nil {
+		c.onVersion(v)
+	}
 	raw, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return err
+		// Cut off mid-answer: as good as no answer.
+		return nil, &transportError{server: c.server, err: err}
 	}
 	if resp.StatusCode >= 400 {
 		var e struct {
@@ -154,13 +208,15 @@ func (c *client) do(method, path string, body, out any) error {
 		}
 		if json.Unmarshal(raw, &e) != nil || e.Error == "" {
 			e.Error = strings.TrimSpace(string(raw))
+			// Not the server's own error: a gateway's empty answer or its
+			// HTML page. The status says all there is to say.
+			if e.Error == "" || strings.Contains(resp.Header.Get("Content-Type"), "html") {
+				e.Error = fmt.Sprintf("HTTP %d %s", resp.StatusCode, http.StatusText(resp.StatusCode))
+			}
 		}
-		return &apiError{Status: resp.StatusCode, Message: e.Error, Code: e.Code}
+		return nil, &apiError{Status: resp.StatusCode, Message: e.Error, Code: e.Code}
 	}
-	if out == nil {
-		return nil
-	}
-	return json.Unmarshal(raw, out)
+	return raw, nil
 }
 
 func newClient(server, token string) *client {

@@ -82,15 +82,20 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 		case errors.Is(err, store.ErrRevoked):
 			writeErrorCode(w, http.StatusUnauthorized, codeRevoke, err.Error())
 			return nil
-		case err != nil:
+		case errors.Is(err, store.ErrNotFound):
 			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, badTokenMessage)
+			return nil
+		case err != nil:
+			// The database is unreachable, say: a retryable 500, not a 401
+			// that tells clients their credential is gone (#285).
+			storeError(w, err)
 			return nil
 		case p.WorkspaceID != wsID:
 			writeErrorCode(w, http.StatusForbidden, codeOther, "this participant token belongs to workspace "+p.WorkspaceID)
 			return nil
 		}
 		if s.authCfg.Open {
-			s.touch(ctx, p)
+			s.seen(r, p)
 			s.markActive(r, p)
 			return &access{participant: p}
 		}
@@ -111,11 +116,15 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 			writeErrorCode(w, http.StatusUnauthorized, codeSignIn, badTokenMessage)
 			return nil
 		}
-		s.touch(ctx, p)
+		s.seen(r, p)
 		s.markActive(r, p)
 		return &access{participant: p}
 	}
 	a, err := s.currentUser(r)
+	if err != nil && !errors.Is(err, store.ErrNotFound) {
+		storeError(w, err)
+		return nil
+	}
 	if err != nil {
 		if s.authCfg.Open {
 			return &access{}
@@ -148,7 +157,7 @@ func (s *Server) authorize(w http.ResponseWriter, r *http.Request, wsID string) 
 		p = mp
 	}
 	if p != nil {
-		s.touch(ctx, p)
+		s.seen(r, p)
 	}
 	return &access{participant: p, user: a.user}
 }

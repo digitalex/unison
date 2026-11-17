@@ -21,14 +21,17 @@ func TestSchedulesAPI(t *testing.T) {
 	if status, _ := call(t, "POST", base, "", `{"title":"Triage","cadence":"daily"}`); status != http.StatusUnauthorized {
 		t.Errorf("unauthenticated add = %d, want 401", status)
 	}
-	if status, _ := call(t, "POST", base, token, `{"title":"Triage","cadence":"hourly"}`); status != http.StatusBadRequest {
-		t.Errorf("hourly = %d, want 400", status)
+	if status, _ := call(t, "POST", base, token, `{"title":"Triage","cadence":"monthly"}`); status != http.StatusBadRequest {
+		t.Errorf("monthly = %d, want 400", status)
 	}
 	status, sc := call(t, "POST", base, token, `{"title":"Deps","body":"Update dependencies","cadence":"weekly","weekday":"fri"}`)
 	if status != http.StatusCreated || sc["weekday"] != "fri" || sc["next_due_at"] == nil {
 		t.Fatalf("add = %d %v", status, sc)
 	}
 	one := base + "/" + strconv.Itoa(int(sc["id"].(float64)))
+	if status, got := call(t, "PATCH", one, token, `{"cadence":"hourly"}`); status != http.StatusOK || got["cadence"] != "hourly" || got["weekday"] != nil {
+		t.Errorf("edit to hourly = %d %v", status, got)
+	}
 	if status, got := call(t, "PATCH", one, token, `{"cadence":"daily"}`); status != http.StatusOK || got["cadence"] != "daily" || got["weekday"] != nil {
 		t.Errorf("edit = %d %v", status, got)
 	}

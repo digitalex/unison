@@ -484,8 +484,20 @@ func TestDeleteWorkspace(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// User 1 joined first, so owns the workspace (#296): only they may
+	// delete it.
+	if w, _ := s.GetWorkspace(ctx, wsID); w.OwnerID != u1.ID {
+		t.Errorf("owner = %d, want first member %d", w.OwnerID, u1.ID)
+	}
+	if err := s.DeleteWorkspace(ctx, wsID, u2.ID); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner DeleteWorkspace = %v, want ErrForbidden", err)
+	}
+	if err := s.DeleteWorkspace(ctx, wsID, 0); !errors.Is(err, ErrForbidden) {
+		t.Errorf("anonymous DeleteWorkspace = %v, want ErrForbidden", err)
+	}
+
 	// Delete workspace
-	if err := s.DeleteWorkspace(ctx, wsID); err != nil {
+	if err := s.DeleteWorkspace(ctx, wsID, u1.ID); err != nil {
 		t.Fatalf("DeleteWorkspace failed: %v", err)
 	}
 
@@ -495,7 +507,7 @@ func TestDeleteWorkspace(t *testing.T) {
 	}
 
 	// Deleting again should return ErrNotFound
-	if err := s.DeleteWorkspace(ctx, wsID); !errors.Is(err, ErrNotFound) {
+	if err := s.DeleteWorkspace(ctx, wsID, u1.ID); !errors.Is(err, ErrNotFound) {
 		t.Errorf("second DeleteWorkspace = %v, want ErrNotFound", err)
 	}
 

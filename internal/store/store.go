@@ -17,6 +17,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 // LeaseDuration is how long an assignment holds a backlog item before it is
@@ -54,11 +56,26 @@ type Workspace struct {
 	Name      string `json:"name"`
 	RepoURL   string `json:"repo_url"` // The first repository's URL (legacy).
 	CanvasURL string `json:"canvas_url"`
-	CreatedAt int64  `json:"created_at"`
-	Repos     []Repo `json:"repos"`
+	// ProductURL is where the product the workspace builds is deployed
+	// (#298); "" if none.
+	ProductURL string `json:"product_url"`
+	CreatedAt  int64  `json:"created_at"`
+	// OwnerID is the account that owns the workspace (#296): its creator,
+	// or for workspaces created without one, the first member. Only the
+	// owner may delete the workspace or remove other members. 0 while the
+	// workspace has no members.
+	OwnerID int64  `json:"owner_id"`
+	Repos   []Repo `json:"repos"`
+	// Links are the workspace's custom reference links (#299), filled in
+	// for a single workspace (GetWorkspace), not in workspace lists.
+	Links []Link `json:"links"`
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
+	// ActivitySeq is the seq of the workspace's latest collaboration event
+	// by someone other than the caller (#300, see CollaborationTypes); 0
+	// if there is none. Filled in for workspace lists only.
+	ActivitySeq int64 `json:"activity_seq,omitempty"`
 }
 
 // Participant is a registered human or agent. Unison makes no distinction
@@ -69,8 +86,11 @@ type Participant struct {
 	Name        string `json:"name"`
 	Emoji       string `json:"emoji"`
 	Status      string `json:"status"`
-	CreatedAt   int64  `json:"created_at"`
-	LastSeenAt  int64  `json:"last_seen_at"`
+	// Model is the AI model an agent says it runs on (#304): its own word,
+	// shown next to its name. "" when it hasn't said.
+	Model      string `json:"model,omitempty"`
+	CreatedAt  int64  `json:"created_at"`
+	LastSeenAt int64  `json:"last_seen_at"`
 	// UserID is the account this participant is linked to (by joining while
 	// signed in, or by a claim); 0 when unlinked.
 	UserID int64 `json:"user_id,omitempty"`
@@ -249,18 +269,19 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // workspaceCols are read by scanWorkspace; the last says whether a GitHub
 // token is set without reading it.
-const workspaceCols = `id, name, repo_url, canvas_url, created_at, CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
+const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
 	var hasToken int64
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.CreatedAt, &hasToken); err != nil {
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
 		return nil, err
 	}
 	w.Repos = []Repo{}
+	w.Links = []Link{}
 	w.HasGitHubToken = hasToken == 1
 	return &w, nil
 }
@@ -272,7 +293,7 @@ func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL st
 }
 
 // CreateWorkspaceFor creates a workspace whose creator (a signed-in user)
-// becomes its first member, in the same transaction.
+// becomes its first member and its owner, in the same transaction.
 func (s *Store) CreateWorkspaceFor(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
 	return s.createWorkspace(ctx, creatorID, name, repoURL, canvasURL, repos...)
 }
@@ -287,9 +308,13 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 	}
 	id := "ws_" + randomHex(4)
 	var w *Workspace
+	var owner any // NULL without a creator: the first member becomes owner.
+	if creatorID != 0 {
+		owner = creatorID
+	}
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at) VALUES (?, ?, '', ?, ?)`,
-			id, name, strings.TrimSpace(canvasURL), log.now); err != nil {
+		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at, owner_user_id) VALUES (?, ?, '', ?, ?, ?)`,
+			id, name, strings.TrimSpace(canvasURL), log.now, owner); err != nil {
 			return err
 		}
 		for _, in := range repos {
@@ -315,19 +340,46 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 	return w, evs, nil
 }
 
-// ListWorkspaces returns all workspaces, newest first.
+// ListWorkspaces returns all workspaces, newest first. Each one's
+// ActivitySeq counts everybody's activity: there is no caller to leave out.
 func (s *Store) ListWorkspaces(ctx context.Context) ([]Workspace, error) {
-	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
+	return s.listWorkspaces(ctx, 0, `SELECT `+workspaceCols+` FROM workspaces ORDER BY created_at DESC`)
 }
 
 // ListWorkspacesFor returns the workspaces userID is a member of, newest
-// first.
+// first. Each one's ActivitySeq leaves out what userID did themselves.
 func (s *Store) ListWorkspacesFor(ctx context.Context, userID int64) ([]Workspace, error) {
-	return s.listWorkspaces(ctx, `SELECT `+workspaceCols+` FROM workspaces
+	return s.listWorkspaces(ctx, userID, `SELECT `+workspaceCols+` FROM workspaces
 		WHERE id IN (SELECT workspace_id FROM memberships WHERE user_id = ?) ORDER BY created_at DESC`, userID)
 }
 
-func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Workspace, error) {
+// WorkspaceStats is how many workspaces exist and how many were created
+// lately (#301). It is public, so it holds counts and nothing else: no
+// names, no ids.
+type WorkspaceStats struct {
+	Total            int `json:"total"`
+	CreatedLast7Days int `json:"created_last_7_days"`
+	CreatedToday     int `json:"created_today"`
+}
+
+// WorkspaceStats counts the workspaces on this server. "Today" and "the
+// last 7 days" are rolling windows (the past 24 hours, the past 7 × 24)
+// ending now, so they mean the same in every time zone.
+func (s *Store) WorkspaceStats(ctx context.Context) (WorkspaceStats, error) {
+	now := s.now()
+	day := now.Add(-24 * time.Hour).UnixMilli()
+	week := now.Add(-7 * 24 * time.Hour).UnixMilli()
+	var st WorkspaceStats
+	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*),
+		COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0),
+		COALESCE(SUM(CASE WHEN created_at > ? THEN 1 ELSE 0 END), 0)
+		FROM workspaces`, week, day).Scan(&st.Total, &st.CreatedLast7Days, &st.CreatedToday)
+	return st, err
+}
+
+// listWorkspaces runs q and fills in each workspace's repositories and its
+// ActivitySeq as userID sees it (0: nobody's activity is left out).
+func (s *Store) listWorkspaces(ctx context.Context, userID int64, q string, args ...any) ([]Workspace, error) {
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
@@ -348,11 +400,57 @@ func (s *Store) listWorkspaces(ctx context.Context, q string, args ...any) ([]Wo
 	if err := s.attachRepos(ctx, list); err != nil {
 		return nil, err
 	}
+	if err := s.attachActivity(ctx, list, userID); err != nil {
+		return nil, err
+	}
 	out := make([]Workspace, 0, len(list))
 	for _, w := range list {
 		out = append(out, *w)
 	}
 	return out, nil
+}
+
+// CollaborationTypes are the events that count as collaboration in a
+// workspace (#300): chat messages, changes to the backlog and comments on
+// it, pull request links, schedule changes, and people joining or being
+// removed. Another workspace's switcher entry is marked when one of these
+// happens there. Left out as noise: status and name changes
+// (participant.updated), reactions and message.done/undone, lease renewals
+// and expiries, agents logged out for idling, and settings (repos, links,
+// webhooks, invites).
+var CollaborationTypes = []string{
+	"message.created",
+	"backlog.added", "backlog.updated", "backlog.moved", "backlog.deleted",
+	"backlog.assigned", "backlog.unassigned", "backlog.started", "backlog.stopped", "backlog.released",
+	"backlog.closed", "backlog.reopened",
+	"comment.added",
+	"pr.linked", "pr.unlinked",
+	"schedule.added", "schedule.updated", "schedule.removed",
+	"participant.joined", "participant.revoked", "member.removed",
+}
+
+// attachActivity sets each workspace's ActivitySeq: the seq of its latest
+// collaboration event that userID's own participant there did not make.
+// What the user's agents do counts: they are teammates to hear from.
+// Events with no actor (the server's own) count too.
+func (s *Store) attachActivity(ctx context.Context, list []*Workspace, userID int64) error {
+	marks := strings.TrimSuffix(strings.Repeat("?, ", len(CollaborationTypes)), ", ")
+	// Newest first on the (workspace_id, seq) index, stopping at the first
+	// event that qualifies.
+	q := `SELECT seq FROM events WHERE workspace_id = ? AND type IN (` + marks + `)
+		AND (actor_id IS NULL OR actor_id NOT IN (SELECT id FROM participants WHERE workspace_id = ? AND user_id = ?))
+		ORDER BY seq DESC LIMIT 1`
+	for _, w := range list {
+		args := []any{w.ID}
+		for _, t := range CollaborationTypes {
+			args = append(args, t)
+		}
+		args = append(args, w.ID, userID)
+		if err := s.db.QueryRowContext(ctx, q, args...).Scan(&w.ActivitySeq); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+	}
+	return nil
 }
 
 // GetWorkspace returns a workspace by ID, with its repositories.
@@ -375,7 +473,15 @@ func (s *Store) GetWorkspace(ctx context.Context, id string) (*Workspace, error)
 	if err != nil {
 		return nil, err
 	}
-	return w, s.attachRepos(ctx, []*Workspace{w})
+	if err := s.attachRepos(ctx, []*Workspace{w}); err != nil {
+		return nil, err
+	}
+	rows, err := s.db.QueryContext(ctx, `SELECT `+linkCols+` FROM workspace_links WHERE workspace_id = ? ORDER BY position, id`, id)
+	if err != nil {
+		return nil, err
+	}
+	w.Links, err = scanLinks(rows)
+	return w, err
 }
 
 // WorkspacePatch holds optional workspace field updates. RepoURL is the
@@ -385,6 +491,9 @@ type WorkspacePatch struct {
 	Name      *string `json:"name"`
 	RepoURL   *string `json:"repo_url"`
 	CanvasURL *string `json:"canvas_url"`
+	// ProductURL sets where the product is deployed (#298): an http(s) URL,
+	// or "" to remove it.
+	ProductURL *string `json:"product_url"`
 	// GitHubToken sets the token the server reads pull requests with (#127);
 	// "" removes it.
 	GitHubToken *string `json:"github_token"`
@@ -409,6 +518,17 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 		}
 		if _, err := t.Exec(`UPDATE workspaces SET name = ?, canvas_url = ? WHERE id = ?`, w.Name, w.CanvasURL, id); err != nil {
 			return err
+		}
+		if p.ProductURL != nil {
+			var product any // NULL when removed.
+			if strings.TrimSpace(*p.ProductURL) != "" {
+				if product, err = httpURL("product", *p.ProductURL); err != nil {
+					return err
+				}
+			}
+			if _, err := t.Exec(`UPDATE workspaces SET product_url = ? WHERE id = ?`, product, id); err != nil {
+				return err
+			}
 		}
 		if p.GitHubToken != nil {
 			var token any // NULL when removed.
@@ -437,15 +557,20 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 
 // DeleteWorkspace permanently deletes a workspace and all its associated
 // data (messages, backlog items, comments, PRs, webhooks, passes, invites,
-// participants, events). Global user accounts are untouched.
-func (s *Store) DeleteWorkspace(ctx context.Context, id string) error {
+// participants, events). Global user accounts are untouched. Only the
+// workspace's owner (byUserID) may delete it (#296); a workspace without an
+// owner (no members ever) may be deleted by anyone the server lets through.
+func (s *Store) DeleteWorkspace(ctx context.Context, id string, byUserID int64) error {
 	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		var name string
-		if err := t.QueryRow(`SELECT name FROM workspaces WHERE id = ?`, id).Scan(&name); err != nil {
+		var owner sql.NullInt64
+		if err := t.QueryRow(`SELECT owner_user_id FROM workspaces WHERE id = ?`, id).Scan(&owner); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				return ErrNotFound
 			}
 			return err
+		}
+		if owner.Valid && owner.Int64 != byUserID {
+			return fmt.Errorf("%w: only the workspace's owner can delete it", ErrForbidden)
 		}
 		return deleteWorkspace(t, id)
 	})
@@ -458,6 +583,8 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM webhook_deliveries WHERE workspace_id = ?`,
 		`DELETE FROM webhooks WHERE workspace_id = ?`,
 		`DELETE FROM workspace_repos WHERE workspace_id = ?`,
+		`DELETE FROM workspace_links WHERE workspace_id = ?`,
+		`DELETE FROM images WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,
 		`DELETE FROM item_prs WHERE workspace_id = ?`,
@@ -485,15 +612,15 @@ func deleteWorkspace(t *tx, id string) error {
 // participantCols are selected FROM participants (unaliased).
 const participantCols = `id, workspace_id, name, emoji, status, created_at, last_seen_at, user_id, sponsor_user_id,
 	(SELECT display_name FROM users WHERE users.id = participants.sponsor_user_id), token_expires_at, revoked_at,
-	revoke_reason, last_active_at`
+	revoke_reason, last_active_at, model`
 
 // scanParticipant scans participantCols, then any extra columns into extra.
 func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Participant, error) {
 	var p Participant
 	var userID, sponsorID, expires, revoked, active sql.NullInt64
-	var sponsorName, reason sql.NullString
+	var sponsorName, reason, model sql.NullString
 	dest := append([]any{&p.ID, &p.WorkspaceID, &p.Name, &p.Emoji, &p.Status, &p.CreatedAt, &p.LastSeenAt, &userID, &sponsorID, &sponsorName, &expires, &revoked,
-		&reason, &active}, extra...)
+		&reason, &active, &model}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
@@ -501,7 +628,7 @@ func scanParticipant(row interface{ Scan(...any) error }, extra ...any) (*Partic
 		return nil, err
 	}
 	p.UserID, p.TokenExpiresAt, p.RevokedAt = userID.Int64, expires.Int64, revoked.Int64
-	p.RevokeReason, p.LastActiveAt = reason.String, active.Int64
+	p.RevokeReason, p.LastActiveAt, p.Model = reason.String, active.Int64, model.String
 	if sponsorID.Valid {
 		p.Sponsor = &Sponsor{UserID: sponsorID.Int64, DisplayName: sponsorName.String}
 	}
@@ -534,6 +661,16 @@ func (s *Store) Join(ctx context.Context, wsID, name, emoji string) (*Participan
 // sliding token expiry). The zero value is a plain, unlinked participant.
 type participantLink struct {
 	UserID, SponsorUserID, TokenExpiresAt int64
+	// Model is the model an agent joining with a pass says it runs on.
+	Model string
+}
+
+// nullableText is s, or NULL for "".
+func nullableText(s string) any {
+	if s == "" {
+		return nil
+	}
+	return s
 }
 
 func nullable(v int64) any {
@@ -553,8 +690,8 @@ func nullString(v string) any {
 // insertParticipant creates a participant and records participant.joined.
 func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link participantLink) (*Participant, string, error) {
 	name, emoji = strings.TrimSpace(name), strings.TrimSpace(emoji)
-	if strings.ContainsAny(name, " \t\n@") {
-		return nil, "", fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+	if err := validName(name); err != nil {
+		return nil, "", err
 	}
 	if _, err := scanWorkspace(t.QueryRow(`SELECT `+workspaceCols+` FROM workspaces WHERE id = ?`, wsID)); err != nil {
 		return nil, "", err
@@ -586,9 +723,9 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 	if link.SponsorUserID != 0 {
 		lastActive = now
 	}
-	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at, last_active_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
-		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt), nullable(lastActive))
+	id, err := t.insert(`INSERT INTO participants (workspace_id, name, emoji, token, created_at, last_seen_at, user_id, sponsor_user_id, token_expires_at, last_active_at, model)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+		wsID, name, emoji, token, now, now, nullable(link.UserID), nullable(link.SponsorUserID), nullable(link.TokenExpiresAt), nullable(lastActive), nullableText(link.Model))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return nil, "", fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, name)
@@ -596,8 +733,35 @@ func insertParticipant(t *tx, log *eventLog, wsID, name, emoji string, link part
 		return nil, "", err
 	}
 	p := &Participant{ID: id, WorkspaceID: wsID, Name: name, Emoji: emoji, CreatedAt: now, LastSeenAt: now,
-		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive}
+		UserID: link.UserID, Sponsor: sponsor, TokenExpiresAt: link.TokenExpiresAt, LastActiveAt: lastActive, Model: link.Model}
 	return p, token, log.add(wsID, "participant.joined", id, p)
+}
+
+// validName applies the rule every participant name follows, at joining
+// and at renaming: one word, no '@', since names are how people are
+// mentioned.
+func validName(name string) error {
+	if strings.ContainsAny(name, " \t\n@") {
+		return fmt.Errorf("%w: names cannot contain whitespace or '@' (they are used as @mentions)", ErrInvalid)
+	}
+	return nil
+}
+
+// ModelMax is the longest model name a participant may report, in
+// characters.
+const ModelMax = 64
+
+// validModel tidies the model a participant reports (#304): one line of at
+// most ModelMax characters. It is the agent's own word, shown as given.
+func validModel(model string) (string, error) {
+	model = strings.TrimSpace(model)
+	if strings.IndexFunc(model, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("%w: a model is one line of text", ErrInvalid)
+	}
+	if utf8.RuneCountInString(model) > ModelMax {
+		return "", fmt.Errorf("%w: a model is at most %d characters", ErrInvalid, ModelMax)
+	}
+	return model, nil
 }
 
 func freeName(t *tx, wsID string) (string, error) {
@@ -663,6 +827,20 @@ func (s *Store) Touch(ctx context.Context, id int64) error {
 	return err
 }
 
+// ExtendCredential slides an agent credential's expiry AgentCredentialTTL
+// ahead, as Touch does, without marking the participant seen: for requests
+// that must not show presence (a peek). Writes are throttled to one a
+// minute; credentials that never expire are left alone.
+func (s *Store) ExtendCredential(ctx context.Context, p *Participant) error {
+	expires := s.nowMillis() + AgentCredentialTTL.Milliseconds()
+	if p.TokenExpiresAt == 0 || expires-p.TokenExpiresAt < activityResolution.Milliseconds() {
+		return nil
+	}
+	p.TokenExpiresAt = expires
+	_, err := s.db.ExecContext(ctx, `UPDATE participants SET token_expires_at = ? WHERE id = ? AND token_expires_at IS NOT NULL`, expires, p.ID)
+	return err
+}
+
 // ListParticipants returns a workspace's participants, most recently seen
 // first.
 func (s *Store) ListParticipants(ctx context.Context, wsID string) ([]Participant, error) {
@@ -687,19 +865,70 @@ func (s *Store) GetParticipant(ctx context.Context, wsID string, id int64) (*Par
 	return scanParticipant(s.db.QueryRowContext(ctx, `SELECT `+participantCols+` FROM participants WHERE workspace_id = ? AND id = ?`, wsID, id))
 }
 
-// SetStatus updates a participant's free-form status line.
-func (s *Store) SetStatus(ctx context.Context, p *Participant, status string) (*Participant, []Event, error) {
-	status = strings.TrimSpace(status)
+// ParticipantPatch is what participants may change about themselves in a
+// workspace (#303). A nil field stays as it is.
+type ParticipantPatch struct {
+	Name   *string
+	Emoji  *string
+	Status *string // "" clears it
+	Model  *string // the model an agent runs on (#304); "" clears it
+}
+
+// UpdateParticipant changes p's name, emoji, status line and model:
+// whichever the patch carries. A name follows the rules of joining: one word, no '@',
+// and not another participant's in this workspace whatever the case
+// (ErrConflict). Messages that @mention the old name stay as written.
+func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch ParticipantPatch) (*Participant, []Event, error) {
+	var set []string
+	var args []any
+	next := *p
+	if patch.Name != nil {
+		next.Name = strings.TrimSpace(*patch.Name)
+		if next.Name == "" {
+			return nil, nil, fmt.Errorf("%w: a name is required", ErrInvalid)
+		}
+		if err := validName(next.Name); err != nil {
+			return nil, nil, err
+		}
+		set, args = append(set, "name = ?"), append(args, next.Name)
+	}
+	if patch.Emoji != nil {
+		next.Emoji = strings.TrimSpace(*patch.Emoji)
+		if next.Emoji == "" {
+			return nil, nil, fmt.Errorf("%w: an emoji is required", ErrInvalid)
+		}
+		set, args = append(set, "emoji = ?"), append(args, next.Emoji)
+	}
+	if patch.Status != nil {
+		next.Status = strings.TrimSpace(*patch.Status)
+		set, args = append(set, "status = ?"), append(args, next.Status)
+	}
+	if patch.Model != nil {
+		model, err := validModel(*patch.Model)
+		if err != nil {
+			return nil, nil, err
+		}
+		next.Model = model
+		set, args = append(set, "model = ?"), append(args, nullableText(model))
+	}
+	if len(set) == 0 {
+		return p, nil, nil
+	}
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`UPDATE participants SET status = ?, last_seen_at = ? WHERE id = ?`, status, log.now, p.ID); err != nil {
+		next.LastSeenAt = log.now
+		args := append(args, log.now, p.ID)
+		if _, err := t.Exec(`UPDATE participants SET `+strings.Join(set, ", ")+`, last_seen_at = ? WHERE id = ?`, args...); err != nil {
+			if isUniqueViolation(err) {
+				return fmt.Errorf("%w: the name %q is already taken in this workspace", ErrConflict, next.Name)
+			}
 			return err
 		}
-		p.Status, p.LastSeenAt = status, log.now
-		return log.add(p.WorkspaceID, "participant.updated", p.ID, p)
+		return log.add(p.WorkspaceID, "participant.updated", p.ID, &next)
 	})
 	if err != nil {
 		return nil, nil, err
 	}
+	*p = next
 	return p, evs, nil
 }
 
@@ -823,6 +1052,13 @@ func clampLimit(limit, def, maxLimit int) int {
 func (s *Store) ListMessages(ctx context.Context, wsID string, limit int) ([]Message, error) {
 	limit = clampLimit(limit, 200, 1000)
 	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, `SELECT * FROM (`+selectMessages+` WHERE m.workspace_id = ? ORDER BY m.id DESC LIMIT ?) AS recent ORDER BY id ASC`, wsID, limit)))
+}
+
+// MessagesAfter returns up to limit messages (default 200, clamped to 1000)
+// with an id above after, oldest first.
+func (s *Store) MessagesAfter(ctx context.Context, wsID string, after int64, limit int) ([]Message, error) {
+	limit = clampLimit(limit, 200, 1000)
+	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.id > ? ORDER BY m.id LIMIT ?`, wsID, after, limit)))
 }
 
 // withDetails returns a function that fills in the reactions and actions

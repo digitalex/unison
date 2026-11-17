@@ -10,14 +10,15 @@ import (
 )
 
 // Schedule is a recurring task: a backlog item that comes due daily, or
-// weekly on a weekday, at 00:00 server time (#111). Due runs become backlog
-// items at the top of the backlog (#112).
+// weekly on a weekday, at 00:00 server time (#111), or hourly at the top of
+// every hour (#295). Due runs become backlog items at the top of the backlog
+// (#112).
 type Schedule struct {
 	ID          int64  `json:"id"`
 	WorkspaceID string `json:"workspace_id"`
 	Title       string `json:"title"`
 	Body        string `json:"body"`
-	Cadence     string `json:"cadence"`           // "daily" or "weekly"
+	Cadence     string `json:"cadence"`           // "hourly", "daily" or "weekly"
 	Weekday     string `json:"weekday,omitempty"` // "mon" … "sun", for weekly
 	CreatedBy   int64  `json:"created_by"`
 	CreatedAt   int64  `json:"created_at"`
@@ -42,6 +43,7 @@ type SchedulePatch struct {
 }
 
 const (
+	CadenceHourly = "hourly"
 	CadenceDaily  = "daily"
 	CadenceWeekly = "weekly"
 )
@@ -49,13 +51,13 @@ const (
 var weekdays = []string{"sun", "mon", "tue", "wed", "thu", "fri", "sat"}
 
 // checkCadence validates a cadence and weekday, returning the weekday in its
-// canonical three-letter form ("" for daily).
+// canonical three-letter form ("" for hourly and daily).
 func checkCadence(cadence, weekday string) (string, error) {
 	weekday = strings.ToLower(strings.TrimSpace(weekday))
 	switch cadence {
-	case CadenceDaily:
+	case CadenceHourly, CadenceDaily:
 		if weekday != "" {
-			return "", fmt.Errorf("%w: a daily schedule has no weekday", ErrInvalid)
+			return "", fmt.Errorf("%w: only weekly schedules have a weekday", ErrInvalid)
 		}
 		return "", nil
 	case CadenceWeekly:
@@ -68,13 +70,17 @@ func checkCadence(cadence, weekday string) (string, error) {
 		}
 		return "", fmt.Errorf("%w: a weekly schedule needs a weekday (mon … sun), got %q", ErrInvalid, weekday)
 	}
-	return "", fmt.Errorf("%w: unknown cadence %q (want daily or weekly)", ErrInvalid, cadence)
+	return "", fmt.Errorf("%w: unknown cadence %q (want hourly, daily or weekly)", ErrInvalid, cadence)
 }
 
 // nextDue is the first 00:00 strictly after now (in now's location, the
 // server's time zone) that falls on the cadence: any day, or the weekday.
+// Hourly, it is the next top of the hour.
 func nextDue(now time.Time, cadence, weekday string) time.Time {
 	y, m, d := now.Date()
+	if cadence == CadenceHourly {
+		return time.Date(y, m, d, now.Hour()+1, 0, 0, 0, now.Location())
+	}
 	t := time.Date(y, m, d+1, 0, 0, 0, 0, now.Location())
 	if cadence == CadenceWeekly {
 		for weekdays[t.Weekday()] != weekday {
@@ -173,7 +179,7 @@ func (s *Store) EditSchedule(ctx context.Context, actor *Participant, id int64, 
 			cadence, weekday := sc.Cadence, sc.Weekday
 			if p.Cadence != nil {
 				cadence = *p.Cadence
-				if cadence == CadenceDaily && p.Weekday == nil {
+				if cadence != CadenceWeekly && p.Weekday == nil {
 					weekday = ""
 				}
 			}
@@ -254,10 +260,17 @@ func runSchedule(t *tx, log *eventLog, sc *Schedule, loc *time.Location) error {
 	if n, _ := res.RowsAffected(); n == 0 {
 		return nil
 	}
-	_, _, err = runOnce(t, log, sc, fmt.Sprintf("🔁 Missed the scheduled run due %s: this item was still open, so no new one was added.",
-		time.UnixMilli(sc.NextDueAt).In(loc).Format("Mon 2 Jan 15:04")))
+	note := fmt.Sprintf(missedPrefix+" due %s: this item was still open, so no new one was added.",
+		time.UnixMilli(sc.NextDueAt).In(loc).Format("Mon 2 Jan 15:04"))
+	if sc.Cadence == CadenceHourly {
+		note += " Further missed hourly runs won't be noted until it closes."
+	}
+	_, _, err = runOnce(t, log, sc, note, sc.Cadence == CadenceHourly)
 	return err
 }
+
+// missedPrefix starts the note a due run leaves on a still-open item.
+const missedPrefix = "🔁 Missed the scheduled run"
 
 // RunSchedule runs a schedule now (#116), doing exactly what a due run does:
 // a new item at the top of the backlog, or, if the previous run is still
@@ -271,7 +284,7 @@ func (s *Store) RunSchedule(ctx context.Context, actor *Participant, id int64) (
 		if err != nil {
 			return err
 		}
-		it, added, err = runOnce(t, log, sc, fmt.Sprintf("🔁 %s ran this recurring task now, but this item was still open, so no new one was added.", actor.Name))
+		it, added, err = runOnce(t, log, sc, fmt.Sprintf("🔁 %s ran this recurring task now, but this item was still open, so no new one was added.", actor.Name), false)
 		return err
 	})
 	if err != nil {
@@ -280,14 +293,26 @@ func (s *Store) RunSchedule(ctx context.Context, actor *Participant, id int64) (
 	return it, added, evs, nil
 }
 
-// runOnce makes one run of sc: a new item, or missNote on its open run.
-func runOnce(t *tx, log *eventLog, sc *Schedule, missNote string) (*Item, bool, error) {
+// runOnce makes one run of sc: a new item, or missNote on its open run. With
+// quiet, a miss is noted only if the open run has no missed-run note yet, so
+// an hourly task left open all day gets one note, not 24 (#295).
+func runOnce(t *tx, log *eventLog, sc *Schedule, missNote string, quiet bool) (*Item, bool, error) {
 	// Runs are created as the schedule's creator, like the items they add.
 	creator := &Participant{ID: sc.CreatedBy, WorkspaceID: sc.WorkspaceID}
 	var open int64
 	err := t.QueryRow(`SELECT id FROM items WHERE schedule_id = ? AND status != ? ORDER BY id DESC LIMIT 1`, sc.ID, StatusDone).Scan(&open)
 	switch {
 	case err == nil:
+		if quiet {
+			var noted int
+			if err := t.QueryRow(`SELECT COUNT(*) FROM item_comments WHERE item_id = ? AND body LIKE ?`, open, missedPrefix+"%").Scan(&noted); err != nil {
+				return nil, false, err
+			}
+			if noted > 0 {
+				it, err := getItem(t, sc.WorkspaceID, open)
+				return it, false, err
+			}
+		}
 		it, err := missedRun(t, log, creator, open, missNote)
 		return it, false, err
 	case !errors.Is(err, sql.ErrNoRows):

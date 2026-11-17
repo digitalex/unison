@@ -1,10 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, ChevronDown, FolderGit2, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, ChevronDown, FolderGit2, Globe, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
+import { markSeen } from "./activity.js";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
+import { LinkDialog } from "./Links.jsx";
+import MeDialog from "./MeDialog.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
@@ -19,6 +22,7 @@ import Dialog from "./ui/Dialog.jsx";
 import { Textarea } from "./ui/Input.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
 import WorkspaceSwitcher from "./WorkspaceSwitcher.jsx";
+import { ImageUpload, imageUploader } from "./images.jsx";
 
 const ACTIVE_WINDOW_MS = 2 * 60 * 1000;
 const DORMANT_WINDOW_MS = 15 * 60 * 1000;
@@ -75,9 +79,11 @@ function collectionFor({ type, data }) {
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
   if (type.startsWith("participant.")) return ["participants", "members"];
-  if (type === "member.removed") return ["members", "activity"];
-  if (type.startsWith("member.")) return ["members"];
-  if (type.startsWith("workspace.") || type.startsWith("repo.")) return ["workspace"];
+  // Membership changes can change the owner (the first member, or a
+  // handoff when the owner's account is deleted, #296).
+  if (type === "member.removed") return ["members", "activity", "workspace"];
+  if (type.startsWith("member.")) return ["members", "workspace"];
+  if (type.startsWith("workspace.") || type.startsWith("repo.") || type.startsWith("link.")) return ["workspace"];
   return [];
 }
 
@@ -113,15 +119,38 @@ function isGateError(e) {
 // phones) switches between its screens, and the current one fills the main
 // pane: view is "backlog", "recurring", "chat" or "settings". They all share
 // the data and live updates.
+// The title the page came with (index.html): what Home shows, and what a
+// tab goes back to on leaving a workspace.
+const HOME_TITLE = document.title;
+
+// useTabTitle names the browser tab for the workspace (#302), so tabs open
+// on several workspaces can be told apart: "<Workspace> | Unison" once it
+// has loaded (and again whenever it is renamed), plain "Unison" while it
+// loads or the gate is up, and Home's title again on leaving.
+function useTabTitle(name) {
+  const title = name ? `${name} | Unison` : "Unison";
+  useEffect(() => {
+    document.title = title;
+  }, [title]);
+  useEffect(
+    () => () => {
+      document.title = HOME_TITLE;
+    },
+    [],
+  );
+}
+
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
 export default function Workspace({ id, view, navigate, account }) {
   const token = account.user ? "" : getToken(id);
   const call = useMemo(() => workspaceApi(id, token), [id, token]);
+  const uploader = useMemo(() => imageUploader(id, token), [id, token]);
   const [gate, setGate] = useState(null); // {code, message} when refused
   const [joins, setJoins] = useState(0); // bumped on joining: reload everything
   const [workspace, setWorkspace] = useState(null);
+  useTabTitle(gate ? "" : workspace?.name);
   const [me, setMe] = useState(null);
   const [participants, setParticipants] = useState([]);
   const [messages, setMessages] = useState([]);
@@ -137,6 +166,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat", call);
   const [mention, setMention] = useState(null); // A name to start a chat message with.
   const [error, setError] = useState("");
+  const [editingMe, setEditingMe] = useState(false); // MeDialog is open
   const joined = Boolean(me);
   const notify = useNotifier(me, participants, view);
   const reviews = usePendingReviews(call, joined ? workspace : null);
@@ -204,6 +234,8 @@ export default function Workspace({ id, view, navigate, account }) {
   // stream open also keeps us present in the roster.
   const messagesNow = useRef(messages);
   messagesNow.current = messages;
+  const meNow = useRef(me);
+  meNow.current = me;
   // Item events carry the item (comment events too, as data.item).
   const applyItemEvent = ({ type, data }) => {
     if (type === "backlog.deleted" && data?.id) return setBacklog((list) => list.filter((it) => it.id !== data.id));
@@ -237,10 +269,14 @@ export default function Workspace({ id, view, navigate, account }) {
     src.onerror = () => setLive(false);
     src.onmessage = (msg) => {
       const event = JSON.parse(msg.data);
+      // You are here to see it: the switcher needn't mark this workspace (#300).
+      markSeen(account.user?.id, id, event.seq);
       notify(event);
       applyMessageEvent(event);
       applyItemEvent(event);
       collectionFor(event).forEach(reload);
+      // Renamed, or a new emoji or status, from here or anywhere else (#303).
+      if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
     };
     const roster = setInterval(() => reload("participants"), 30000);
     return () => {
@@ -268,6 +304,7 @@ export default function Workspace({ id, view, navigate, account }) {
   );
 
   return (
+    <ImageUpload.Provider value={uploader}>
     <div className={joined ? "shell" : "shell shell-unjoined"}>
       <Sidebar
         workspace={workspace}
@@ -280,6 +317,7 @@ export default function Workspace({ id, view, navigate, account }) {
         navigate={navigate}
         participants={roster(participants, me)}
         reviews={reviews}
+        call={call}
         people={
           joined &&
           ((kind) => (
@@ -288,8 +326,7 @@ export default function Workspace({ id, view, navigate, account }) {
                 kind={kind}
                 participants={participants}
                 me={me}
-                call={call}
-                onError={setError}
+                onEditMe={() => setEditingMe(true)}
                 onMention={(name) => {
                   setMention(name);
                   screens.show("chat");
@@ -300,6 +337,15 @@ export default function Workspace({ id, view, navigate, account }) {
           ))
         }
       />
+      {editingMe && me && (
+        <MeDialog
+          // The roster's row is the live one: `me` is as of the last load.
+          me={participants.find((p) => p.id === me.id) || me}
+          call={call}
+          onSaved={(p) => setMe((m) => (m ? { ...m, name: p.name, emoji: p.emoji, status: p.status, model: p.model } : m))}
+          onClose={() => setEditingMe(false)}
+        />
+      )}
       {view === "settings" && joined ? (
         <main className="shell-main panel">
           <SettingsPage
@@ -349,6 +395,7 @@ export default function Workspace({ id, view, navigate, account }) {
       )}
       {joined && <TabBar view={view} counts={counts} screens={screens} />}
     </div>
+    </ImageUpload.Provider>
   );
 }
 
@@ -524,10 +571,12 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // Sidebar: the workspace's navigation on wide screens. It has no panel of
 // its own (it sits on the base): the workspace switcher, the screens, who's
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
-// token, #127), links out (canvas, repositories), then settings and your
-// account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews }) {
+// token, #127), links out (product, canvas, repositories, custom links #299),
+// then settings and your account at the bottom.
+function Sidebar({ workspace, view, joined, live, counts, screens, account, navigate, participants, people, reviews, call }) {
   const repos = workspace.repos || [];
+  const links = workspace.links || [];
+  const [editingLink, setEditingLink] = useState(null); // A link, or "new".
   const height = useWindowHeight();
   const isLowHeight = height < LOW_HEIGHT_THRESHOLD;
   const isVeryLowHeight = height < VERY_LOW_HEIGHT_THRESHOLD;
@@ -543,7 +592,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
   const linksOpen = userLinksOpen !== null ? userLinksOpen : !isVeryLowHeight;
 
   const peopleCount = (kind) => (participants ? participants.filter(KINDS[kind]).length : null);
-  const linksCount = (workspace.canvas_url ? 1 : 0) + repos.length;
+  const linksCount = (workspace.product_url ? 1 : 0) + (workspace.canvas_url ? 1 : 0) + repos.length + links.length;
   const needsToken = joined && !workspace.has_github_token;
 
   return (
@@ -608,7 +657,7 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             {reviewsOpen && (reviews ? <PendingReviewList reviews={reviews} id="sidebar-reviews" /> : <PendingReviewSetup workspaceId={workspace.id} id="sidebar-reviews" />)}
           </section>
         )}
-        {(workspace.canvas_url || repos.length > 0) && (
+        {(linksCount > 0 || joined) && (
           <section className="sidebar-section" aria-label="Links">
             <SectionHeading
               title="Links"
@@ -619,6 +668,15 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             />
             {linksOpen && (
               <ul id="sidebar-links" className="nav-list nav-list-small">
+                {workspace.product_url && (
+                  <li>
+                    <a className="nav-link" href={workspace.product_url} target="_blank" rel="noreferrer" title={`Product: ${workspace.product_url}`}>
+                      <Globe aria-hidden="true" />
+                      Product
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                  </li>
+                )}
                 {workspace.canvas_url && (
                   <li>
                     <a className="nav-link" href={workspace.canvas_url} target="_blank" rel="noreferrer" title="Open the design canvas">
@@ -637,10 +695,33 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
                     </a>
                   </li>
                 ))}
+                {links.map((l) => (
+                  <li key={`link-${l.id}`} className="nav-link-row">
+                    <a className="nav-link" href={l.url} target="_blank" rel="noreferrer" title={`${l.name}: ${l.url}`}>
+                      <Link2 aria-hidden="true" />
+                      <span className="nav-text">{l.name}</span>
+                      <ArrowUpRight className="nav-ext" aria-label="(opens in a new tab)" />
+                    </a>
+                    {joined && (
+                      <button type="button" className="nav-link-edit" aria-label={`Edit link ${l.name}`} title="Edit link" onClick={() => setEditingLink(l)}>
+                        <Pencil aria-hidden="true" />
+                      </button>
+                    )}
+                  </li>
+                ))}
+                {joined && (
+                  <li>
+                    <button type="button" className="nav-link nav-invite" aria-haspopup="dialog" onClick={() => setEditingLink("new")}>
+                      <Plus aria-hidden="true" />
+                      Add link
+                    </button>
+                  </li>
+                )}
               </ul>
             )}
           </section>
         )}
+        {editingLink && <LinkDialog link={editingLink === "new" ? null : editingLink} call={call} onClose={() => setEditingLink(null)} />}
         <span className="spacer" />
       </div>
       <div className="sidebar-foot">
@@ -650,8 +731,10 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, navi
             Settings
           </a>
         )}
-        <ThemeSwitch />
-        {account.user && <AccountMenu account={account} showName menuExtra={() => <AccountMenuExtra />} />}
+        <div className="sidebar-foot-row">
+          {account.user && <AccountMenu account={account} showName menuExtra={() => <AccountMenuExtra />} />}
+          <ThemeSwitch />
+        </div>
       </div>
     </nav>
   );
@@ -886,22 +969,17 @@ function byName(participants) {
   return [...participants].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: "base" }) || a.id - b.id);
 }
 
+// " (model)" for a participant that says which model it runs on (#304).
+const modelOf = (p) => (p.model ? ` (${p.model})` : "");
+
 // People: who's here among the humans or the agents (kind), one row per participant (an account has one per
-// workspace, #99), with a presence dot and their status. Inactive users
+// workspace, #99), with a presence dot and, for an agent that reports it, its model (#304); the status line is in
+// the row's tooltip, so rows stay one name wide. Inactive users
 // (15m without activity) are greyed, have their status hidden, and are stacked
 // at the end of the list; hovering one says when they were last seen. Agents
-// not seen in 24 hours aren't listed (#125). Your own row sets your status; anyone else's starts a
-// chat message to them (@Name).
-function People({ kind, participants, me, call, onError, onMention }) {
-  const setStatus = async () => {
-    const status = window.prompt("Your status", me?.status || "");
-    if (status === null) return;
-    try {
-      await call("PATCH", "/me", { status });
-    } catch (err) {
-      onError(err.message);
-    }
-  };
+// not seen in 24 hours aren't listed (#125). Your own row opens MeDialog (your name, emoji and status, #303);
+// anyone else's starts a chat message to them (@Name).
+function People({ kind, participants, me, onEditMe, onMention }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 15000);
@@ -926,7 +1004,7 @@ function People({ kind, participants, me, call, onError, onMention }) {
         const mine = me && p.id === me.id;
         const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
         const status = p.status || (active ? "active" : "away");
-        const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — ${status}${active ? "" : ` · ${lastSeen(p)}`}`;
+        const label = `${p.name}${modelOf(p)}${agentOf}${mine ? " (you)" : ""} — ${status}${active ? "" : ` · ${lastSeen(p)}`}`;
         const content = (
           <>
             <span className={active ? "avatar active" : "avatar"} aria-hidden="true">
@@ -934,13 +1012,13 @@ function People({ kind, participants, me, call, onError, onMention }) {
               <span className="dot" />
             </span>
             <span className="person-name">{p.name}</span>
-            {p.status && <span className="person-status">{p.status}</span>}
+            {p.model && <span className="person-model">{p.model}</span>}
           </>
         );
         return (
           <li key={p.id}>
             {mine ? (
-              <button type="button" className="nav-link person" title={`${label} · set status`} aria-label={`${label}. Set status`} onClick={setStatus}>
+              <button type="button" className="nav-link person" title={`${label} · edit your name, emoji and status`} aria-label={`${label}. Edit your name, emoji and status`} onClick={onEditMe}>
                 {content}
               </button>
             ) : (
@@ -957,15 +1035,15 @@ function People({ kind, participants, me, call, onError, onMention }) {
             {dormantPeople.map((p) => {
               const mine = me && p.id === me.id;
               const agentOf = p.sponsor ? ` · agent of ${p.sponsor.display_name}` : "";
-              const label = `${p.name}${agentOf}${mine ? " (you)" : ""} — inactive · ${lastSeen(p)}`;
+              const label = `${p.name}${modelOf(p)}${agentOf}${mine ? " (you)" : ""} — inactive · ${lastSeen(p)}`;
               return (
                 <button
                   key={p.id}
                   type="button"
                   className="dormant-chip"
-                  title={mine ? `${label} · set status` : `${label} · message @${p.name}`}
-                  aria-label={mine ? `${label}. Set status` : `${label}. Message @${p.name}`}
-                  onClick={mine ? setStatus : () => onMention(p.name)}
+                  title={mine ? `${label} · edit your name, emoji and status` : `${label} · message @${p.name}`}
+                  aria-label={mine ? `${label}. Edit your name, emoji and status` : `${label}. Message @${p.name}`}
+                  onClick={mine ? onEditMe : () => onMention(p.name)}
                 >
                   <span className="avatar dormant" aria-hidden="true">
                     {p.emoji}

@@ -4,6 +4,7 @@ import { AccountMenu, SignInOptions, participantName, primaryEmail } from "./Acc
 import { ApiError, api } from "./api.js";
 import { spaLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
+import EmojiPicker from "./ui/EmojiPicker.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 import ThemeSwitch from "./ui/ThemeSwitch.jsx";
@@ -104,9 +105,7 @@ export function JoinForm({ workspaceId, invite = "", onJoined }) {
       <Field label="Name">
         <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="one word" />
       </Field>
-      <Field label="Emoji">
-        <Input value={emoji} onChange={(e) => setEmoji(e.target.value)} placeholder="🦊" />
-      </Field>
+      <EmojiPicker label="Emoji" value={emoji} onChange={setEmoji} placeholder="🦊" />
       <p className="field-description">Leave either blank to be assigned one.</p>
       <div className="actions-row">
         <Button variant="primary" type="submit">

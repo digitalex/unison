@@ -128,3 +128,46 @@ func mustAddItem(t *testing.T, s *Store, p *Participant, title string) int64 {
 	}
 	return it.ID
 }
+
+// TestAssignWorkspaceOwners: workspaces from before owners (#296) go to
+// their earliest member at boot; a workspace with no members stays
+// unowned, and an owned one keeps its owner on later boots.
+func TestAssignWorkspaceOwners(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alex, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "1", Name: "Alex"})
+	bob, _ := s.LoginWithProvider(ctx, "github", Profile{Subject: "2", Name: "Bob"})
+	shared, _, _ := s.CreateWorkspace(ctx, "Shared", "", "")
+	s.JoinAsUser(ctx, shared.ID, alex.ID, "Alex", "")
+	s.JoinAsUser(ctx, shared.ID, bob.ID, "Bob", "")
+	empty, _, _ := s.CreateWorkspace(ctx, "Empty", "", "")
+	s.Close()
+
+	// As before #296: nobody owns anything.
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`UPDATE workspaces SET owner_user_id = NULL`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		if w, _ := s.GetWorkspace(ctx, shared.ID); w.OwnerID != alex.ID {
+			t.Errorf("boot %d: shared owner = %d, want the earliest member %d", boot, w.OwnerID, alex.ID)
+		}
+		if w, _ := s.GetWorkspace(ctx, empty.ID); w.OwnerID != 0 {
+			t.Errorf("boot %d: empty workspace owner = %d, want none", boot, w.OwnerID)
+		}
+		s.Close()
+	}
+}

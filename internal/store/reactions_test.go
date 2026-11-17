@@ -76,9 +76,26 @@ func TestReactionValidation(t *testing.T) {
 	s, _, a, _ := setup(t)
 	ctx := context.Background()
 	m, _, _ := s.PostMessage(ctx, a, "hi", nil, nil)
-	for _, e := range []string{"🎉", "", "thumbs", "👍👍"} {
+	for _, e := range []string{"🔥", "", "thumbs", "👍👍"} {
 		if _, _, err := s.React(ctx, a, m.ID, e, true); !errors.Is(err, ErrInvalid) {
 			t.Errorf("emoji %q: err = %v, want ErrInvalid", e, err)
+		}
+	}
+	if len(ReactionShortNames) != len(ReactionEmoji) {
+		t.Fatalf("ReactionShortNames len = %d, want %d", len(ReactionShortNames), len(ReactionEmoji))
+	}
+	for i, short := range ReactionShortNames {
+		got, err := NormalizeReaction(short)
+		if err != nil || got != ReactionEmoji[i] {
+			t.Errorf("NormalizeReaction(%q) = (%q, %v), want (%q, nil)", short, got, err, ReactionEmoji[i])
+		}
+	}
+	for alias, want := range map[string]string{
+		"ship": "🚀", "party_popper": "🎉", "partypopper": "🎉", "tada": "🎉", "hooray": "🎉",
+		"laughing": "😂", "joy": "😂", "lol": "😂", "haha": "😂", "tears_of_joy": "😂",
+	} {
+		if got, err := NormalizeReaction(alias); err != nil || got != want {
+			t.Errorf("NormalizeReaction(%q) = (%q, %v), want (%q, nil)", alias, got, err, want)
 		}
 	}
 	ws2, _, _ := s.CreateWorkspace(ctx, "Other", "", "")

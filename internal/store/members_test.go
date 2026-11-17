@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -82,6 +83,17 @@ func TestRemoveMember(t *testing.T) {
 	if _, err := s.RemoveMember(ctx, ws.ID, carol.ID, bob.ID); !errors.Is(err, ErrForbidden) {
 		t.Errorf("non-member removing err = %v", err)
 	}
+	// Alex joined first, so owns the workspace (#296): Bob can't remove
+	// Alex, and Alex can't leave.
+	if w, _ := s.GetWorkspace(ctx, ws.ID); w.OwnerID != alex.ID {
+		t.Errorf("owner = %d, want the first member %d", w.OwnerID, alex.ID)
+	}
+	if _, err := s.RemoveMember(ctx, ws.ID, bob.ID, alex.ID); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner removing the owner err = %v", err)
+	}
+	if _, err := s.RemoveMember(ctx, ws.ID, alex.ID, alex.ID); !errors.Is(err, ErrForbidden) || !strings.Contains(err.Error(), "delete it instead") {
+		t.Errorf("owner leaving err = %v", err)
+	}
 	evs, err := s.RemoveMember(ctx, ws.ID, alex.ID, bob.ID)
 	if err != nil || !sameTypes(evs, "member.removed") || evs[0].ActorID != ap.ID {
 		t.Fatalf("remove = %v %v", evs, err)
@@ -101,8 +113,13 @@ func TestRemoveMember(t *testing.T) {
 	if p, _ := s.GetParticipant(ctx, ws.ID, bp.ID); p == nil || p.UserID != bob.ID {
 		t.Errorf("Bob's participant after removal = %+v", p)
 	}
-	// Any member may remove any member, themselves included.
-	if _, err := s.RemoveMember(ctx, ws.ID, alex.ID, alex.ID); err != nil {
+	// A non-owner may leave, but not remove anyone else.
+	s.JoinAsUser(ctx, ws.ID, carol.ID, "Carol", "")
+	s.JoinAsUser(ctx, ws.ID, bob.ID, "Bob", "")
+	if _, err := s.RemoveMember(ctx, ws.ID, carol.ID, bob.ID); !errors.Is(err, ErrForbidden) {
+		t.Errorf("non-owner removing a member err = %v", err)
+	}
+	if _, err := s.RemoveMember(ctx, ws.ID, carol.ID, carol.ID); err != nil {
 		t.Errorf("leaving err = %v", err)
 	}
 }

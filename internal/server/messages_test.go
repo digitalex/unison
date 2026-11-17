@@ -84,8 +84,8 @@ func TestReactionsAPI(t *testing.T) {
 	if _, body := getAs(t, api+"/messages", ada); !strings.Contains(body, `"reactions":[{"emoji":"👍","count":1`) || !strings.Contains(body, `"emoji":"❤️"`) {
 		t.Errorf("messages = %s", body)
 	}
-	if status, _ := call(t, "PUT", react+url.PathEscape("🎉"), ada, ""); status != http.StatusBadRequest {
-		t.Errorf("PUT 🎉 = %d, want 400", status)
+	if status, _ := call(t, "PUT", react+url.PathEscape("🔥"), ada, ""); status != http.StatusBadRequest {
+		t.Errorf("PUT 🔥 = %d, want 400", status)
 	}
 	if status, _ := call(t, "PUT", react+"+1", carol, ""); status != http.StatusForbidden && status != http.StatusUnauthorized {
 		t.Errorf("another workspace's participant = %d", status)

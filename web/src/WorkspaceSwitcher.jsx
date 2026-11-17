@@ -1,22 +1,48 @@
 import { useEffect, useId, useRef, useState } from "react";
 import { Check, ChevronsUpDown, Plus } from "lucide-react";
 import { participantName } from "./Account.jsx";
+import { hasUnseen, markSeen, useSeen } from "./activity.js";
 import { ApiError, api } from "./api.js";
+import { createCanvas } from "./isocan.js";
 import Button from "./ui/Button.jsx";
+import Checkbox from "./ui/Checkbox.jsx";
 import Dialog from "./ui/Dialog.jsx";
+import EmojiPicker from "./ui/EmojiPicker.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
 
+// How often the list of workspaces is fetched again while the page shows.
+const POLL_MS = 30000;
+
 // WorkspaceSwitcher is the sidebar's workspace control: the current
-// workspace's name, opening a menu of your workspaces (fetched on open, so
-// new memberships show up) and "New workspace". Arrow keys, Home and End
-// move through the menu; Escape or a click outside closes it.
+// workspace's name, opening a menu of your workspaces and "New workspace".
+// Arrow keys, Home and End move through the menu; Escape or a click outside
+// closes it.
+//
+// It also says when another of your workspaces has something new (#300): a
+// dot on the control, and one on each such workspace in the menu. "New" is
+// a workspace's activity_seq (its latest event by somebody else) being past
+// what this account has seen of it (activity.js). Being in a workspace
+// counts as seeing it.
 export default function WorkspaceSwitcher({ workspace, account, navigate }) {
   const [open, setOpen] = useState(false);
   const [creating, setCreating] = useState(false);
   const anchor = useRef(null);
   const button = useRef(null);
   const menuId = useId();
+  const signedIn = Boolean(account.user);
+  const userId = account.user?.id;
+  const [list, reload] = useWorkspaceList(signedIn);
+  const seen = useSeen(userId);
+  // Opening the menu fetches again, so new memberships show up.
+  useEffect(() => {
+    if (open) reload();
+  }, [open]);
+  useEffect(() => {
+    for (const ws of list || []) markSeen(userId, ws.id, ws.activity_seq || 0, { baseline: ws.id !== workspace.id });
+  }, [list, workspace.id, userId]);
+  const unseen = (list || []).filter((ws) => ws.id !== workspace.id && hasUnseen(ws, seen));
+
   const close = (refocus = true) => {
     setOpen(false);
     if (refocus) button.current?.focus();
@@ -28,6 +54,7 @@ export default function WorkspaceSwitcher({ workspace, account, navigate }) {
       setOpen(true);
     }
   };
+  const news = unseen.length > 0 ? `New activity in ${unseen.map((ws) => ws.name).join(", ")}` : "";
   return (
     <div className="popover-anchor switcher" ref={anchor}>
       <button
@@ -37,18 +64,21 @@ export default function WorkspaceSwitcher({ workspace, account, navigate }) {
         aria-haspopup="menu"
         aria-expanded={open}
         aria-controls={open ? menuId : undefined}
-        title="Switch workspace"
+        title={news ? `Switch workspace · ${news}` : "Switch workspace"}
         onClick={() => setOpen(!open)}
         onKeyDown={opener}
       >
         <span className="switcher-name">{workspace.name}</span>
+        {news && <span className="switcher-activity" role="img" aria-label={news} />}
         <ChevronsUpDown aria-hidden="true" />
       </button>
       {open && (
         <SwitcherMenu
           id={menuId}
           current={workspace}
-          signedIn={Boolean(account.user)}
+          list={signedIn ? list : []}
+          unseen={unseen}
+          signedIn={signedIn}
           onPick={(ws) => {
             close(false);
             if (ws.id !== workspace.id) navigate(`/w/${ws.id}`);
@@ -66,6 +96,39 @@ export default function WorkspaceSwitcher({ workspace, account, navigate }) {
   );
 }
 
+// useWorkspaceList is your workspaces, sorted by name (null until the first
+// answer; [] if it can't be had), and a function that fetches them again.
+// It fetches when the switcher appears, every POLL_MS after that, and when
+// the page comes back into view or focus; never while the page is hidden.
+function useWorkspaceList(signedIn) {
+  const [list, setList] = useState(null);
+  const load = useRef(() => {});
+  useEffect(() => {
+    if (!signedIn) return;
+    let gone = false;
+    load.current = () => {
+      if (document.visibilityState !== "visible") return;
+      api("GET", "/api/workspaces").then(
+        (all) => gone || setList([...all].sort((a, b) => a.name.localeCompare(b.name))),
+        () => gone || setList((old) => old || []),
+      );
+    };
+    const again = () => load.current();
+    again();
+    const timer = setInterval(again, POLL_MS);
+    document.addEventListener("visibilitychange", again);
+    window.addEventListener("focus", again);
+    return () => {
+      gone = true;
+      load.current = () => {};
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", again);
+      window.removeEventListener("focus", again);
+    };
+  }, [signedIn]);
+  return [list, () => load.current()];
+}
+
 // useDismiss closes the menu on a press outside it.
 function useDismiss(open, anchor, close) {
   useEffect(() => {
@@ -78,21 +141,18 @@ function useDismiss(open, anchor, close) {
   }, [open]);
 }
 
-function SwitcherMenu({ id, current, signedIn, onPick, onCreate, onClose }) {
-  const [list, setList] = useState(null); // null while loading
+// SwitcherMenu lists the workspaces (list: null while loading) with the
+// current one checked and the ones in unseen marked.
+function SwitcherMenu({ id, current, list, unseen, signedIn, onPick, onCreate, onClose }) {
   const menu = useRef(null);
-  useEffect(() => {
-    if (!signedIn) return setList([]);
-    api("GET", "/api/workspaces").then(
-      (all) => setList([...all].sort((a, b) => a.name.localeCompare(b.name))),
-      () => setList([]),
-    );
-  }, []);
-  // Focus the current workspace (or the first item) once the list is in.
+  // Focus the current workspace (or the first item) once the list is in;
+  // not again when a later fetch replaces it, which would move the focus
+  // under someone walking the menu.
+  const loaded = list !== null;
   useEffect(() => {
     const items = [...menu.current.querySelectorAll('[role^="menuitem"]')];
     (items.find((el) => el.getAttribute("aria-checked") === "true") || items[0])?.focus();
-  }, [list]);
+  }, [loaded]);
 
   const onKeyDown = (e) => {
     const items = [...menu.current.querySelectorAll('[role^="menuitem"]')];
@@ -125,6 +185,7 @@ function SwitcherMenu({ id, current, signedIn, onPick, onCreate, onClose }) {
               <span className="switcher-item-name">{ws.name}</span>
               {mainRepo(ws) && <span className="switcher-item-repo">{mainRepo(ws).replace(/^https?:\/\//, "")}</span>}
             </span>
+            {unseen.some((u) => u.id === ws.id) && <span className="switcher-activity" role="img" aria-label="New activity" />}
           </button>
         ))}
       {signedIn && (
@@ -145,18 +206,23 @@ function mainRepo(ws) {
 }
 
 // NewWorkspaceDialog creates a workspace and joins it as the signed-in
-// account (with the name and emoji given here), then opens it.
+// account (with the name and emoji given here), then opens it. Its canvas is
+// a URL you paste, or with "Create one" a new isocan canvas named after the
+// workspace, made in an isocan popup when you submit (#297).
 function NewWorkspaceDialog({ account, navigate, onClose }) {
   const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "", me: participantName(account.user), emoji: "" });
+  const [newCanvas, setNewCanvas] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
   const create = async (e) => {
     e.preventDefault();
+    // Before any await: the popup must open while this is still the submit.
+    const canvas = newCanvas ? createCanvas(form.name) : Promise.resolve(form.canvas_url);
     setError("");
     setBusy(true);
     try {
-      const ws = await api("POST", "/api/workspaces", { body: { name: form.name, repo_url: form.repo_url, canvas_url: form.canvas_url } });
+      const ws = await api("POST", "/api/workspaces", { body: { name: form.name, repo_url: form.repo_url, canvas_url: await canvas } });
       // Creating made you a member; joining gives you a participant there.
       // If it fails, the workspace page offers the join form instead.
       await api("POST", `/api/workspaces/${ws.id}/join`, { body: { name: form.me, emoji: form.emoji } }).catch(() => {});
@@ -181,16 +247,33 @@ function NewWorkspaceDialog({ account, navigate, onClose }) {
         <Field label="Repository URL (optional)">
           <Input type="url" placeholder="https://github.com/owner/repo" {...field("repo_url")} />
         </Field>
-        <Field label="Isocan canvas URL (optional)">
-          <Input type="url" placeholder="https://isocan.io/p/…" {...field("canvas_url")} />
-        </Field>
+        <div className="new-workspace-canvas">
+          <Field label="Isocan canvas URL (optional)">
+            <Input
+              type="url"
+              placeholder="https://isocan.io/p/…"
+              value={form.canvas_url}
+              onChange={(e) => {
+                setNewCanvas(false);
+                setForm({ ...form, canvas_url: e.target.value });
+              }}
+            />
+          </Field>
+          <Checkbox
+            checked={newCanvas}
+            onChange={(checked) => {
+              setNewCanvas(checked);
+              if (checked) setForm({ ...form, canvas_url: "" });
+            }}
+          >
+            Create one
+          </Checkbox>
+        </div>
         <div className="new-workspace-me">
           <Field label="Your name in it">
             <Input placeholder="one word" {...field("me")} />
           </Field>
-          <Field label="Emoji">
-            <Input placeholder="🦊" {...field("emoji")} />
-          </Field>
+          <EmojiPicker label="Emoji" placeholder="🦊" value={form.emoji} onChange={(emoji) => setForm({ ...form, emoji })} />
         </div>
         <p className="field-description">You join it right away; leave either blank to be assigned one.</p>
         <div className="actions-row dialog-actions">
@@ -198,7 +281,7 @@ function NewWorkspaceDialog({ account, navigate, onClose }) {
             Cancel
           </Button>
           <Button type="submit" variant="primary" disabled={busy}>
-            Create workspace
+            {busy && newCanvas ? "Waiting for isocan…" : "Create workspace"}
           </Button>
         </div>
       </form>

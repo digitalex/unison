@@ -11,7 +11,10 @@ import (
 // set. Each participant puts each emoji on a message at most once.
 
 // ReactionEmoji are the allowed reactions, in display order.
-var ReactionEmoji = []string{"👍", "👎", "❤️", "💪", "💯"}
+var ReactionEmoji = []string{"👍", "👎", "❤️", "💪", "💯", "🚀", "🎉", "😂"}
+
+// ReactionShortNames are the canonical short names in 1:1 display order with ReactionEmoji.
+var ReactionShortNames = []string{"+1", "-1", "heart", "muscle", "100", "rocket", "party", "laugh"}
 
 // reactionNames maps names (for CLIs and URLs) and variants to an emoji.
 var reactionNames = map[string]string{
@@ -20,6 +23,9 @@ var reactionNames = map[string]string{
 	"heart": "❤️", "❤": "❤️", "love": "❤️",
 	"muscle": "💪", "strong": "💪",
 	"100": "💯", "hundred": "💯",
+	"rocket": "🚀", "ship": "🚀",
+	"party": "🎉", "party_popper": "🎉", "partypopper": "🎉", "tada": "🎉", "hooray": "🎉",
+	"laugh": "😂", "laughing": "😂", "joy": "😂", "lol": "😂", "haha": "😂", "tears_of_joy": "😂",
 }
 
 // Reaction is one emoji on a message: how many put it there, and who
@@ -42,7 +48,7 @@ func NormalizeReaction(s string) (string, error) {
 	if e, ok := reactionNames[strings.ToLower(s)]; ok {
 		return e, nil
 	}
-	return "", fmt.Errorf("%w: reactions are %s (or +1, -1, heart, muscle, 100)", ErrInvalid, strings.Join(ReactionEmoji, " "))
+	return "", fmt.Errorf("%w: reactions are %s (or %s)", ErrInvalid, strings.Join(ReactionEmoji, " "), strings.Join(ReactionShortNames, ", "))
 }
 
 // React puts (on) or takes back (off) the actor's emoji reaction on a

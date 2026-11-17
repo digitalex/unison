@@ -10,7 +10,8 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 
 // Recurring tasks (#113, #120): a top-level screen listing the schedules that
 // add a backlog item at the top of the queue every day, or every week on a
-// given day, at 00:00 server time (the server makes the runs, #112). Clicking
+// given day, at 00:00 server time, or every hour on the hour (#295; the
+// server makes the runs, #112). Clicking
 // a row opens the schedule to edit, run now, or delete it.
 
 const WEEKDAYS = [
@@ -23,8 +24,9 @@ const WEEKDAYS = [
   ["sun", "Sunday"],
 ];
 
-// cadenceLabel is "Daily" or "Weekly on Mon".
+// cadenceLabel is "Hourly", "Daily" or "Weekly on Mon".
 export function cadenceLabel(s) {
+  if (s.cadence === "hourly") return "Hourly";
   if (s.cadence !== "weekly") return "Daily";
   const day = WEEKDAYS.find(([id]) => id === s.weekday);
   return `Weekly on ${day ? day[1].slice(0, 3) : s.weekday}`;
@@ -32,6 +34,13 @@ export function cadenceLabel(s) {
 
 function nextRun(ms) {
   return new Date(ms).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+// nextLabel is when a schedule runs next: "next at 3:00 PM" for an hourly
+// one, else "next Tue, Nov 10, 12:00 AM".
+function nextLabel(s) {
+  if (s.cadence === "hourly") return `next at ${new Date(s.next_due_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+  return `next ${nextRun(s.next_due_at)}`;
 }
 
 // withSchedule returns the list with sc added or replaced, in the server's
@@ -129,7 +138,7 @@ export default function Recurring({ schedules, setSchedules, call, onError, head
                   </button>
                   <span className="chip">{cadenceLabel(s)}</span>
                   <span className="meta" title={new Date(s.next_due_at).toLocaleString()}>
-                    next {nextRun(s.next_due_at)}
+                    {nextLabel(s)}
                   </span>
                 </div>
               </div>
@@ -216,6 +225,7 @@ function ScheduleDialog({ schedule, run, add, saved, removed, onRan, onClose }) 
         <div className="schedule-when">
           <Field label="Repeats">
             <Select value={cadence} onChange={(e) => setCadence(e.target.value)}>
+              <option value="hourly">Hourly</option>
               <option value="daily">Daily</option>
               <option value="weekly">Weekly</option>
             </Select>
@@ -233,7 +243,9 @@ function ScheduleDialog({ schedule, run, add, saved, removed, onRan, onClose }) 
           )}
         </div>
         <p className="muted field-description">
-          Each run adds this as a new item at the top of the backlog at 00:00 server time. If the last run is still open, it's noted on that item instead.
+          {cadence === "hourly"
+            ? "Each run adds this as a new item at the top of the backlog at the top of every hour. If the last run is still open, the first missed hour is noted on that item and later ones are skipped quietly until it closes."
+            : "Each run adds this as a new item at the top of the backlog at 00:00 server time. If the last run is still open, it's noted on that item instead."}
           {schedule && ` Next run: ${nextRun(schedule.next_due_at)}.`}
         </p>
         <div className="actions-row dialog-actions">

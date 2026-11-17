@@ -38,7 +38,7 @@ export const theme: ThemeDocument = {
     },
     "fonts": {
       "ui": {
-        "family": "\"Sidebar Geist\", sans-serif",
+        "family": "\"Sidebar Inter\", \"Inter\", sans-serif",
         "weights": {
           "heavy": 600,
           "medium": 400,
@@ -46,7 +46,7 @@ export const theme: ThemeDocument = {
         }
       },
       "data": {
-        "family": "\"Sidebar Geist Mono\", monospace",
+        "family": "\"Sidebar Inter\", \"Inter\", sans-serif",
         "weights": {
           "heavy": 600,
           "medium": 400,
@@ -54,7 +54,7 @@ export const theme: ThemeDocument = {
         }
       },
       "brand": {
-        "family": "\"Sidebar Geist\", sans-serif",
+        "family": "\"Sidebar Inter\", \"Inter\", sans-serif",
         "weights": {
           "heavy": 600,
           "medium": 400,
@@ -62,7 +62,7 @@ export const theme: ThemeDocument = {
         }
       },
       "editorial": {
-        "family": "\"Sidebar Geist\", sans-serif",
+        "family": "\"Sidebar Inter\", \"Inter\", sans-serif",
         "weights": {
           "heavy": 600,
           "medium": 400,

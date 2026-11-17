@@ -12,7 +12,9 @@ import (
 func TestPassesAPI(t *testing.T) {
 	e := newAuthEnv(t)
 	ctx := t.Context()
-	ws, _, _ := e.st.CreateWorkspace(ctx, "Unison", "", "")
+	// Someone else owns the workspace, so Ada can leave it below (#296).
+	owner, _ := e.st.LoginWithProvider(ctx, "github", store.Profile{Subject: "owner", Name: "Owner"})
+	ws, _, _ := e.st.CreateWorkspaceFor(ctx, owner.ID, "Unison", "", "")
 	other, _, _ := e.st.CreateWorkspace(ctx, "Other", "", "")
 	base := "/api/workspaces/" + ws.ID
 	_, legacyTok, _, _ := e.st.Join(ctx, ws.ID, "Old", "")
@@ -96,12 +98,12 @@ func TestPassesAPI(t *testing.T) {
 		t.Errorf("join with human member's name = %d %v, want 409 conflict", resp.StatusCode, out)
 	}
 
-	// Bob becomes a member and removes Ada: her agents stop working, with
+	// Bob becomes a member and Ada leaves: her agents stop working, with
 	// a clear message; everyone else is unaffected.
 	bobTok := e.memberJoins(bob, ws.ID, "Bob")
 	_, adaUser := e.do("GET", "/api/me/user", "", withCookie(ada))
-	if resp, _ := e.do("DELETE", base+"/members/"+jsonID(adaUser["id"]), "", withCookie(bob), withCSRF()); resp.StatusCode != 200 {
-		t.Fatalf("remove sponsor = %d", resp.StatusCode)
+	if resp, _ := e.do("DELETE", base+"/members/"+jsonID(adaUser["id"]), "", withCookie(ada), withCSRF()); resp.StatusCode != 200 {
+		t.Fatalf("sponsor leaving = %d", resp.StatusCode)
 	}
 	resp, out := e.do("POST", base+"/messages", `{"body":"still here?"}`, withBearer(rejoinedTok))
 	if resp.StatusCode != 401 || !strings.Contains(out["error"].(string), "Ada Lovelace, who invited this agent, is no longer a member") {

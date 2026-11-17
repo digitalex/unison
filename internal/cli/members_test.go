@@ -87,19 +87,26 @@ func TestPrivateWorkspaceFlow(t *testing.T) {
 	if strings.Contains(out, "Old") {
 		t.Errorf("members lists a participant linked to no account:\n%s", out)
 	}
-	// Any member removes any member; the removed one is then refused.
-	e.ok(bobDir, "members", "remove", strconv.FormatInt(alex.ID, 10))
-	if _, errOut, code := e.run(alexDir, "chat", "send", "still here?"); code == 0 || !strings.Contains(errOut, "no longer a member") {
+	// Only the owner (Alex, who created it) removes others, and can't
+	// leave (#296); the removed one is then refused.
+	if _, errOut, code := e.run(bobDir, "members", "remove", strconv.FormatInt(alex.ID, 10)); code == 0 || !strings.Contains(errOut, "owner") {
+		t.Errorf("Bob removing the owner: exit %d %q", code, errOut)
+	}
+	e.login("Alex", "")
+	if _, errOut, code := e.run(alexDir, "members", "remove", strconv.FormatInt(alex.ID, 10)); code == 0 || !strings.Contains(errOut, "delete it instead") {
+		t.Errorf("owner leaving: exit %d %q", code, errOut)
+	}
+	e.ok(alexDir, "members", "remove", strconv.FormatInt(bob.ID, 10))
+	if _, errOut, code := e.run(bobDir, "chat", "send", "still here?"); code == 0 || !strings.Contains(errOut, "no longer a member") {
 		t.Errorf("removed member: exit %d %q", code, errOut)
 	}
-	inv := regexp.MustCompile(`(?m)^(\d+)\s+link`).FindStringSubmatch(e.ok(bobDir, "invites"))
+	inv := regexp.MustCompile(`(?m)^(\d+)\s+link`).FindStringSubmatch(e.ok(alexDir, "invites"))
 	if inv == nil {
 		t.Fatal("no link invite listed")
 	}
-	if out := e.ok(bobDir, "invite", "revoke", inv[1]); !strings.Contains(out, "Revoked invite") {
+	if out := e.ok(alexDir, "invite", "revoke", inv[1]); !strings.Contains(out, "Revoked invite") {
 		t.Errorf("invite revoke = %q", out)
 	}
-	_ = bob
 }
 
 // TestOpenModeCLI: with privacy off (UNISON_AUTH=off, local development)

@@ -317,41 +317,64 @@ func testAPNsKey(t *testing.T) string {
 	return string(pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: der}))
 }
 
-type slowPusher struct {
-	delay time.Duration
-	fake  fakePusher
+// barrierPusher holds each send until want sends are in flight at once (or
+// a generous timeout passes), recording the most it saw in flight, so a test
+// checks concurrency directly rather than by timing (#329).
+type barrierPusher struct {
+	want int
+	fake fakePusher
+
+	mu       sync.Mutex
+	inFlight int
+	max      int
+	all      chan struct{} // closed once want sends are in flight
 }
 
-func (s *slowPusher) Send(ctx context.Context, token, env string, n push.Notification) error {
+func (b *barrierPusher) Send(ctx context.Context, token, env string, n push.Notification) error {
+	b.mu.Lock()
+	b.inFlight++
+	b.max = max(b.max, b.inFlight)
+	if b.inFlight == b.want {
+		close(b.all)
+	}
+	b.mu.Unlock()
+	defer func() {
+		b.mu.Lock()
+		b.inFlight--
+		b.mu.Unlock()
+	}()
 	select {
-	case <-time.After(s.delay):
+	case <-b.all:
+	case <-time.After(5 * time.Second): // Sent one at a time: give up.
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	return s.fake.Send(ctx, token, env, n)
+	return b.fake.Send(ctx, token, env, n)
 }
 
+func (b *barrierPusher) maxInFlight() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.max
+}
+
+// TestConcurrentPush: a message's pushes to several devices go out at once,
+// not one after another.
 func TestConcurrentPush(t *testing.T) {
-	slow := &slowPusher{delay: 100 * time.Millisecond}
-	e := newPushEnv(t, slow)
+	b := &barrierPusher{want: 4, all: make(chan struct{})}
+	e := newPushEnv(t, b)
 
 	dev3 := "d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3d3"
 	dev4 := "d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4d4"
 	e.register(e.adaUser, dev3, "Ada's Watch")
 	e.register(e.adaUser, dev4, "Ada's Mac")
 
-	start := time.Now()
-	m := e.post("/messages", e.bobTok, `{"body":"hi @ada, concurrent test"}`)
-	duration := time.Since(start)
-
-	_ = m
-	got := slow.fake.take()
-	if len(got) != 4 {
+	e.post("/messages", e.bobTok, `{"body":"hi @ada, concurrent test"}`)
+	if got := b.fake.take(); len(got) != 4 {
 		t.Fatalf("expected 4 pushes, got %d", len(got))
 	}
-
-	if duration >= 300*time.Millisecond {
-		t.Errorf("delivery took %v, expected < 300ms (indicating concurrent execution)", duration)
+	if n := b.maxInFlight(); n != 4 {
+		t.Errorf("at most %d pushes were in flight at once, want all 4 (sent concurrently)", n)
 	}
 }
 

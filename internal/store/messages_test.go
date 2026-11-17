@@ -179,3 +179,36 @@ func TestLimitClamping(t *testing.T) {
 		t.Errorf("RecentActivity(2000) = %d, err %v; want 207 (2 joins + 205 items, clamped to 1000)", len(evs), err)
 	}
 }
+
+// TestMessagesAfter: the messages above an id, oldest first, a page at a
+// time, with their details.
+func TestMessagesAfter(t *testing.T) {
+	s, _, alex, ada := setup(t)
+	ctx := context.Background()
+	var ids []int64
+	for _, body := range []string{"one", "two", "three"} {
+		m, _, err := s.PostMessage(ctx, alex, body, nil, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, m.ID)
+	}
+	asked, _, err := s.Post(ctx, alex, NewMessage{Body: "@" + ada.Name + " review?", ActionRequired: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	msgs, err := s.MessagesAfter(ctx, alex.WorkspaceID, ids[0], 2)
+	if err != nil || len(msgs) != 2 || msgs[0].ID != ids[1] || msgs[1].ID != ids[2] {
+		t.Fatalf("MessagesAfter(%d, limit 2) = %+v, %v", ids[0], msgs, err)
+	}
+	msgs, err = s.MessagesAfter(ctx, alex.WorkspaceID, ids[2], 0)
+	if err != nil || len(msgs) != 1 || msgs[0].ID != asked.ID || len(msgs[0].ActionFor) != 1 || msgs[0].ActionFor[0] != ada.ID {
+		t.Fatalf("MessagesAfter(%d) = %+v, %v", ids[2], msgs, err)
+	}
+	if msgs, err := s.MessagesAfter(ctx, alex.WorkspaceID, asked.ID, 0); err != nil || len(msgs) != 0 {
+		t.Errorf("MessagesAfter(newest) = %+v, %v", msgs, err)
+	}
+	if msgs, err := s.MessagesAfter(ctx, "ws_other", 0, 0); err != nil || len(msgs) != 0 {
+		t.Errorf("MessagesAfter in another workspace = %+v, %v", msgs, err)
+	}
+}

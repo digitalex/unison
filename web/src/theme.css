@@ -464,11 +464,14 @@ textarea.control {
   position: relative;
   display: inline-flex;
   align-items: center;
+  width: fit-content;
+  max-width: 100%;
 }
 
 .select > select.control {
   appearance: none;
   width: auto;
+  max-width: 100%;
   height: 28px;
   padding: 0 calc(var(--space-xs) + 16px) 0 var(--space-xs);
   background: var(--panel);
@@ -542,6 +545,91 @@ textarea.control {
 
 .popover-title {
   font-weight: var(--weight-ui-semibold);
+}
+
+/* ---- EmojiPicker (ui/EmojiPicker.jsx, #305): an emoji text field with a
+   button that opens a searchable grid. The panel is position: fixed (and in
+   the top layer where the Popover API exists), placed by the component. ---- */
+.emoji-picker {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+/* Room for the button inside the field's right edge. */
+.emoji-picker > .emoji-input {
+  padding-right: calc(28px + var(--space-xxs));
+}
+
+.emoji-picker > .emoji-trigger {
+  position: absolute;
+  right: 2px;
+}
+
+.popover.emoji-panel {
+  position: fixed;
+  inset: auto;
+  z-index: 20;
+  margin: 0;
+  border: 0;
+  padding: var(--space-xs);
+  gap: var(--space-xs);
+  color: var(--text);
+  overflow: hidden;
+}
+
+.emoji-groups {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-height: 0;
+  /* The focus ring of an emoji at the edge isn't cut off by the scroller. */
+  margin: calc(-1 * var(--space-xxs));
+  padding: var(--space-xxs);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.emoji-group-title {
+  margin: 0 0 var(--space-xxs);
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  line-height: var(--line-xxs);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.emoji-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(36px, 1fr));
+  gap: 2px;
+}
+
+.emoji-option {
+  display: grid;
+  place-items: center;
+  height: 36px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  font: inherit;
+  font-size: var(--size-l);
+  line-height: 1;
+  cursor: pointer;
+}
+
+.emoji-option:hover {
+  background: var(--surface-hover);
+}
+
+.emoji-option[aria-current="true"] {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong);
+}
+
+.emoji-option:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
 }
 
 /* ---- Dialog (ui/Dialog.jsx): a floating panel; a full-screen sheet on
@@ -644,6 +732,42 @@ html.dialog-open {
 }
 
 /* ---- Theme switch (ui/ThemeSwitch.jsx) ---- */
+.theme-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  width: 82px;
+  height: 30px;
+  padding: 3px;
+  border-radius: 999px;
+  background: var(--panel-edge);
+}
+
+.theme-switch button {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.theme-switch button .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.theme-switch button[aria-pressed="true"] {
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: var(--control-shadow);
+}
+
 .seg {
   display: inline-flex;
   padding: 2px;
@@ -1068,7 +1192,7 @@ button.nav-link {
   color: var(--text);
 }
 
-.person-status {
+.person-model {
   min-width: 0;
   overflow: hidden;
   color: var(--text-muted);
@@ -1143,7 +1267,7 @@ button.nav-link {
   color: var(--text-muted);
 }
 
-.nav-link.person.dormant .person-status {
+.nav-link.person.dormant .person-model {
   display: none;
 }
 
@@ -1160,6 +1284,56 @@ button.nav-link {
   color: var(--text-muted);
 }
 
+/* Custom links (#299): a pencil to edit each, over its arrow on hover or
+   focus (always on touch screens). */
+.nav-link-row {
+  position: relative;
+}
+
+.nav-link-edit {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  margin-top: -11px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: var(--panel-edge);
+  color: var(--text-muted);
+  cursor: pointer;
+  opacity: 0;
+}
+
+.nav-link-edit .lucide {
+  width: 12px;
+  height: 12px;
+}
+
+.nav-link-edit:hover {
+  color: var(--text);
+}
+
+.nav-link-edit:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring);
+}
+
+.nav-link-row:hover .nav-link-edit,
+.nav-link-edit:focus-visible {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .nav-link-edit {
+    opacity: 1;
+  }
+}
+
 .sidebar-foot {
   display: flex;
   flex-direction: column;
@@ -1168,9 +1342,15 @@ button.nav-link {
   flex-shrink: 0;
 }
 
-.sidebar-foot > .seg {
-  align-self: flex-start;
-  margin: var(--space-xxs) 10px;
+.sidebar-foot-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.sidebar-foot-row .popover-anchor {
+  flex: 1;
+  min-width: 0;
 }
 
 .sidebar-foot .popover-anchor {
@@ -1332,6 +1512,20 @@ button.nav-link {
   white-space: nowrap;
 }
 
+/* Something new in another workspace (#300): on the control, and on that
+   workspace in the menu, where it sits at the row's far end. */
+.switcher-activity {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
+.switcher-item > .switcher-activity {
+  margin: 0 var(--space-xxs) 0 auto;
+}
+
 .switcher-menu.popover {
   width: 300px;
   padding: var(--space-xxs);
@@ -1418,9 +1612,16 @@ button.nav-link {
 }
 
 @media (min-width: 641px) {
-  .new-workspace-dialog {
+  .new-workspace-dialog,
+  .me-dialog {
     width: min(480px, calc(100vw - 2 * var(--space-l)));
   }
+}
+
+.new-workspace-canvas {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
 }
 
 .new-workspace-me {
@@ -1534,6 +1735,11 @@ a.ws-mark:hover {
   font-variant-numeric: tabular-nums;
 }
 
+.row .item-id {
+  min-width: 34px;
+  flex-shrink: 0;
+}
+
 .chip {
   padding: 0 6px;
   border-radius: var(--radius-full);
@@ -1620,10 +1826,22 @@ button.group-head {
   color: var(--text-muted);
 }
 
-.meta {
+.meta,
+.item-reporter {
+  flex: none;
   color: var(--text-muted);
   font-size: var(--size-xs);
   white-space: nowrap;
+}
+
+.row .chip,
+.row .comment-count {
+  flex: none;
+}
+
+.row-close-note {
+  font-weight: var(--weight-ui-regular);
+  color: var(--text-muted);
 }
 
 .row-actions {
@@ -1691,11 +1909,6 @@ button.group-head {
 .schedule-when {
   display: flex;
   gap: var(--space-l);
-}
-
-/* Compact selects, like the item dialog's "Assign to…". */
-.schedule-when .select {
-  width: fit-content;
 }
 
 /* ---- Chat (Chat.jsx): a screen, aligned with the backlog ---- */
@@ -2187,17 +2400,19 @@ html.resizing * {
   white-space: nowrap;
 }
 
-/* A message's actions (reply, reactions) float over its top-right corner
-   on hover or focus; on touch screens the "…" button shows them. */
+/* A message's actions (reply, reactions) sit in the empty right side of its
+   author/timestamp header line so they never cover message body text (#323);
+   on touch screens the "…" button shows them. */
 .msg-actions {
   position: absolute;
-  top: -6px;
+  top: 5px;
   right: var(--space-s);
   z-index: 1;
   display: none;
   align-items: center;
   gap: 2px;
-  padding: 2px;
+  height: 20px;
+  padding: 1px;
   border-radius: var(--radius-s);
   background: var(--panel);
   box-shadow: 0 0 0 var(--border-s) var(--panel-edge), var(--panel-shadow);
@@ -2210,21 +2425,27 @@ html.resizing * {
   display: inline-flex;
 }
 
+/* Hide hover toolbars while actively pressing/selecting message text (#323). */
+.msg:active:not(:has(.msg-actions:active)) > .msg-actions {
+  display: none;
+}
+
 .msg-action.button {
-  height: 26px;
-  padding: 0 6px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: var(--size-xxs);
 }
 
 .msg-emoji {
   display: grid;
   place-items: center;
-  width: 28px;
-  height: 26px;
+  width: 22px;
+  height: 18px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-s);
   background: none;
-  font-size: 15px;
+  font-size: 13px;
   line-height: 1;
   cursor: pointer;
 }
@@ -2346,6 +2567,11 @@ html.resizing * {
 
 .thread-replies .msg:hover {
   background: none;
+}
+
+.thread-replies .msg > .msg-actions {
+  top: 1px;
+  right: 0;
 }
 
 .composer {
@@ -2550,6 +2776,255 @@ html.reordering * {
 .comment-count svg.lucide {
   width: 14px;
   height: 14px;
+}
+
+/* ---- Backlog board (Kanban.jsx): List | Kanban in the header ---- */
+.view-switch {
+  margin-left: var(--space-s);
+}
+
+.view-switch button {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.screen-body.kanban-body {
+  display: flex;
+  flex-direction: column;
+}
+
+.kanban {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(260px, 1fr));
+  gap: var(--space-s);
+  padding: var(--space-s) var(--space-m) var(--space-m);
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+}
+
+.kanban-col {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  border-radius: var(--radius-m);
+  background: var(--panel-head);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.kanban-col-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--space-xs);
+  height: 40px;
+  margin: 0;
+  padding: 0 var(--space-s);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-semibold);
+}
+
+.kanban-col-head .count {
+  color: var(--text-muted);
+  font-weight: var(--weight-ui-regular);
+}
+
+.kanban-col-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: 0 var(--space-xs) var(--space-xs);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.kanban-empty {
+  margin: 0;
+  padding: var(--space-xs) var(--space-xxs);
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+}
+
+.kcard {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px var(--space-s);
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  cursor: pointer;
+}
+
+.kcard:hover {
+  background: var(--surface-hover);
+}
+
+.kcard.drop-before::before {
+  top: -5px;
+}
+
+.kcard.drop-after::after {
+  bottom: -5px;
+}
+
+.kcard.lifted {
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus);
+}
+
+.kcard.item-created {
+  animation: item-created 2.5s var(--motion-easing);
+}
+
+.kcard.item-pending {
+  opacity: 0.6;
+  cursor: default;
+}
+
+.kcard-top,
+.kcard-foot {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.kcard-top .meta {
+  margin-left: auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.kcard-title {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+  line-clamp: 3;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  line-height: var(--line-s);
+}
+
+.kcard.done .kcard-title {
+  color: var(--text-muted);
+}
+
+.kcard-foot {
+  flex-wrap: wrap;
+  row-gap: var(--space-xxs);
+}
+
+.kcard-people {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  min-width: 0;
+}
+
+.kcard-reporter {
+  overflow: hidden;
+  color: var(--text-muted);
+  font-size: var(--size-xs);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kcard-counts {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: auto;
+}
+
+.kcard-actions {
+  display: none;
+}
+
+.kcard:hover .kcard-actions,
+.kcard:focus-within .kcard-actions {
+  display: inline-flex;
+}
+
+.kcard-grip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 20px;
+  margin-left: -6px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text-muted);
+  cursor: grab;
+  opacity: 0;
+  touch-action: none;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.kcard-grip .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.kcard-grip:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 2px var(--focus-ring), inset 0 0 0 var(--border-s) var(--focus);
+}
+
+.kcard:hover .kcard-grip,
+.kcard-grip:focus-visible,
+.kcard.lifted .kcard-grip,
+.kcard.dragging .kcard-grip {
+  opacity: 1;
+}
+
+@media (pointer: coarse) {
+  .kcard-grip {
+    width: 28px;
+    height: 28px;
+    opacity: 1;
+  }
+
+  .kcard-actions {
+    display: inline-flex;
+  }
+}
+
+.kanban-add,
+.kanban-more {
+  flex: none;
+  justify-content: flex-start;
+  color: var(--text-muted);
+}
+
+.kanban-add .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.kanban-add-form {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.kanban-add-title {
+  resize: none;
+}
+
+.kanban-add-actions {
+  display: flex;
+  gap: var(--space-xxs);
 }
 
 .detail-section {
@@ -2988,6 +3463,83 @@ html.reordering * {
   overflow-wrap: anywhere;
 }
 
+/* Images in Markdown (#292): uploaded screenshots, shown inline and
+   linked to the full-size image. */
+.md-img-link {
+  display: inline-block;
+  max-width: 100%;
+  vertical-align: top;
+}
+
+.md-img {
+  display: block;
+  max-width: min(100%, 480px);
+  max-height: 360px;
+  margin: 2px 0;
+  border-radius: var(--radius-s);
+  box-shadow: 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.md-img-loading {
+  color: var(--text-muted);
+  font-style: italic;
+}
+
+/* A textarea that takes images (images.jsx): its add-image button sits in
+   the top right corner, clear of the resize handle. */
+.image-textarea {
+  position: relative;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.image-textarea > textarea.control {
+  padding-right: 36px;
+}
+
+.image-textarea.dragging > textarea.control {
+  box-shadow: inset 0 0 0 var(--border-s) var(--focus), 0 0 0 3px var(--focus-ring);
+}
+
+.image-attach {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.image-attach:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.image-attach:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--focus-ring);
+}
+
+.image-attach svg {
+  width: 16px;
+  height: 16px;
+}
+
+.image-error {
+  margin: var(--space-xxs) 0 0;
+  color: var(--danger);
+  font-size: var(--size-xs);
+}
+
 .md-pre {
   max-width: 100%;
   margin: 2px 0;
@@ -3075,6 +3627,25 @@ html.reordering * {
     display: none;
   }
 
+  .seg.view-switch {
+    display: inline-flex;
+    margin-left: var(--space-xs);
+  }
+
+  .kanban {
+    grid-template-columns: repeat(3, minmax(260px, 85%));
+    padding: var(--space-xs);
+    scroll-snap-type: x mandatory;
+  }
+
+  .kanban-col {
+    scroll-snap-align: start;
+  }
+
+  .theme-switch {
+    display: none;
+  }
+
   .theme-cycle {
     display: inline-flex;
   }
@@ -3120,7 +3691,7 @@ html.reordering * {
   font-weight: var(--weight-ui-regular);
 }
 
-.account-trigger.button {
+.account-trigger.button.button-icon {
   padding: 0;
 }
 
@@ -3359,6 +3930,38 @@ html.reordering * {
   padding-top: var(--space-xs);
 }
 
+/* The public counters under the hero (#301): the number over its label. */
+.stats {
+  margin: 0;
+  padding-top: var(--space-s);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-s) var(--space-xl);
+}
+
+.stat {
+  display: flex;
+  flex-direction: column-reverse;
+  /* Reversed, so "end" is the top: numbers line up when a label wraps. */
+  justify-content: flex-end;
+}
+
+.stat dt {
+  color: var(--text-secondary);
+  font-size: var(--size-xs);
+  line-height: var(--line-xs);
+}
+
+.stat dd {
+  margin: 0;
+  font-family: var(--font-brand);
+  font-size: var(--size-l);
+  line-height: var(--line-l);
+  letter-spacing: var(--letter-spacing-l);
+  font-weight: var(--weight-brand-heavy);
+  font-variant-numeric: tabular-nums;
+}
+
 .button-large {
   height: 40px;
   padding: 0 var(--space-m);
@@ -3580,6 +4183,12 @@ html.reordering * {
 
   .hero-actions .button-large {
     flex: 1 1 100%;
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--space-m);
   }
 
   .features {
@@ -3924,7 +4533,8 @@ html.reordering * {
     max-width: none;
   }
 
-  .account-menu .seg {
+  .account-menu .seg,
+  .account-menu .theme-switch {
     display: inline-flex;
   }
 

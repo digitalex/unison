@@ -1,7 +1,9 @@
 package cli
 
 import (
+	"encoding/json"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -71,10 +73,33 @@ func TestAgentPass(t *testing.T) {
 		t.Errorf("who = %q", out)
 	}
 
+	// Workspace deletion is for the owner only (#296): not from the agent's
+	// session, even with Alex signed in on this machine, nor with the
+	// agent's token passed explicitly; nor by Alex, a member but not owner.
+	var agentCfg Config
+	raw, _ := os.ReadFile(filepath.Join(agent, ConfigFile))
+	if err := json.Unmarshal(raw, &agentCfg); err != nil || !agentCfg.Agent {
+		t.Errorf("agent session = %s (%v), want agent: true", raw, err)
+	}
+	if _, errOut, code := e.run(agent, "workspace", "delete", "--confirm", "Unison"); code == 0 || !strings.Contains(errOut, "agents can't delete") {
+		t.Errorf("delete from the agent's session: exit %d %q", code, errOut)
+	}
+	if _, errOut, code := e.run(t.TempDir(), "--workspace", ws.ID, "--token", agentCfg.Token, "workspace", "delete", "--confirm", "Unison"); code == 0 || !strings.Contains(errOut, "agents can't delete") {
+		t.Errorf("delete with the agent's --token: exit %d %q", code, errOut)
+	}
+	t.Setenv("UNISON_TOKEN", agentCfg.Token)
+	if _, errOut, code := e.run(t.TempDir(), "--workspace", ws.ID, "workspace", "delete", "--confirm", "Unison"); code == 0 || !strings.Contains(errOut, "agents can't delete") {
+		t.Errorf("delete with the agent's UNISON_TOKEN: exit %d %q", code, errOut)
+	}
+	t.Setenv("UNISON_TOKEN", "")
+	if _, errOut, code := e.run(human, "workspace", "delete", "--confirm", "Unison"); code == 0 || !strings.Contains(errOut, "only the workspace's owner") {
+		t.Errorf("delete by a member who isn't the owner: exit %d %q", code, errOut)
+	}
+
 	// Alex leaves the workspace's members: Quill stops working.
 	bob, _ := st.LoginWithProvider(t.Context(), "github", store.Profile{Subject: "2", Name: "Bob"})
 	st.JoinAsUser(t.Context(), ws.ID, bob.ID, "Bob", "")
-	if _, err := st.RemoveMember(t.Context(), ws.ID, bob.ID, alex.ID); err != nil {
+	if _, err := st.RemoveMember(t.Context(), ws.ID, owner.ID, alex.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, errOut, code := e.run(agent, "chat", "send", "anyone?"); code == 0 || !strings.Contains(errOut, "Alex, who invited this agent, is no longer a member") {
@@ -83,5 +108,12 @@ func TestAgentPass(t *testing.T) {
 	// So does Alex's own participant: workspaces are private to members.
 	if _, errOut, code := e.run(human, "chat", "send", "still here"); code == 0 || !strings.Contains(errOut, "no longer a member") {
 		t.Errorf("removed member: exit %d %q", code, errOut)
+	}
+
+	// The owner deletes it.
+	ownerBrowser, _, _ := st.CreateSession(t.Context(), owner.ID, store.SessionBrowser, "test")
+	deviceLogin(t, ts.URL, ownerBrowser)
+	if out := e.ok(t.TempDir(), "workspace", "delete", ws.ID, "--confirm", "Unison"); !strings.Contains(out, "Deleted workspace Unison") {
+		t.Errorf("owner delete = %q", out)
 	}
 }

@@ -11,20 +11,20 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"math/rand/v2"
 	"net/http"
 	"net/url"
 	"os"
 	"os/signal"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"sort"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/digitalex/unison/internal/analytics"
+	"github.com/digitalex/unison/internal/concern"
 	"github.com/digitalex/unison/internal/guide"
 	"github.com/digitalex/unison/internal/push"
 	"github.com/digitalex/unison/internal/server"
@@ -74,20 +74,34 @@ Server:
 
 Workspaces & identity:
   workspace [show]                   show the current workspace
-  workspace list                     your workspaces (needs login)
-  workspace create <name> [--repo URL]... [--canvas URL]
-                                     (needs login; you become its first member)
-  workspace set [--name N] [--repo URL] [--canvas URL] [--github-token T]
-                                     (--repo: the first repo; --github-token: a PAT
-                                     with PR read access to the repos, for
-                                     "reviews"; "" removes it; never shown again)
+  workspace list                     your workspaces (needs login); [activity #N]
+                                     marks one where somebody else has been busy:
+                                     N grows with each thing they do
+  workspace stats                    how many workspaces this server has, and how
+                                     many are new (counts only; no login needed)
+  workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]
+                                     (needs login; you become its first member;
+                                     --create-canvas makes a new isocan canvas
+                                     with the isocan CLI and attaches it)
+  workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
+                [--github-token T]   (--repo: the first repo; --product: where the
+                                     product you build is deployed, "" removes
+                                     it; --github-token: a PAT with PR read
+                                     access to the repos, for "reviews"; ""
+                                     removes it; never shown again)
   workspace delete [id] --confirm <name>
-                                     delete workspace and all data (needs login)
+                                     delete workspace and all data (owner only;
+                                     needs login; never from an agent session)
   workspace repos                    the workspace's code repositories
   workspace repo add <url>
   workspace repo edit <id> --url U
   workspace repo remove <id>
-  join <workspace-url> [--name N] [--emoji E] (--pass P | --account [--invite T])
+  workspace links                    the workspace's links (specs, docs, …)
+  workspace link add <name> <url>
+  workspace link edit <id> [--name N] [--url U]
+  workspace link remove <id>
+  join <workspace-url> [--name N] [--emoji E] [--model M]
+       (--pass P | --account [--invite T])
                                      join; saves .unison.json here. Workspaces are
                                      private: agents need --pass (the pass from
                                      their invite: you act for the member who sent
@@ -95,6 +109,11 @@ Workspaces & identity:
                                      member or with an invite (an invite link works
                                      as the URL; email invites need nothing more)
   whoami                             your identity in this workspace
+  name [<new-name>] [--emoji E] [--model M]
+                                     change your name or emoji in this workspace
+                                     (one word, no @, not somebody else's), or the
+                                     AI model you say you run on (--model - clears
+                                     it); with none of them, show who you are
   status <text>                      set your status line ("" clears it)
   who [--all]                        participants and who is active (--all
                                      includes retired and revoked agents)
@@ -118,9 +137,10 @@ Accounts and invites:
   invite revoke <id>                 stop an invite
   members                            the workspace's members (accounts) and their
                                      participants
-  members remove <user-id>           remove a member (any member may; their
-                                     participants stay, for history; their agents
-                                     stop working)
+  members remove <user-id>           remove a member (owner removes anyone else;
+                                     others may only remove themselves to leave;
+                                     their participants stay, for history; their
+                                     agents stop working)
   pass [--agent]                     mint a single-use agent pass (15 minutes) and
                                      print the invite prompt to paste into an agent
   sessions                           where you're signed in (browsers, CLIs)
@@ -142,9 +162,16 @@ Chat:
                                      act (review a PR, answer, set something up)
   chat read [<message-id>]           mark chat read up to a message (default: the
                                      newest); --show prints how far you've read
-  chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 (or +1,
-                                     -1, heart, muscle, 100)
+  chat react <message-id> <emoji>    toggle your reaction: 👍 👎 ❤️ 💪 💯 🚀 🎉 😂
+                                     (or +1, -1, heart, muscle, 100, rocket,
+                                     party, laugh)
   activity [--limit N]               recent workspace activity (items, joins)
+
+Images (screenshots to show inline in chat, items and comments):
+  image upload <file> [--name N]     upload a PNG, JPEG, GIF or WebP (up to 5 MiB);
+                                     prints ![name](url) to paste into Markdown
+  image save <id-or-url> <dest>      download one (12, #12, its /api/… path or
+                                     full URL); dest - writes to stdout
 
 Actions (chat messages sent with --action that ask you to act):
   actions                            what asks you and isn't done yet
@@ -177,12 +204,12 @@ Backlog (#1 is the highest priority):
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
-Recurring tasks (a run comes due at 00:00 server time and is added to the top
-of the backlog):
+Recurring tasks (a run comes due at 00:00 server time, or hourly at the top of
+every hour, and is added to the top of the backlog):
   schedule [list]                    the workspace's recurring tasks
-  schedule add <title> (--daily | --weekly DAY) [--body B]
+  schedule add <title> (--hourly | --daily | --weekly DAY) [--body B]
                                      DAY is mon, tue, … sun
-  schedule edit <id> [--title T] [--body B] [--daily | --weekly DAY]
+  schedule edit <id> [--title T] [--body B] [--hourly | --daily | --weekly DAY]
   schedule run <id>                  run it now, as if it were due (the next
                                      scheduled run stays)
   schedule remove <id>               (items it already added stay)
@@ -206,11 +233,17 @@ Real time:
                                      --mentions wakes only for @mentions,
                                      replies to your threads, open --action
                                      requests, your items, new open items, and
-                                     webhook deliveries
+                                     webhook deliveries. Rides out server
+                                     restarts; exit 2 when --timeout passes
+  peek [--mentions]                  would wait wake right now? Prints true
+                                     (exit 0) or false (exit 2) without waiting
+                                     or changing anything: wait's place, what
+                                     you've read and your presence stay as
+                                     they were (for agents woken by a timer)
 
-Exit codes: 0 ok, 1 error, 2 wait timed out (run it again), 3 nothing to
-claim, 4 logged out or not joined (24 hours without activity, revoked, your
-member left, or no session: stop and tell your human).
+Exit codes: 0 ok, 1 error, 2 wait timed out (run it again) or peek found
+nothing, 3 nothing to claim, 4 logged out or not joined (24 hours without
+activity, revoked, your member left, or no session: stop and tell your human).
 
 Global flags (anywhere): --json  --server URL  --workspace ID  --token T  --config PATH
 Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
@@ -219,18 +252,22 @@ Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
 `
 
 type app struct {
-	out     io.Writer
-	cfg     *Config
-	jsonOut bool
-	server  string
-	ws      string
-	token   string
+	out              io.Writer
+	errOut           io.Writer // progress and warnings; never the result
+	cfg              *Config
+	jsonOut          bool
+	server           string
+	serverExplicit   bool
+	ws               string
+	token            string
+	versionChecked   bool
+	forceVersionWarn bool
 }
 
 // Run executes the unison command with args (excluding the program name)
 // and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	err := run(args, stdout)
+	err := run(args, stdout, stderr)
 	if err == nil {
 		return 0
 	}
@@ -253,8 +290,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-func run(args []string, stdout io.Writer) error {
-	a := &app{out: stdout}
+func run(args []string, stdout, stderr io.Writer) error {
+	a := &app{out: stdout, errOut: stderr}
 	var configPath string
 	args, err := extractGlobals(args, map[string]*string{
 		"server": &a.server, "workspace": &a.ws, "token": &a.token, "config": &configPath,
@@ -268,6 +305,7 @@ func run(args []string, stdout io.Writer) error {
 	if a.cfg, err = loadConfig(configPath); err != nil {
 		return err
 	}
+	a.serverExplicit = firstNonEmpty(a.server, os.Getenv("UNISON_SERVER"), a.cfg.Server) != ""
 	a.server = firstNonEmpty(a.server, os.Getenv("UNISON_SERVER"), a.cfg.Server, DefaultServer)
 	a.ws = firstNonEmpty(a.ws, os.Getenv("UNISON_WORKSPACE"), a.cfg.Workspace)
 	a.token = firstNonEmpty(a.token, os.Getenv("UNISON_TOKEN"), a.cfg.Token)
@@ -315,6 +353,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.devices(rest)
 	case "members", "member":
 		return a.members(rest)
+	case "name":
+		return a.name(rest)
 	case "status":
 		return a.status(rest)
 	case "who":
@@ -325,6 +365,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.chat(rest)
 	case "activity":
 		return a.activity(rest)
+	case "image", "images":
+		return a.image(rest)
 	case "backlog":
 		return a.backlog(rest)
 	case "webhook", "webhooks":
@@ -333,6 +375,8 @@ func run(args []string, stdout io.Writer) error {
 		return a.schedule(rest)
 	case "wait":
 		return a.wait(rest)
+	case "peek":
+		return a.peek(rest)
 	}
 	return fmt.Errorf("%w: unknown command %q", errUsage, cmd)
 }
@@ -403,7 +447,13 @@ func firstNonEmpty(vals ...string) string {
 // client calls the API as the participant joined here, or else as the
 // signed-in account (`unison login`), e.g. to read a workspace you're a
 // member of without having joined from this directory.
-func (a *app) client() *client { return newClient(a.server, firstNonEmpty(a.token, a.userToken())) }
+func (a *app) client() *client { return a.clientWithToken(firstNonEmpty(a.token, a.userToken())) }
+
+func (a *app) clientWithToken(token string) *client {
+	c := newClient(a.server, token)
+	c.onVersion = a.checkServerVersion
+	return c
+}
 
 // wsPath returns the API path for the current workspace.
 func (a *app) wsPath(suffix string) (string, error) {
@@ -477,6 +527,7 @@ func serve(args []string) error {
 	}
 	defer st.Close()
 	srv := server.New(st, webui.FS())
+	srv.SetVersion(buildVersion())
 	auth := server.AuthConfigFromEnv()
 	srv.SetAuth(auth)
 	if err := setupPush(srv); err != nil {
@@ -575,9 +626,17 @@ func (a *app) workspace(args []string) error {
 			if len(ws.Repos) > 1 {
 				repos += fmt.Sprintf(" (+%d more)", len(ws.Repos)-1)
 			}
-			a.printf("%s  %s  %s\n", ws.ID, ws.Name, repos)
+			// What teammates have done there, as an event number to compare
+			// with last time (#300); nothing when nobody else has been busy.
+			activity := ""
+			if ws.ActivitySeq > 0 {
+				activity = fmt.Sprintf("  [activity #%d]", ws.ActivitySeq)
+			}
+			a.printf("%s  %s  %s%s\n", ws.ID, ws.Name, repos, activity)
 		}
 		return nil
+	case "stats":
+		return a.workspaceStats(args)
 	case "create":
 		return a.workspaceCreate(args)
 	case "set":
@@ -598,8 +657,45 @@ func (a *app) workspace(args []string) error {
 		return nil
 	case "repo":
 		return a.workspaceRepo(args)
+	case "links":
+		var links []store.Link
+		if ok, err := a.call("GET", "/links", nil, &links, false); !ok {
+			return err
+		}
+		if len(links) == 0 {
+			a.printf("No links yet. Add one: unison workspace link add <name> <url>\n")
+		}
+		for _, l := range links {
+			a.printf("%s\n", linkLine(l))
+		}
+		return nil
+	case "link":
+		return a.workspaceLink(args)
 	}
 	return fmt.Errorf("%w: unknown workspace subcommand %q", errUsage, sub)
+}
+
+// workspaceStats prints how many workspaces this server has (#301). The
+// endpoint is public, so it needs no login and no workspace.
+func (a *app) workspaceStats(args []string) error {
+	if len(args) > 0 {
+		return fmt.Errorf("%w: workspace stats takes no arguments", errUsage)
+	}
+	var raw json.RawMessage
+	if err := a.clientWithToken("").do("GET", "/api/workspaces/stats", nil, &raw); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var st store.WorkspaceStats
+	if err := json.Unmarshal(raw, &st); err != nil {
+		return err
+	}
+	a.printf("Workspaces           %d\n", st.Total)
+	a.printf("Created last 7 days  %d\n", st.CreatedLast7Days)
+	a.printf("Created today        %d (the past 24 hours)\n", st.CreatedToday)
+	return nil
 }
 
 func (a *app) printWorkspace(ws *store.Workspace) {
@@ -616,6 +712,14 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 		a.printf("%s %s\n", heading, repoLine(r))
 	}
 	a.printf("Canvas     %s\n", firstNonEmpty(ws.CanvasURL, "(not set)"))
+	a.printf("Product    %s\n", firstNonEmpty(ws.ProductURL, "(not set)"))
+	for i, l := range ws.Links {
+		heading := "Links     "
+		if i > 0 {
+			heading = "          "
+		}
+		a.printf("%s %s\n", heading, linkLine(l))
+	}
 	token := "(not set: Pending review is off)"
 	if ws.HasGitHubToken {
 		token = "set"
@@ -717,8 +821,66 @@ func (a *app) workspaceRepo(args []string) error {
 	return fmt.Errorf("%w: workspace repo add <url> | edit <id> --url U | remove <id>", errUsage)
 }
 
+func linkLine(l store.Link) string {
+	return fmt.Sprintf("%-3d %s  %s", l.ID, l.Name, l.URL)
+}
+
+// workspaceLink adds, edits and removes the workspace's links (#299).
+func (a *app) workspaceLink(args []string) error {
+	const usage = "workspace link add <name> <url> | edit <id> [--name N] [--url U] | remove <id>"
+	if len(args) == 0 {
+		return fmt.Errorf("%w: %s", errUsage, usage)
+	}
+	sub, args := args[0], args[1:]
+	fs := flag.NewFlagSet("workspace link "+sub, flag.ContinueOnError)
+	patch := map[string]string{}
+	if sub == "edit" {
+		fs.Func("name", "new name", func(v string) error { patch["name"] = v; return nil })
+		fs.Func("url", "new URL", func(v string) error { patch["url"] = v; return nil })
+	}
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	var l store.Link
+	switch {
+	case sub == "add" && len(pos) == 2:
+		patch["name"], patch["url"] = pos[0], pos[1]
+		if ok, err := a.call("POST", "/links", patch, &l, true); !ok {
+			return err
+		}
+		a.printf("Added link %s\n", linkLine(l))
+		return nil
+	case sub == "edit" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		if len(patch) == 0 {
+			return fmt.Errorf("%w: workspace link edit <id> needs --name or --url", errUsage)
+		}
+		if ok, err := a.call("PATCH", fmt.Sprintf("/links/%d", id), patch, &l, true); !ok {
+			return err
+		}
+		a.printf("Updated link %s\n", linkLine(l))
+		return nil
+	case (sub == "remove" || sub == "rm") && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		var out map[string]any
+		if ok, err := a.call("DELETE", fmt.Sprintf("/links/%d", id), nil, &out, true); !ok {
+			return err
+		}
+		a.printf("Removed link %d.\n", id)
+		return nil
+	}
+	return fmt.Errorf("%w: %s", errUsage, usage)
+}
+
 func scheduleLine(sc store.Schedule) string {
-	cadence := "daily"
+	cadence := sc.Cadence
 	if sc.Cadence == store.CadenceWeekly {
 		cadence = "weekly on " + sc.Weekday
 	}
@@ -734,6 +896,7 @@ func (a *app) schedule(args []string) error {
 	patch := map[string]any{}
 	fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
 	fs.Func("body", "the item body", func(v string) error { patch["body"] = v; return nil })
+	fs.BoolFunc("hourly", "due at the top of every hour", func(string) error { patch["cadence"] = store.CadenceHourly; return nil })
 	fs.BoolFunc("daily", "due every day", func(string) error { patch["cadence"] = store.CadenceDaily; return nil })
 	fs.Func("weekly", "due weekly on DAY (mon … sun)", func(v string) error {
 		patch["cadence"], patch["weekday"] = store.CadenceWeekly, v
@@ -751,7 +914,7 @@ func (a *app) schedule(args []string) error {
 			return err
 		}
 		if len(list) == 0 {
-			a.printf("No recurring tasks yet. Add one: unison schedule add <title> --daily | --weekly DAY\n")
+			a.printf("No recurring tasks yet. Add one: unison schedule add <title> --hourly | --daily | --weekly DAY\n")
 		}
 		for _, sc := range list {
 			a.printf("%s\n", scheduleLine(sc))
@@ -759,7 +922,7 @@ func (a *app) schedule(args []string) error {
 		return nil
 	case sub == "add" && len(pos) == 1:
 		if patch["cadence"] == nil {
-			return fmt.Errorf("%w: schedule add <title> needs --daily or --weekly DAY", errUsage)
+			return fmt.Errorf("%w: schedule add <title> needs --hourly, --daily or --weekly DAY", errUsage)
 		}
 		patch["title"] = pos[0]
 		if ok, err := a.call("POST", "/schedules", patch, &sc, true); !ok {
@@ -807,7 +970,7 @@ func (a *app) schedule(args []string) error {
 		a.printf("Removed recurring task %d.\n", id)
 		return nil
 	}
-	return fmt.Errorf("%w: schedule [list] | add <title> (--daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
+	return fmt.Errorf("%w: schedule [list] | add <title> (--hourly | --daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
 }
 
 func (a *app) workspaceCreate(args []string) error {
@@ -818,18 +981,32 @@ func (a *app) workspaceCreate(args []string) error {
 		return nil
 	})
 	canvas := fs.String("canvas", "", "isocan canvas URL")
+	createCanvas := fs.Bool("create-canvas", false, "make a new isocan canvas named after the workspace (needs the isocan CLI)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) == 0 {
-		return fmt.Errorf("%w: workspace create <name>", errUsage)
+		return fmt.Errorf("%w: workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]", errUsage)
+	}
+	if *createCanvas && *canvas != "" {
+		return fmt.Errorf("%w: --canvas and --create-canvas are alternatives: pass one", errUsage)
+	}
+	name := strings.Join(pos, " ")
+	if *createCanvas {
+		if *canvas, err = newCanvas(name); err != nil {
+			return err
+		}
 	}
 	var raw json.RawMessage
-	body := map[string]any{"name": strings.Join(pos, " "), "repos": repos, "canvas_url": *canvas}
+	body := map[string]any{"name": name, "repos": repos, "canvas_url": *canvas}
 	// Servers may limit creation to signed-in accounts (UNISON_CREATORS).
 	c := newClient(a.server, firstNonEmpty(a.userToken(), a.token))
 	if err := c.do("POST", "/api/workspaces", body, &raw); err != nil {
+		if *createCanvas {
+			// The canvas exists all the same: don't lose its address.
+			return fmt.Errorf("%w (the new canvas is %s)", err, *canvas)
+		}
 		return err
 	}
 	if a.jsonOut {
@@ -854,6 +1031,7 @@ func (a *app) workspaceSet(args []string) error {
 	fs.Func("name", "workspace name", func(v string) error { patch.Name = &v; return nil })
 	fs.Func("repo", "repository URL", func(v string) error { patch.RepoURL = &v; return nil })
 	fs.Func("canvas", "isocan canvas URL", func(v string) error { patch.CanvasURL = &v; return nil })
+	fs.Func("product", "URL of the deployed product (\"\" removes it)", func(v string) error { patch.ProductURL = &v; return nil })
 	fs.Func("github-token", "GitHub token for Pending review (\"\" removes it)", func(v string) error { patch.GitHubToken = &v; return nil })
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
@@ -880,6 +1058,9 @@ func (a *app) workspaceDelete(args []string) error {
 	if wsID == "" {
 		return fmt.Errorf("%w: workspace delete [id] --confirm <name>", errUsage)
 	}
+	if err := a.checkNotAgent("delete workspaces"); err != nil {
+		return err
+	}
 	userToken, err := a.needUserToken()
 	if err != nil {
 		return err
@@ -900,6 +1081,43 @@ func (a *app) workspaceDelete(args []string) error {
 	return nil
 }
 
+// checkNotAgent refuses commands only a workspace's owner may run (#296)
+// when this shell acts as an agent: its saved session was joined with a
+// pass, or the participant credential in use (--token, UNISON_TOKEN or the
+// saved session) belongs to an agent, or can't be checked. Such commands
+// call the API as the signed-in account, so without this an agent running
+// on its human's machine would fall back to their `unison login`.
+func (a *app) checkNotAgent(what string) error {
+	refuse := fmt.Errorf("agents can't %s: only the workspace's owner can, as themselves", what)
+	if a.cfg.Agent {
+		return refuse
+	}
+	seen := map[string]bool{}
+	for _, tok := range []string{a.token, a.cfg.Token} {
+		if tok == "" || seen[tok] {
+			continue
+		}
+		seen[tok] = true
+		ws := a.ws // The workspace a.token is used with.
+		if tok != a.token {
+			ws = a.cfg.Workspace
+		}
+		if ws == "" {
+			return fmt.Errorf("can't %s: a participant credential is set (--token or UNISON_TOKEN) without a workspace to check it against; unset it", what)
+		}
+		var me struct {
+			Sponsor *store.Sponsor `json:"sponsor"`
+		}
+		if err := newClient(a.server, tok).do("GET", "/api/workspaces/"+ws+"/me", nil, &me); err != nil {
+			return fmt.Errorf("can't %s: the participant credential in use (--token, UNISON_TOKEN or %s) could not be checked (%v); run this where no agent session is set", what, ConfigFile, err)
+		}
+		if me.Sponsor != nil {
+			return refuse
+		}
+	}
+	return nil
+}
+
 func (a *app) join(args []string) error {
 	fs := flag.NewFlagSet("join", flag.ContinueOnError)
 	name := fs.String("name", "", "your name (one word; auto-assigned if omitted)")
@@ -907,6 +1125,7 @@ func (a *app) join(args []string) error {
 	account := fs.Bool("account", false, "humans: join as your account (from `unison login`)")
 	pass := fs.String("pass", "", "agents: the single-use pass from your invite")
 	invite := fs.String("invite", "", "humans: an invite link's token (implies --account)")
+	model := fs.String("model", "", "agents: the AI model you run on, shown next to your name")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -952,6 +1171,9 @@ func (a *app) join(args []string) error {
 		}
 	}
 	body := map[string]string{"name": *name, "emoji": *emoji, "pass": *pass, "invite": *invite}
+	if *model != "" {
+		body["model"] = *model
+	}
 	if err := newClient(a.server, userToken).do("POST", path, body, &resp); err != nil {
 		return err
 	}
@@ -969,7 +1191,7 @@ func (a *app) join(args []string) error {
 	}
 	cfg := &Config{
 		Server: a.server, Workspace: a.ws, Token: resp.Token, ParticipantID: resp.Participant.ID,
-		Name: resp.Participant.Name, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
+		Name: resp.Participant.Name, Agent: resp.Participant.Sponsor != nil, Cursor: events.Cursor, path: firstNonEmpty(os.Getenv("UNISON_CONFIG"), ConfigFile),
 	}
 	if err := cfg.save(); err != nil {
 		return err
@@ -981,7 +1203,7 @@ func (a *app) join(args []string) error {
 	switch {
 	case resp.Participant.Sponsor != nil:
 		a.printf("Joined as %s %s (participant %d), agent of %s. Session saved to %s — keep it out of git.\n",
-			resp.Participant.Emoji, resp.Participant.Name, resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
+			resp.Participant.Emoji, nameAndModel(&resp.Participant), resp.Participant.ID, resp.Participant.Sponsor.DisplayName, cfg.path)
 		a.printf("Logged out after %d hours without activity; if your credential stops working, ask %s for a new invite.\n",
 			int(store.AgentIdleTimeout.Hours()), resp.Participant.Sponsor.DisplayName)
 	case resp.Existing:
@@ -1021,6 +1243,9 @@ func (a *app) whoami(args []string) error {
 	if p.Status != "" {
 		a.printf("Status: %s\n", p.Status)
 	}
+	if p.Model != "" {
+		a.printf("Model: %s\n", p.Model)
+	}
 	if p.User != nil {
 		a.printf("Account: %s (user %d)\n", firstNonEmpty(p.User.DisplayName, "(no name)"), p.User.ID)
 	}
@@ -1038,6 +1263,78 @@ func (a *app) status(args []string) error {
 	}
 	a.printf("%s %s: %s\n", p.Emoji, p.Name, firstNonEmpty(p.Status, "(no status)"))
 	return nil
+}
+
+// name changes your name and emoji in this workspace (#303), and the model
+// you say you run on (#304), or shows them when given none. A rename is written to the saved session too, which
+// carries your name.
+func (a *app) name(args []string) error {
+	fs := flag.NewFlagSet("name", flag.ContinueOnError)
+	emoji := fs.String("emoji", "", "your new emoji")
+	model := fs.String("model", "", "the AI model you run on (- clears it)")
+	rest, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(rest) > 1 {
+		return fmt.Errorf("%w: a name is one word: unison name <new-name> [--emoji E] [--model M]", errUsage)
+	}
+	patch := map[string]string{}
+	if len(rest) == 1 {
+		patch["name"] = rest[0]
+	}
+	if *emoji != "" {
+		patch["emoji"] = *emoji
+	}
+	switch *model {
+	case "":
+	case "-":
+		patch["model"] = ""
+	default:
+		patch["model"] = *model
+	}
+	path, err := a.wsPath("/me")
+	if err != nil {
+		return err
+	}
+	if err := a.needToken(); err != nil {
+		return err
+	}
+	var raw json.RawMessage
+	if len(patch) == 0 {
+		err = a.client().do("GET", path, nil, &raw)
+	} else {
+		err = a.client().do("PATCH", path, patch, &raw)
+	}
+	if err != nil {
+		return err
+	}
+	var p store.Participant
+	if err := json.Unmarshal(raw, &p); err != nil {
+		return err
+	}
+	// Only the session in the file is renamed: not one given by flag or
+	// environment, which may be somebody else's.
+	if a.cfg.path != "" && a.cfg.Workspace == a.ws && a.cfg.ParticipantID == p.ID && a.cfg.Name != p.Name {
+		a.cfg.Name = p.Name
+		if err := a.cfg.save(); err != nil {
+			return err
+		}
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	a.printf("You are %s %s\n", p.Emoji, nameAndModel(&p))
+	return nil
+}
+
+// nameAndModel is "Name (model)" for a participant that says which model
+// it runs on (#304), and the name alone otherwise.
+func nameAndModel(p *store.Participant) string {
+	if p.Model == "" {
+		return p.Name
+	}
+	return fmt.Sprintf("%s (%s)", p.Name, p.Model)
 }
 
 // activeWindow is how recently a participant must have been seen to count
@@ -1062,7 +1359,7 @@ func (a *app) who(args []string) error {
 		if p.RevokedAt == 0 && !agentPastIdleTimeout(&p) && time.Since(time.UnixMilli(p.LastSeenAt)) < activeWindow {
 			dot = "🟢"
 		}
-		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, p.Name)
+		line := fmt.Sprintf("%s %s %s", dot, p.Emoji, nameAndModel(&p))
 		if p.Sponsor != nil {
 			line += " · agent of " + p.Sponsor.DisplayName
 		}
@@ -1362,7 +1659,7 @@ func reactionSummary(m store.Message) string {
 // back if you already reacted with that emoji.
 func (a *app) chatReact(args []string) error {
 	if len(args) != 2 {
-		return fmt.Errorf("%w: chat react <message-id> <emoji> (%s, or +1 -1 heart muscle 100)", errUsage, strings.Join(store.ReactionEmoji, " "))
+		return fmt.Errorf("%w: chat react <message-id> <emoji> (%s, or %s)", errUsage, strings.Join(store.ReactionEmoji, " "), strings.Join(store.ReactionShortNames, " "))
 	}
 	id, err := parseID(args[0])
 	if err != nil {
@@ -1604,7 +1901,7 @@ func itemLine(people map[int64]store.Participant, it *store.Item) string {
 	if it.Status != store.StatusDone {
 		pos = fmt.Sprintf("%d.", it.Position)
 	}
-	return fmt.Sprintf("%-4s #%-4d %-40s %s", pos, it.ID, it.Title, itemState(people, it))
+	return fmt.Sprintf("%-4s #%-4d %-40s %s  by %s", pos, it.ID, it.Title, itemState(people, it), label(people, it.CreatedBy))
 }
 
 func itemState(people map[int64]store.Participant, it *store.Item) string {
@@ -2138,14 +2435,20 @@ func (a *app) wait(args []string) (err error) {
 	if err != nil {
 		return noWorkspaceSessionErr(err)
 	}
+	a.forceVersionWarn = true
 	c := a.client()
-	if err := c.do("GET", path, nil, &me); err != nil {
+	// A server that is restarting, or a network that blinks, is waited out
+	// (#317): every read below is retried until --timeout, here and in the
+	// loop, so a parked agent survives a deploy.
+	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
+	out := &outage{deadline: deadline, log: a.errOut}
+	if err := out.ride(func() error { return c.do("GET", path, nil, &me) }); err != nil {
 		return err
 	}
 	var readState struct {
 		UpTo int64 `json:"up_to"`
 	}
-	if err := c.do("GET", "/api/workspaces/"+a.ws+"/read", nil, &readState); err != nil {
+	if err := out.ride(func() error { return c.do("GET", "/api/workspaces/"+a.ws+"/read", nil, &readState) }); err != nil {
 		return err
 	}
 	cursor := a.cfg.Cursor
@@ -2153,17 +2456,16 @@ func (a *app) wait(args []string) (err error) {
 		var resp struct {
 			Cursor int64 `json:"cursor"`
 		}
-		if err := c.do("GET", "/api/workspaces/"+a.ws+"/events", nil, &resp); err != nil {
+		if err := out.ride(func() error { return c.do("GET", "/api/workspaces/"+a.ws+"/events", nil, &resp) }); err != nil {
 			return err
 		}
 		cursor = resp.Cursor
 	}
-	f := &eventFilter{me: &me, mentionsOnly: *mentions, client: c, ws: a.ws, readUpTo: readState.UpTo}
-	unread, err := f.unreadMessageEvents()
-	if err != nil {
+	f := newEventFilter(c, a.ws, &me, *mentions, readState.UpTo)
+	var unread []store.Event
+	if err := out.ride(func() (err error) { unread, err = f.unreadMessageEvents(); return err }); err != nil {
 		return err
 	}
-	deadline := time.Now().Add(time.Duration(*timeout) * time.Second)
 	for {
 		remaining := int(time.Until(deadline).Seconds())
 		if remaining <= 0 && len(unread) == 0 {
@@ -2177,13 +2479,25 @@ func (a *app) wait(args []string) (err error) {
 			Events []store.Event `json:"events"`
 			Cursor int64         `json:"cursor"`
 		}
+		// A failed poll asks again from the same cursor: nothing is skipped.
 		q := fmt.Sprintf("/api/workspaces/%s/events?after=%d&wait=%d", a.ws, cursor, waitSec)
-		if err := c.do("GET", q, nil, &resp); err != nil {
+		if err := out.ride(func() error { return c.do("GET", q, nil, &resp) }); err != nil {
 			return err
 		}
 		var relevant []store.Event
 		for _, e := range resp.Events {
-			if f.relevant(e) {
+			// Renamed while waiting (#303): answer to the new name from here
+			// on, and don't write the old one back with the cursor below.
+			if e.Type == "participant.updated" {
+				var p store.Participant
+				if json.Unmarshal(e.Data, &p) == nil && p.ID == me.ID && p.Name != "" {
+					me.Name = p.Name
+					if a.cfg.ParticipantID == p.ID {
+						a.cfg.Name = p.Name
+					}
+				}
+			}
+			if f.Concerns(e) {
 				relevant = append(relevant, e)
 			}
 		}
@@ -2211,80 +2525,94 @@ func (a *app) wait(args []string) (err error) {
 	}
 }
 
+// Wait's retries back off from waitBackoffBase, doubling up to
+// waitBackoffMax, each stretched or shrunk by up to a quarter so that agents
+// parked on the same server don't all come back at once.
+var (
+	waitBackoffBase = 250 * time.Millisecond
+	waitBackoffMax  = 5 * time.Second
+)
+
+// outage rides out a server that can't be reached for a while (#317): a
+// deploy, a restart, a network blip. It retries what fails for that reason,
+// and only that, until the deadline.
+type outage struct {
+	deadline time.Time
+	log      io.Writer
+	streak   int // failures in a row; a success resets it
+}
+
+// transient says whether err is the kind an outage is made of: no answer
+// at all, or a gateway answering for a server that isn't there (502, 503,
+// 504). The server's own refusals (401, 403, 404, 500) are final.
+func transient(err error) bool {
+	var te *transportError
+	if errors.As(err, &te) {
+		return true
+	}
+	var ae *apiError
+	return errors.As(err, &ae) && (ae.Status == http.StatusBadGateway || ae.Status == http.StatusServiceUnavailable || ae.Status == http.StatusGatewayTimeout)
+}
+
+// ride runs try until it succeeds, fails for good, or the deadline passes
+// while the server is away (exit code 2, as when nothing arrived: run wait
+// again). It says one line on stderr for each retry.
+func (o *outage) ride(try func() error) error {
+	for {
+		err := try()
+		if err == nil {
+			o.streak = 0
+			return nil
+		}
+		if !transient(err) {
+			return err
+		}
+		left := time.Until(o.deadline)
+		if left <= 0 {
+			return &exitError{code: 2, msg: fmt.Sprintf("Nothing new: the server could not be reached (%s). Run `unison wait` again to keep listening.", cause(err))}
+		}
+		pause := min(waitBackoffBase<<min(o.streak, 16), waitBackoffMax)
+		pause = time.Duration(float64(pause) * (0.75 + rand.Float64()/2))
+		pause = min(pause, left)
+		o.streak++
+		if o.log != nil {
+			fmt.Fprintf(o.log, "unison wait: %s; retrying in %s\n", cause(err), pause.Round(10*time.Millisecond))
+		}
+		time.Sleep(pause)
+	}
+}
+
+// cause is a transient error in a few words: the status, or what the
+// network said, without the URL and the advice around it.
+func cause(err error) string {
+	var ae *apiError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("HTTP %d %s", ae.Status, http.StatusText(ae.Status))
+	}
+	var ue *url.Error
+	if errors.As(err, &ue) {
+		err = ue.Err
+	}
+	return "server unreachable: " + err.Error()
+}
+
+// eventFilter is wait's concern.Filter, with the chat lookups it needs.
 type eventFilter struct {
-	me           *store.Participant
-	mentionsOnly bool
-	client       *client
-	ws           string
-	readUpTo     int64
-	authors      map[int64]int64 // message ID → author ID, fetched lazily.
+	concern.Filter
+	client  *client
+	ws      string
+	authors map[int64]int64 // message ID → author ID, fetched lazily.
 }
 
-func (f *eventFilter) relevant(e store.Event) bool {
-	if e.ActorID == f.me.ID {
-		return false
-	}
-	switch {
-	case e.Type == "message.created":
-		var m store.Message
-		if json.Unmarshal(e.Data, &m) != nil {
-			return false
-		}
-		return m.ID > f.readUpTo && f.messageConcernsMe(m)
-	case e.Type == "comment.added":
-		var ce store.CommentEvent
-		if json.Unmarshal(e.Data, &ce) != nil || ce.Comment == nil {
-			return false
-		}
-		mine := ce.Item != nil && ce.Item.AssigneeID != nil && *ce.Item.AssigneeID == f.me.ID
-		return !f.mentionsOnly || mentions(ce.Comment.Body, f.me.Name) || mine
-	case e.Type == "comment.deleted", strings.HasPrefix(e.Type, "pr."):
-		return !f.mentionsOnly
-	case strings.HasPrefix(e.Type, "backlog."):
-		if !f.mentionsOnly {
-			return true
-		}
-		var it store.Item
-		if json.Unmarshal(e.Data, &it) != nil {
-			return false
-		}
-		if e.Type == "backlog.added" {
-			// An unassigned item is work to pick up (#90); an item added for
-			// someone else wakes only that assignee (#146).
-			return it.AssigneeID == nil || *it.AssigneeID == f.me.ID
-		}
-		return (e.Type == "backlog.assigned" || e.Type == "backlog.started") && it.AssigneeID != nil && *it.AssigneeID == f.me.ID
-	case e.Type == "webhook.received":
-		// Webhooks are instructions for agents: they wake even --mentions,
-		// except GitHub's setup ping.
-		var d store.DeliveryEvent
-		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
-	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
-		strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
-		return !f.mentionsOnly
-	}
-	return false
-}
-
-func (f *eventFilter) messageConcernsMe(m store.Message) bool {
-	if m.AuthorID == f.me.ID {
-		return false
-	}
-	if !f.mentionsOnly {
-		return true
-	}
-	if mentions(m.Body, f.me.Name) {
-		return true
-	}
-	if m.ParentID != nil && f.authorOf(*m.ParentID) == f.me.ID {
-		return true
-	}
-	return slices.Contains(m.ActionFor, f.me.ID) && !slices.Contains(m.DoneBy, f.me.ID)
+func newEventFilter(c *client, ws string, me *store.Participant, mentionsOnly bool, readUpTo int64) *eventFilter {
+	f := &eventFilter{client: c, ws: ws}
+	f.Filter = concern.Filter{Me: me, MentionsOnly: mentionsOnly, ReadUpTo: readUpTo, AuthorOf: f.authorOf}
+	return f
 }
 
 func (f *eventFilter) unreadMessageEvents() ([]store.Event, error) {
 	latest, err := latestMessageID(f.client, f.ws)
-	if err != nil || latest <= f.readUpTo {
+	if err != nil || latest <= f.ReadUpTo {
 		return nil, err
 	}
 	var msgs []store.Message
@@ -2299,7 +2627,7 @@ func (f *eventFilter) unreadMessageEvents() ([]store.Event, error) {
 	}
 	var out []store.Event
 	for _, m := range msgs {
-		if m.ID > f.readUpTo && f.messageConcernsMe(m) {
+		if f.MessageConcerns(m) {
 			out = append(out, messageEvent(m))
 		}
 	}
@@ -2379,19 +2707,6 @@ func (f *eventFilter) authorOf(msgID int64) int64 {
 	return 0
 }
 
-var mentionRegexCache sync.Map
-
-func mentions(body, name string) bool {
-	v, ok := mentionRegexCache.Load(name)
-	var re *regexp.Regexp
-	if !ok {
-		re = regexp.MustCompile(`(?i)@(` + regexp.QuoteMeta(name) + `|all|everyone)\b`)
-		v, _ = mentionRegexCache.LoadOrStore(name, re)
-	}
-	re = v.(*regexp.Regexp)
-	return re.MatchString(body)
-}
-
 func (a *app) printEvents(evs []store.Event) error {
 	if a.jsonOut {
 		raw, _ := json.Marshal(evs)
@@ -2437,7 +2752,7 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
 			} else {
-				line += " (pick it up with `unison backlog claim` if you're free)"
+				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", it.ID)
 			}
 		case "backlog.assigned":
 			if it.AssigneeID != nil {
@@ -2486,6 +2801,10 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var r store.Repo
 		json.Unmarshal(e.Data, &r)
 		return fmt.Sprintf("🛠  %s %s repository %s", who, strings.TrimPrefix(e.Type, "repo."), repoLine(r))
+	case strings.HasPrefix(e.Type, "link."):
+		var l store.Link
+		json.Unmarshal(e.Data, &l)
+		return fmt.Sprintf("🔗 %s %s link %s", who, strings.TrimPrefix(e.Type, "link."), linkLine(l))
 	case strings.HasPrefix(e.Type, "schedule."):
 		var sc store.Schedule
 		json.Unmarshal(e.Data, &sc)

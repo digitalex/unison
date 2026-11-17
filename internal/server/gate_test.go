@@ -409,6 +409,10 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 		t.Fatalf("create = %d", resp.StatusCode)
 	}
 	wsID := ws["id"].(string)
+	_, adaUser, _ := e.st.SessionByToken(ctx, ada.Value)
+	if ws["owner_id"] != float64(adaUser.ID) {
+		t.Errorf("owner_id = %v, want the creator %d", ws["owner_id"], adaUser.ID)
+	}
 
 	// An agent joins with a pass
 	_, passResp := e.do("POST", "/api/workspaces/"+wsID+"/passes", `{}`, withCookie(ada), withCSRF())
@@ -424,6 +428,15 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 	// Non-member cannot delete workspace
 	if resp, _ := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 {
 		t.Errorf("non-member delete = %d, want 403", resp.StatusCode)
+	}
+
+	// A member who isn't the owner cannot delete it (#296).
+	_, bobUser, _ := e.st.SessionByToken(ctx, bob.Value)
+	if _, _, _, _, err := e.st.JoinAsUser(ctx, wsID, bobUser.ID, "Bob", ""); err != nil {
+		t.Fatal(err)
+	}
+	if resp, out := e.do("DELETE", "/api/workspaces/"+wsID, `{}`, withCookie(bob), withCSRF()); resp.StatusCode != 403 || !strings.Contains(out["error"].(string), "owner") {
+		t.Errorf("non-owner member delete = %d %v, want 403 (owner only)", resp.StatusCode, out)
 	}
 
 	// Member without CSRF cannot delete workspace
@@ -462,5 +475,24 @@ func TestDeleteWorkspaceAPI(t *testing.T) {
 	_, u, _ := e.st.SessionByToken(ctx, ada.Value)
 	if _, err := e.st.GetUser(ctx, u.ID); err != nil {
 		t.Errorf("Ada's account missing after workspace deletion: %v", err)
+	}
+}
+
+// TestGateStoreErrorIsNot401 checks that a database outage (Cloud SQL
+// maintenance, #285) is a retryable 500, not a 401 telling clients their
+// credential is gone: `unison wait` exits 4 (logged out) on a 401.
+func TestGateStoreErrorIsNot401(t *testing.T) {
+	e := newAuthEnv(t)
+	ctx := t.Context()
+	alex, _ := e.st.LoginWithProvider(ctx, "github", store.Profile{Subject: "alex", Name: "Alex"})
+	ws, _, _ := e.st.CreateWorkspaceFor(ctx, alex.ID, "Private", "", "")
+	_, partTok, _, _, _ := e.st.JoinAsUser(ctx, ws.ID, alex.ID, "Alex", "")
+	userTok, _, _ := e.st.CreateSession(ctx, alex.ID, store.SessionCLI, "")
+	e.st.Close()
+
+	for name, tok := range map[string]string{"participant token": partTok, "user token": userTok} {
+		if resp, out := e.do("GET", "/api/workspaces/"+ws.ID+"/me", "", withBearer(tok)); resp.StatusCode != 500 {
+			t.Errorf("%s with the database down = %d %v, want 500", name, resp.StatusCode, out)
+		}
 	}
 }

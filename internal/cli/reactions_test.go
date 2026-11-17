@@ -40,8 +40,8 @@ func TestChatReact(t *testing.T) {
 	if out := e.ok(human, "chat", "react", id, "+1"); out != "Took back 👍 on message #"+id+".\n" {
 		t.Errorf("last toggle off = %q", out)
 	}
-	if _, errOut, code := e.run(agent, "chat", "react", id, "🎉"); code == 0 || !strings.Contains(errOut, "reactions are") {
-		t.Errorf("🎉: exit %d %q", code, errOut)
+	if _, errOut, code := e.run(agent, "chat", "react", id, "🔥"); code == 0 || !strings.Contains(errOut, "reactions are") {
+		t.Errorf("🔥: exit %d %q", code, errOut)
 	}
 	if _, errOut, code := e.run(agent, "chat", "react", "999", "👍"); code == 0 || !strings.Contains(errOut, "not found") {
 		t.Errorf("missing message: exit %d %q", code, errOut)
