@@ -234,6 +234,8 @@ func (s *Server) routes() {
 	h("GET "+ws, s.getWorkspace)
 	h("PATCH "+ws, s.auth(s.updateWorkspace))
 	h("DELETE "+ws, s.deleteWorkspace)
+	h("GET "+ws+"/instructions", s.getWorkspaceInstructions)
+	h("PUT "+ws+"/instructions", s.auth(s.updateWorkspaceInstructions))
 	h("GET "+ws+"/repos", s.listRepos)
 	h("POST "+ws+"/repos", s.auth(s.addRepo))
 	h("PATCH "+ws+"/repos/{id}", s.auth(s.editRepo))
@@ -473,23 +475,32 @@ func (s *Server) workspaceStats(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) createWorkspace(w http.ResponseWriter, r *http.Request) {
 	var req struct {
-		Name      string            `json:"name"`
-		RepoURL   string            `json:"repo_url"`
-		Repos     []store.RepoInput `json:"repos"`
-		CanvasURL string            `json:"canvas_url"`
+		Name             string            `json:"name"`
+		RepoURL          string            `json:"repo_url"`
+		Repos            []store.RepoInput `json:"repos"`
+		CanvasURL        string            `json:"canvas_url"`
+		Instructions     string            `json:"instructions"`
+		InstructionsPath string            `json:"instructions_path"`
 	}
 	creator, ok := s.mayCreateWorkspace(w, r)
 	if !ok || !decode(w, r, &req) {
 		return
 	}
-	var ws *store.Workspace
-	var evs []store.Event
-	var err error
+	nw := store.NewWorkspace{
+		Name:             req.Name,
+		RepoURL:          req.RepoURL,
+		CanvasURL:        req.CanvasURL,
+		Repos:            req.Repos,
+		Instructions:     req.Instructions,
+		InstructionsPath: req.InstructionsPath,
+	}
+	var creatorID int64
 	if creator != nil {
-		ws, evs, err = s.store.CreateWorkspaceFor(r.Context(), creator.ID, req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
+		creatorID = creator.ID
+	}
+	ws, evs, err := s.store.CreateWorkspaceWith(r.Context(), creatorID, nw)
+	if creator != nil {
 		s.trackRepos(evs, userActor(creator.ID))
-	} else {
-		ws, evs, err = s.store.CreateWorkspace(r.Context(), req.Name, req.RepoURL, req.CanvasURL, req.Repos...)
 	}
 	s.respond(w, http.StatusCreated, ws, evs, err)
 }
@@ -1185,6 +1196,7 @@ func (s *Server) stream(w http.ResponseWriter, r *http.Request) {
 func (s *Server) doorway(w http.ResponseWriter, r *http.Request) {
 	origin := requestOrigin(r)
 	var ws *store.Workspace
+	var inst *store.WorkspaceInstructions
 	var pass string
 	if id := r.PathValue("ws"); id != "" {
 		var err error
@@ -1199,9 +1211,19 @@ func (s *Server) doorway(w http.ResponseWriter, r *http.Request) {
 		if pass, ok = s.doorwayAccess(w, r, ws); !ok {
 			return
 		}
+		if ws.HasInstructions || ws.InstructionsPath != "" {
+			if wi, err := s.store.GetWorkspaceInstructions(r.Context(), ws.ID); err == nil {
+				inst = wi
+			}
+		}
 	}
 	w.Header().Set("Content-Type", "text/markdown; charset=utf-8")
-	fmt.Fprint(w, guide.Doorway(origin, ws, pass))
+	fmt.Fprint(w, guide.RenderDoorway(guide.DoorwayOptions{
+		Origin:       origin,
+		Workspace:    ws,
+		Instructions: inst,
+		Pass:         pass,
+	}))
 }
 
 // download serves this server's own binary, which is also the CLI. It only

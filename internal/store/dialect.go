@@ -367,6 +367,11 @@ var addedColumns = []struct{ table, name, sqlite, pg string }{
 	// workspaces.product_url (#298) is where the product the workspace
 	// builds is deployed; NULL if none.
 	{"workspaces", "product_url", "TEXT", "TEXT"},
+	// workspaces.instructions / instructions_path / instructions_updated_at:
+	// opt-in per-workspace agent instructions.
+	{"workspaces", "instructions", "TEXT NOT NULL DEFAULT ''", "TEXT NOT NULL DEFAULT ''"},
+	{"workspaces", "instructions_path", "TEXT NOT NULL DEFAULT ''", "TEXT NOT NULL DEFAULT ''"},
+	{"workspaces", "instructions_updated_at", "INTEGER NOT NULL DEFAULT 0", "BIGINT NOT NULL DEFAULT 0"},
 }
 
 // addParticipantColumns adds addedColumns to databases created before them,
@@ -696,6 +701,13 @@ CREATE TABLE IF NOT EXISTS images (
 	created_at INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS images_ws ON images(workspace_id);
+CREATE TABLE IF NOT EXISTS user_settings (
+	user_id INTEGER NOT NULL REFERENCES users(id),
+	key TEXT NOT NULL,
+	value TEXT NOT NULL,
+	updated_at INTEGER NOT NULL,
+	PRIMARY KEY (user_id, key)
+);
 `
 
 // postgresSchema mirrors sqliteSchema. Timestamps are Unix milliseconds in
@@ -955,4 +967,11 @@ CREATE TABLE IF NOT EXISTS images (
 	created_at BIGINT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS images_ws ON images(workspace_id);
+CREATE TABLE IF NOT EXISTS user_settings (
+	user_id BIGINT NOT NULL REFERENCES users(id),
+	key TEXT NOT NULL,
+	value TEXT NOT NULL,
+	updated_at BIGINT NOT NULL,
+	PRIMARY KEY (user_id, key)
+);
 `

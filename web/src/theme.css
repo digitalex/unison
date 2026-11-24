@@ -5059,3 +5059,70 @@ button.md-mention-chip.md-mention-me:hover {
   align-items: center;
   gap: var(--space-xs);
 }
+
+/* Settings → Instructions: opt-in workspace agent instructions editor. */
+.instructions-editor {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+}
+
+.instructions-textarea {
+  font-family: var(--font-mono);
+  min-height: 180px;
+  resize: vertical;
+}
+
+.instructions-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.instructions-budget {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 8px;
+  font-size: var(--size-xs);
+}
+
+.instructions-budget-ok {
+  background: color-mix(in srgb, var(--success, #16a34a) 14%, transparent);
+  color: var(--success, #16a34a);
+}
+
+.instructions-budget-danger {
+  background: color-mix(in srgb, var(--danger, #dc2626) 14%, transparent);
+  color: var(--danger, #dc2626);
+}
+
+.instructions-snippets {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+  font-size: var(--size-xs);
+}
+
+/* Settings / Profile → My defaults: a group of checkboxes. */
+.my-defaults {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  border: 0;
+}
+
+.my-defaults > legend {
+  padding: 0;
+}
+
+.my-defaults > .field-description {
+  margin: 0;
+}

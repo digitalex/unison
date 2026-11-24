@@ -4,6 +4,7 @@ import { participantName } from "./Account.jsx";
 import { hasUnseen, markSeen, useSeen } from "./activity.js";
 import { ApiError, api } from "./api.js";
 import { createCanvas } from "./isocan.js";
+import { useNewProjectIntegrations } from "./userSettings.js";
 import Button from "./ui/Button.jsx";
 import Checkbox from "./ui/Checkbox.jsx";
 import Dialog from "./ui/Dialog.jsx";
@@ -210,10 +211,18 @@ function mainRepo(ws) {
 // a URL you paste, or with "Create one" a new isocan canvas named after the
 // workspace, made in an isocan popup when you submit (#297).
 export function NewWorkspaceDialog({ account, navigate, onClose }) {
+  const defaultIntegrations = useNewProjectIntegrations(Boolean(account.user));
   const [form, setForm] = useState({ name: "", repo_url: "", canvas_url: "", me: participantName(account.user), emoji: "" });
   const [newCanvas, setNewCanvas] = useState(false);
+  const [canvasTouched, setCanvasTouched] = useState(false);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  useEffect(() => {
+    if (!canvasTouched && defaultIntegrations.includes("isocan") && !form.canvas_url) {
+      setNewCanvas(true);
+    }
+  }, [defaultIntegrations, canvasTouched, form.canvas_url]);
+  const repoPrompt = defaultIntegrations.includes("github");
   const field = (key) => ({ value: form[key], onChange: (e) => setForm({ ...form, [key]: e.target.value }) });
   const create = async (e) => {
     e.preventDefault();
@@ -244,7 +253,7 @@ export function NewWorkspaceDialog({ account, navigate, onClose }) {
         <Field label="Name">
           <Input required data-autofocus placeholder="Unison" {...field("name")} />
         </Field>
-        <Field label="Repository URL (optional)">
+        <Field label={repoPrompt ? "Repository URL" : "Repository URL (optional)"}>
           <Input type="url" placeholder="https://github.com/owner/repo" {...field("repo_url")} />
         </Field>
         <div className="new-workspace-canvas">
@@ -254,6 +263,7 @@ export function NewWorkspaceDialog({ account, navigate, onClose }) {
               placeholder="https://isocan.io/p/…"
               value={form.canvas_url}
               onChange={(e) => {
+                setCanvasTouched(true);
                 setNewCanvas(false);
                 setForm({ ...form, canvas_url: e.target.value });
               }}
@@ -262,6 +272,7 @@ export function NewWorkspaceDialog({ account, navigate, onClose }) {
           <Checkbox
             checked={newCanvas}
             onChange={(checked) => {
+              setCanvasTouched(true);
               setNewCanvas(checked);
               if (checked) setForm({ ...form, canvas_url: "" });
             }}

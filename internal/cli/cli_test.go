@@ -80,6 +80,7 @@ func newTestEnv(t *testing.T) *testEnv {
 	}
 	t.Setenv("UNISON_CREDENTIALS", filepath.Join(t.TempDir(), "credentials.json"))
 	t.Setenv("XDG_CONFIG_HOME", filepath.Join(t.TempDir(), "xdg"))
+	t.Setenv(defaultsDirEnv, filepath.Join(t.TempDir(), "no-defaults"))
 	e.url, e.ts = ts.URL, ts
 	return e
 }

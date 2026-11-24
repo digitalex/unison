@@ -161,6 +161,8 @@ func (s *Server) authRoutes() {
 	m.HandleFunc("POST /api/me/sessions/revoke-others", s.requireUser(s.revokeOtherSessions))
 	m.HandleFunc("GET /api/me/agents", s.requireUser(s.listMyAgents))
 	m.HandleFunc("POST /api/me/agents/{id}/revoke", s.requireUser(s.revokeAgent))
+	m.HandleFunc("GET /api/me/settings", s.requirePerson(s.getMySettings))
+	m.HandleFunc("PUT /api/me/settings", s.requirePerson(s.putMySettings))
 	m.HandleFunc("GET /api/me/devices", s.accountOnly(s.listDevices))
 	m.HandleFunc("POST /api/me/devices", s.accountOnly(s.registerDevice))
 	m.HandleFunc("DELETE /api/me/devices/{id}", s.accountOnly(s.deleteDevice))

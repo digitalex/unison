@@ -59,6 +59,7 @@ func (s *Store) DeleteAccount(ctx context.Context, userID int64) (*AccountDeleti
 			out.LeftWorkspaces = append(out.LeftWorkspaces, id)
 		}
 		for _, q := range []string{
+			`DELETE FROM user_settings WHERE user_id = ?`,
 			`DELETE FROM devices WHERE user_id = ?`,
 			`DELETE FROM app_codes WHERE user_id = ?`,
 			`DELETE FROM device_codes WHERE user_id = ?`,

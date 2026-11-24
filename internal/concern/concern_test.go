@@ -69,6 +69,8 @@ func TestFilter(t *testing.T) {
 		{"a webhook delivery", event("webhook.received", 0, store.DeliveryEvent{Event: "pull_request"}), true, true},
 		{"GitHub's setup ping", event("webhook.received", 0, store.DeliveryEvent{Event: "ping"}), false, false},
 		{"someone joining", event("participant.joined", alex, nil), true, false},
+		{"workspace instructions updated by Alex", event("workspace.instructions_updated", alex, store.InstructionsUpdatedEvent{HasInstructions: true}), true, true},
+		{"workspace instructions updated by self", event("workspace.instructions_updated", ada, store.InstructionsUpdatedEvent{HasInstructions: true}), false, false},
 		{"a reaction", event("message.reacted", alex, nil), false, false},
 		{"a message marked done", event("message.done", alex, nil), false, false},
 	}

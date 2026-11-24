@@ -80,9 +80,21 @@ Workspaces & identity:
   workspace stats                    how many workspaces this server has, and how
                                      many are new (counts only; no login needed)
   workspace create <name> [--repo URL]... [--canvas URL | --create-canvas]
+                          [--instructions TEXT | --instructions-file PATH]
+                          [--instructions-path REPO_FILE] [--no-defaults]
                                      (needs login; you become its first member;
                                      --create-canvas makes a new isocan canvas
-                                     with the isocan CLI and attaches it)
+                                     with the isocan CLI and attaches it;
+                                     applies ~/.unison/defaults/ unless
+                                     --no-defaults is passed)
+  defaults [show | path]             inspect local new-project defaults in
+                                     ~/.unison/defaults/ (UNISON_DEFAULTS_DIR)
+  workspace instructions [--headings | --section NAME]
+                                     read the workspace's opt-in agent instructions
+  workspace instructions set (--text TEXT | --file PATH | --clear) [--path REPO_FILE]
+                                     set or clear workspace instructions (- for stdin)
+  workspace instructions sync [--path REPO_FILE]
+                                     sync instructions from a repo-relative file
   workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
                 [--github-token T]   (--repo: the first repo; --product: where the
                                      product you build is deployed, "" removes
@@ -154,6 +166,9 @@ Accounts and invites:
   sessions revoke <id>|--others      sign out one session, or all but this one
   agents                             the agents you invited, across workspaces
   agents revoke <participant-id>     stop one of your agents for good
+  me defaults [show]                 your new-project integration defaults
+  me defaults set --integrations isocan,github
+                                     set your default integrations ("" clears)
   devices                            your iOS devices getting push notifications
   devices remove <id>                stop pushes to one of them
 
@@ -335,6 +350,10 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return serve(rest)
 	case "workspace", "ws":
 		return a.workspace(rest)
+	case "defaults":
+		return a.defaultsCmd(rest)
+	case "me":
+		return a.me(rest)
 	case "join":
 		return a.join(rest)
 	case "whoami":
@@ -585,13 +604,24 @@ func portAddr(port string) string {
 
 func (a *app) agentHelp() error {
 	var ws *store.Workspace
+	var inst *store.WorkspaceInstructions
 	if a.ws != "" {
 		var w store.Workspace
 		if err := a.client().do("GET", "/api/workspaces/"+a.ws, nil, &w); err == nil {
 			ws = &w
+			if w.HasInstructions || w.InstructionsPath != "" {
+				var wi store.WorkspaceInstructions
+				if err := a.client().do("GET", "/api/workspaces/"+a.ws+"/instructions", nil, &wi); err == nil {
+					inst = &wi
+				}
+			}
 		}
 	}
-	fmt.Fprint(a.out, guide.Doorway(a.server, ws, ""))
+	fmt.Fprint(a.out, guide.RenderDoorway(guide.DoorwayOptions{
+		Origin:       a.server,
+		Workspace:    ws,
+		Instructions: inst,
+	}))
 	return nil
 }
 
@@ -649,6 +679,8 @@ func (a *app) workspace(args []string) error {
 		return a.workspaceCreate(args)
 	case "set":
 		return a.workspaceSet(args)
+	case "instructions":
+		return a.workspaceInstructions(args)
 	case "delete", "rm":
 		return a.workspaceDelete(args)
 	case "repos":
@@ -733,6 +765,15 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 		token = "set"
 	}
 	a.printf("GitHub     token %s\n", token)
+	if ws.HasInstructions {
+		if ws.InstructionsPath != "" {
+			a.printf("Instructions set (%s; run `unison workspace instructions`)\n", ws.InstructionsPath)
+		} else {
+			a.printf("Instructions set (run `unison workspace instructions`)\n")
+		}
+	} else if ws.InstructionsPath != "" {
+		a.printf("Instructions path %s (run `unison workspace instructions sync`)\n", ws.InstructionsPath)
+	}
 }
 
 // reviews lists the open pull requests in the workspace's GitHub
@@ -990,6 +1031,10 @@ func (a *app) workspaceCreate(args []string) error {
 	})
 	canvas := fs.String("canvas", "", "isocan canvas URL")
 	createCanvas := fs.Bool("create-canvas", false, "make a new isocan canvas named after the workspace (needs the isocan CLI)")
+	instrText := fs.String("instructions", "", "opt-in workspace agent instructions (Markdown)")
+	instrFile := fs.String("instructions-file", "", "read workspace agent instructions from file (- for stdin)")
+	instrPath := fs.String("instructions-path", "", "repo-relative instructions file path (e.g. .unison/instructions.md)")
+	noDefaults := fs.Bool("no-defaults", false, "skip local defaults from ~/.unison/defaults")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -1000,31 +1045,112 @@ func (a *app) workspaceCreate(args []string) error {
 	if *createCanvas && *canvas != "" {
 		return fmt.Errorf("%w: --canvas and --create-canvas are alternatives: pass one", errUsage)
 	}
+	if *instrText != "" && *instrFile != "" {
+		return fmt.Errorf("%w: --instructions and --instructions-file cannot both be set", errUsage)
+	}
+
+	var (
+		defaults        *projectDefaults
+		defaultWarnings []string
+		appliedDefaults []string
+	)
+	if !*noDefaults {
+		defaults, defaultWarnings = loadProjectDefaults()
+	}
+
+	instructions := *instrText
+	if *instrFile != "" {
+		instructions, err = readInstructionsSource(*instrFile)
+		if err != nil {
+			return err
+		}
+	}
+	rawInstrPath := *instrPath
+	usedDefaultSettings := false
+	if strings.TrimSpace(rawInstrPath) == "" && defaults != nil && defaults.HasSettings && strings.TrimSpace(defaults.Settings.InstructionsPath) != "" {
+		rawInstrPath = defaults.Settings.InstructionsPath
+		usedDefaultSettings = true
+	}
+	instructionsPath, err := store.NormalizeInstructionsPath(rawInstrPath)
+	if err != nil {
+		return err
+	}
+	if instructions == "" && instructionsPath != "" && strings.TrimSpace(*instrPath) != "" {
+		if full, err := resolveRepoFile(instructionsPath); err == nil {
+			if b, err := os.ReadFile(full); err == nil {
+				instructions = string(b)
+			}
+		}
+	}
+	if instructions == "" && defaults != nil && defaults.HasInstructions {
+		instructions = defaults.Instructions
+		appliedDefaults = append(appliedDefaults, "instructions.md")
+	}
+	if instructions == "" && instructionsPath != "" {
+		if full, err := resolveRepoFile(instructionsPath); err == nil {
+			if b, err := os.ReadFile(full); err == nil {
+				instructions = string(b)
+			}
+		}
+	}
+
+	if len(repos) == 0 && defaults != nil && defaults.HasSettings && strings.TrimSpace(defaults.Settings.RepoURL) != "" {
+		repos = append(repos, store.RepoInput{URL: strings.TrimSpace(defaults.Settings.RepoURL)})
+		usedDefaultSettings = true
+	}
+	canvasURL := strings.TrimSpace(*canvas)
+	if !*createCanvas && canvasURL == "" && defaults != nil && defaults.HasSettings && strings.TrimSpace(defaults.Settings.CanvasURL) != "" {
+		canvasURL = strings.TrimSpace(defaults.Settings.CanvasURL)
+		usedDefaultSettings = true
+	}
+	if usedDefaultSettings {
+		appliedDefaults = append(appliedDefaults, "settings.json")
+	}
+
 	name := strings.Join(pos, " ")
 	if *createCanvas {
-		if *canvas, err = newCanvas(name); err != nil {
+		if canvasURL, err = newCanvas(name); err != nil {
 			return err
 		}
 	}
 	var raw json.RawMessage
-	body := map[string]any{"name": name, "repos": repos, "canvas_url": *canvas}
+	body := map[string]any{"name": name, "repos": repos, "canvas_url": canvasURL}
+	if instructions != "" {
+		body["instructions"] = instructions
+	}
+	if instructionsPath != "" {
+		body["instructions_path"] = instructionsPath
+	}
 	// Servers may limit creation to signed-in accounts (UNISON_CREATORS).
 	c := newClient(a.server, firstNonEmpty(a.userToken(), a.token))
 	if err := c.do("POST", "/api/workspaces", body, &raw); err != nil {
 		if *createCanvas {
 			// The canvas exists all the same: don't lose its address.
-			return fmt.Errorf("%w (the new canvas is %s)", err, *canvas)
+			return fmt.Errorf("%w (the new canvas is %s)", err, canvasURL)
 		}
 		return err
-	}
-	if a.jsonOut {
-		return a.printJSON(raw)
 	}
 	var ws store.Workspace
 	if err := json.Unmarshal(raw, &ws); err != nil {
 		return err
 	}
+	allWarnings := defaultWarnings
+	if defaults != nil && defaults.HasRoutines {
+		n, rWarnings := a.applyDefaultRoutines(ws.ID, defaults.Routines)
+		allWarnings = append(allWarnings, rWarnings...)
+		if n > 0 {
+			appliedDefaults = append(appliedDefaults, fmt.Sprintf("%d routine(s)", n))
+		}
+	}
+	if a.jsonOut {
+		a.printWarnings(allWarnings)
+		return a.printJSON(raw)
+	}
 	a.printWorkspace(&ws)
+	if len(appliedDefaults) > 0 {
+		a.printf("Applied defaults from %s: %s\n", defaults.Dir, strings.Join(appliedDefaults, ", "))
+	}
+	a.printWarnings(allWarnings)
 	joinFlag := ""
 	if a.userToken() != "" {
 		joinFlag = " --account"
@@ -2764,6 +2890,16 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		return describeMemberRemoved(people, who, e)
 	case e.Type == "workspace.updated":
 		return fmt.Sprintf("🛠  %s updated the workspace settings", who)
+	case e.Type == "workspace.instructions_updated":
+		var ev store.InstructionsUpdatedEvent
+		json.Unmarshal(e.Data, &ev)
+		if !ev.HasInstructions {
+			return fmt.Sprintf("📝 %s cleared workspace instructions", who)
+		}
+		if ev.CharCount > store.InstructionsInlineLimit {
+			return fmt.Sprintf("📝 %s updated workspace instructions (%d chars) — run `unison workspace instructions --headings`", who, ev.CharCount)
+		}
+		return fmt.Sprintf("📝 %s updated workspace instructions — run `unison workspace instructions`", who)
 	case strings.HasPrefix(e.Type, "comment."):
 		var ce store.CommentEvent
 		json.Unmarshal(e.Data, &ce)

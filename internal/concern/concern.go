@@ -67,6 +67,10 @@ func (f *Filter) Concerns(e store.Event) bool {
 		// except GitHub's setup ping.
 		var d store.DeliveryEvent
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
+	case e.Type == "workspace.instructions_updated":
+		// Workspace instructions changes wake even --mentions so agents pick up
+		// updated rules on their next lap.
+		return true
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
 		strings.HasPrefix(e.Type, "link."), strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."):
 		return !f.MentionsOnly

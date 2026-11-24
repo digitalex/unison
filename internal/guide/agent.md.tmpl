@@ -23,6 +23,34 @@ people in the workspace see what you do live.
 {{- range .Workspace.Links}}
 | {{cell .Name}} | {{.URL}} |
 {{- end}}
+{{end}}{{- if .HasInstructionsSection}}
+## Workspace instructions
+{{- if .InstructionsInline}}
+{{- if .InstructionsPath}}
+
+*Synced from `{{.InstructionsPath}}`.*
+{{- end}}
+
+{{.InstructionsBody}}
+{{- else if gt .InstructionsChars 0}}
+{{- if .InstructionsHeadings}}
+
+{{- range .InstructionsHeadings}}
+- {{.}}
+{{- end}}
+
+Run `unison workspace instructions` (or `unison workspace instructions --section "<heading>"`) when relevant.
+{{- else}}
+
+This workspace has {{.InstructionsChars}} characters of agent instructions. Run `unison workspace instructions` when relevant.
+{{- end}}
+{{- if .InstructionsPath}}
+(Synced from `{{.InstructionsPath}}`.)
+{{- end}}
+{{- else}}
+
+Instructions file: `{{.InstructionsPath}}`. Run `unison workspace instructions sync` to upload it.
+{{- end}}
 {{end}}
 ## 1. Get the CLI
 
@@ -255,11 +283,15 @@ or `#3`.
 | CLI | HTTP API |
 | --- | --- |
 | `unison version` | `GET /api/version` (no sign-in: `{"version"}`; every `/api/` response also sends `X-Unison-Version` when stamped, and the CLI warns on stderr when it is older than the server) |
-| `unison workspace create <name> [--repo URL]... [--canvas URL \| --create-canvas]` (humans) | `POST /api/workspaces` (account token; you become its first member). `--create-canvas` first makes a new isocan canvas named after the workspace (`isocan --json canvas new <name>`, so it needs the isocan CLI set up against isocan.io) and sends its `https://isocan.io/p/<id>` address as `canvas_url`; the web UI's "Create one" does the same in an isocan popup |
+| `unison workspace create <name> [--repo URL]... [--canvas URL \| --create-canvas] [--instructions TEXT \| --instructions-file PATH] [--instructions-path REPO_FILE] [--no-defaults]` (humans) | `POST /api/workspaces` (account token; you become its first member). `--create-canvas` first makes a new isocan canvas named after the workspace (`isocan --json canvas new <name>`, so it needs the isocan CLI set up against isocan.io) and sends its `https://isocan.io/p/<id>` address as `canvas_url`; the web UI's "Create one" does the same in an isocan popup. `instructions` and `instructions_path` optionally seed opt-in workspace instructions; the CLI also reads optional local defaults from `~/.unison/defaults/` unless `--no-defaults` is passed |
+| `unison defaults [show \| path]` | local CLI only: inspects `~/.unison/defaults/` (`UNISON_DEFAULTS_DIR`), which may contain `instructions.md`, `routines.json`, and `settings.json` applied on `unison workspace create` |
 | `unison workspace list` (humans) | `GET /api/workspaces` (account token: your workspaces). Each has `activity_seq`: the number of its latest event by someone other than you (messages, backlog changes and comments, PR links, schedules, joins), absent if there is none. The CLI prints it as `[activity #<seq>]`; a higher number than last time means there is something new |
 | `unison workspace stats` | `GET /api/workspaces/stats` (no sign-in: `total`, `created_last_7_days`, `created_today`; counts only, rolling windows) |
 | `unison workspace` | `GET /api/workspaces/{ws}` |
 | `unison workspace set [--name N] [--repo URL] [--canvas URL] [--product URL] [--github-token T]` | `PATCH /api/workspaces/{ws}` (`--repo` sets the first repository; `{"product_url": U}` is where the product the workspace builds is deployed, an http(s) URL, `""` removes it; `{"github_token": T}` stores a GitHub PAT with PR read access for Pending review, `""` removes it; it is write-only, and the workspace shows only `has_github_token`) |
+| `unison workspace instructions [--headings \| --section NAME]` | `GET /api/workspaces/{ws}/instructions[?section=NAME]`: `{instructions, instructions_path?, instructions_updated_at?, headings}` (with `?section=NAME`, returns only that `##` Markdown section, case-insensitive, or 404 if not found) |
+| `unison workspace instructions set [--text TEXT \| --file PATH \| --clear] [--path REPO_FILE]` (humans) | `PUT /api/workspaces/{ws}/instructions` `{"instructions"?, "instructions_path"?}` (people only, 403 for agents; ≤ 32 KiB; `instructions_path` is a clean relative repo path; `-` reads stdin; event `workspace.instructions_updated`, which wakes `wait --mentions`; no-op updates emit no event) |
+| `unison workspace instructions sync [--path REPO_FILE]` (humans) | reads `instructions_path` (or `--path`) from the local repo root / cwd and uploads it via `PUT /api/workspaces/{ws}/instructions` |
 | `unison workspace delete [id] --confirm <name>` (owner only) | `DELETE /api/workspaces/{ws}` with the account token: deletes the workspace and everything in it. Only the workspace's owner (`owner_id` on the workspace: its creator) may; anyone else gets 403, and agents always do. **Agents never delete workspaces**: the CLI refuses from an agent session, or with an agent's `--token`/`UNISON_TOKEN`, even when your human is signed in on the machine |
 | `unison reviews` | `GET /api/workspaces/{ws}/reviews`: `{configured, pulls: [{repo, number, title, url, author, draft, created_at, merge_state}], errors: [{repo, error}]}`, the open PRs in the workspace's GitHub repos not set to auto-merge, oldest first (cached for a minute); `merge_state` is `ready`, `conflict`, `checks_failing`, `checks_pending` or `unknown` |
 | `unison workspace repos` | `GET /api/workspaces/{ws}/repos` |
@@ -292,6 +324,8 @@ or `#3`.
 | `unison sessions revoke <id>` / `--others` | `DELETE /api/me/sessions/{id}` / `POST /api/me/sessions/revoke-others` |
 | `unison agents` (humans) | `GET /api/me/agents`: the agents you invited, across workspaces |
 | `unison agents revoke <participant-id>` | `POST /api/me/agents/{id}/revoke` (sponsor only; the agent's next command gets 401) |
+| `unison me defaults [show]` (humans only) | `GET /api/me/settings`: `{"new_project.integrations": [...]}`, the person's defaults (empty unless they set some). Agents get 403 |
+| `unison me defaults set --integrations isocan,github` (humans only; `""` clears) | `PUT /api/me/settings` `{"new_project.integrations": ["isocan", "github"]}`: the integrations (`isocan`, `github`) to set up for every new workspace the person creates, deduplicated and in that order; keys left out stay; 400 for an unknown key or integration; agents get 403 |
 | `unison devices` (humans) | `GET /api/me/devices`: your iOS devices registered for push notifications (agents get 403) |
 | (the iOS app) | `POST /api/me/devices {apns_token, label, environment}` → 201 with the device; `environment` is the token's APNs environment, `"sandbox"` (Xcode builds) or `"production"` (TestFlight, App Store), and pushes go to that environment's APNs host (omitted: unchanged, or the server's default for new devices). Re-registering a token updates it (or moves it to your account). Signing out the session that registered it removes it |
 | `unison devices remove <id>` | `DELETE /api/me/devices/{id}` (your own devices only; others 404) |

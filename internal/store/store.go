@@ -72,6 +72,12 @@ type Workspace struct {
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
+	// HasInstructions, InstructionsPath and InstructionsUpdatedAt summarize the
+	// workspace's opt-in agent instructions without shipping the full body in
+	// workspace listings; read the body via GetWorkspaceInstructions.
+	HasInstructions       bool   `json:"has_instructions,omitempty"`
+	InstructionsPath      string `json:"instructions_path,omitempty"`
+	InstructionsUpdatedAt int64  `json:"instructions_updated_at,omitempty"`
 	// ActivitySeq is the seq of the workspace's latest collaboration event
 	// by someone other than the caller (#300, see CollaborationTypes); 0
 	// if there is none. Filled in for workspace lists only.
@@ -267,14 +273,14 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // ---- Workspaces ----
 
-// workspaceCols are read by scanWorkspace; the last says whether a GitHub
-// token is set without reading it.
-const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
+// workspaceCols are read by scanWorkspace; the token and instructions flags
+// report presence without shipping the token or full instructions body.
+const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END, CASE WHEN COALESCE(instructions, '') = '' THEN 0 ELSE 1 END, COALESCE(instructions_path, ''), COALESCE(instructions_updated_at, 0)`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
-	var hasToken int64
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
+	var hasToken, hasInstructions int64
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken, &hasInstructions, &w.InstructionsPath, &w.InstructionsUpdatedAt); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -283,27 +289,51 @@ func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	w.Repos = []Repo{}
 	w.Links = []Link{}
 	w.HasGitHubToken = hasToken == 1
+	w.HasInstructions = hasInstructions == 1
 	return &w, nil
+}
+
+// NewWorkspace holds the parameters for creating a workspace, including
+// optional opt-in agent instructions.
+type NewWorkspace struct {
+	Name             string
+	RepoURL          string
+	CanvasURL        string
+	Repos            []RepoInput
+	Instructions     string
+	InstructionsPath string
 }
 
 // CreateWorkspace creates a workspace. repoURL (if set) becomes its first
 // repository, followed by repos.
 func (s *Store) CreateWorkspace(ctx context.Context, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
-	return s.createWorkspace(ctx, 0, name, repoURL, canvasURL, repos...)
+	return s.CreateWorkspaceWith(ctx, 0, NewWorkspace{Name: name, RepoURL: repoURL, CanvasURL: canvasURL, Repos: repos})
 }
 
 // CreateWorkspaceFor creates a workspace whose creator (a signed-in user)
 // becomes its first member and its owner, in the same transaction.
 func (s *Store) CreateWorkspaceFor(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
-	return s.createWorkspace(ctx, creatorID, name, repoURL, canvasURL, repos...)
+	return s.CreateWorkspaceWith(ctx, creatorID, NewWorkspace{Name: name, RepoURL: repoURL, CanvasURL: canvasURL, Repos: repos})
 }
 
-func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repoURL, canvasURL string, repos ...RepoInput) (*Workspace, []Event, error) {
-	name = strings.TrimSpace(name)
+// CreateWorkspaceWith creates a workspace with full options, including optional
+// opt-in instructions. When creatorID != 0, the creator becomes its first
+// member and owner in the same transaction.
+func (s *Store) CreateWorkspaceWith(ctx context.Context, creatorID int64, nw NewWorkspace) (*Workspace, []Event, error) {
+	name := strings.TrimSpace(nw.Name)
 	if name == "" {
 		return nil, nil, fmt.Errorf("%w: workspace name is required", ErrInvalid)
 	}
-	if u := strings.TrimSpace(repoURL); u != "" {
+	instructions, err := NormalizeInstructions(nw.Instructions)
+	if err != nil {
+		return nil, nil, err
+	}
+	instructionsPath, err := NormalizeInstructionsPath(nw.InstructionsPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	repos := append([]RepoInput(nil), nw.Repos...)
+	if u := strings.TrimSpace(nw.RepoURL); u != "" {
 		repos = append([]RepoInput{{URL: u}}, repos...)
 	}
 	id := "ws_" + randomHex(4)
@@ -313,8 +343,12 @@ func (s *Store) createWorkspace(ctx context.Context, creatorID int64, name, repo
 		owner = creatorID
 	}
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at, owner_user_id) VALUES (?, ?, '', ?, ?, ?)`,
-			id, name, strings.TrimSpace(canvasURL), log.now, owner); err != nil {
+		var instrUpdated int64
+		if instructions != "" || instructionsPath != "" {
+			instrUpdated = log.now
+		}
+		if _, err := t.Exec(`INSERT INTO workspaces (id, name, repo_url, canvas_url, created_at, owner_user_id, instructions, instructions_path, instructions_updated_at) VALUES (?, ?, '', ?, ?, ?, ?, ?, ?)`,
+			id, name, strings.TrimSpace(nw.CanvasURL), log.now, owner, instructions, instructionsPath, instrUpdated); err != nil {
 			return err
 		}
 		for _, in := range repos {

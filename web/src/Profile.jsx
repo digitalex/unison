@@ -3,6 +3,7 @@ import { Github, LogIn, Monitor, SquareTerminal } from "lucide-react";
 import { AppleLogo, Avatar, PROVIDER_LABELS, SignInOptions, primaryEmail } from "./Account.jsx";
 import { api } from "./api.js";
 import { SiteHeader } from "./Landing.jsx";
+import MyDefaults from "./settings/MyDefaults.jsx";
 import Notifications from "./settings/Notifications.jsx";
 import Button from "./ui/Button.jsx";
 
@@ -73,6 +74,9 @@ export default function Profile({ account, navigate }) {
           <>
             {error && <p role="alert" className="error-bar profile-error">Error: {error}</p>}
             <ProfileCard user={user} />
+            <Card id="my-defaults" title="My defaults" description="Preferences saved to your account, applied on any machine and in the CLI.">
+              <MyDefaults />
+            </Card>
             <Card id="notifications" title="Desktop notifications" description="Browser notifications on this device.">
               <Notifications />
             </Card>

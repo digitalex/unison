@@ -3,21 +3,32 @@ import ScreenHead from "../ui/ScreenHead.jsx";
 import Agents from "./Agents.jsx";
 import DangerZone from "./DangerZone.jsx";
 import General from "./General.jsx";
+import Instructions from "./Instructions.jsx";
 import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
+import MyDefaults from "./MyDefaults.jsx";
 import Repositories from "./Repositories.jsx";
 import Webhooks from "./Webhooks.jsx";
 
-// The sections, in order. Deep links: /w/{ws}/settings#<id>. Only the
-// workspace's own settings: personal ones (theme, desktop notifications)
-// are in your profile (/me) and the account menu (#131).
+// The sections, in order. Deep links: /w/{ws}/settings#<id>.
 const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name, its isocan design canvas and where its product is deployed." },
+  {
+    id: "instructions",
+    title: "Instructions",
+    description: "Optional Markdown instructions for agents joining this workspace. Short guides are inlined on join; longer ones are indexed by ## headings.",
+  },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. The owner can remove members and delete the workspace; anyone else can leave." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite an agent button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
   { id: "webhooks", title: "Webhooks", description: "Inbound webhooks (e.g. from GitHub). Each delivery wakes agents with your instructions." },
   { id: "agents", title: "Agents", description: "Agents that joined with a pass, and the member each one works for." },
+  {
+    id: "my-defaults",
+    title: "My defaults",
+    description: "Your own defaults for every new workspace you create. Saved to your account so the web UI and CLI agree.",
+    signedInOnly: true,
+  },
   { id: "danger", title: "Danger zone", description: "Irreversible actions for this workspace.", ownerOnly: true },
 ];
 
@@ -30,8 +41,9 @@ export default function SettingsPage({ workspace, members, invites, participants
   const scroller = useRef(null);
   // Only the workspace's owner sees the Danger zone (#296), deep links
   // (#danger) included.
-  const isOwner = Boolean(account.user) && account.user.id === workspace.owner_id;
-  const sections = SECTIONS.filter((s) => !s.ownerOnly || isOwner);
+  const signedIn = Boolean(account.user);
+  const isOwner = signedIn && account.user.id === workspace.owner_id;
+  const sections = SECTIONS.filter((s) => (!s.ownerOnly || isOwner) && (!s.signedInOnly || signedIn));
   const visible = useRef(sections);
   visible.current = sections;
 
@@ -67,6 +79,7 @@ export default function SettingsPage({ workspace, members, invites, participants
 
   const body = {
     general: <General workspace={workspace} call={call} onError={onError} />,
+    instructions: <Instructions workspace={workspace} call={call} onError={onError} />,
     members: (
       <Members members={members} invites={invites} account={account} ownerId={workspace.owner_id} call={call} onError={onError} navigate={navigate} />
     ),
@@ -74,6 +87,7 @@ export default function SettingsPage({ workspace, members, invites, participants
     repositories: <Repositories repos={workspace.repos || []} hasGitHubToken={Boolean(workspace.has_github_token)} call={call} onError={onError} />,
     webhooks: <Webhooks webhooks={webhooks} call={call} onError={onError} />,
     agents: <Agents participants={participants} />,
+    "my-defaults": signedIn && <MyDefaults />,
     danger: isOwner && <DangerZone workspace={workspace} call={call} onError={onError} navigate={navigate} />,
   };
 
