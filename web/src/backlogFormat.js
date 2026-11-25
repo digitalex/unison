@@ -38,6 +38,10 @@ export function useStableParticipants(participants) {
   return ref.current;
 }
 
+export function itemNum(item) {
+  return item?.number || item?.id || 0;
+}
+
 export function name(participants, id) {
   const p = participants.find((p) => p.id === id);
   return p ? `${p.emoji} ${p.name}` : `participant ${id}`;

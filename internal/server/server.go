@@ -927,7 +927,17 @@ func (s *Server) deleteItem(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	evs, err := s.store.DeleteItem(r.Context(), actor(r), id)
-	s.respond(w, http.StatusOK, map[string]any{"deleted": id}, evs, err)
+	resp := map[string]any{"deleted": id}
+	for _, ev := range evs {
+		if ev.Type == "backlog.deleted" {
+			var it store.Item
+			if json.Unmarshal(ev.Data, &it) == nil {
+				resp["id"] = it.ID
+				resp["number"] = it.DisplayNumber()
+			}
+		}
+	}
+	s.respond(w, http.StatusOK, resp, evs, err)
 }
 
 func (s *Server) moveItem(w http.ResponseWriter, r *http.Request) {

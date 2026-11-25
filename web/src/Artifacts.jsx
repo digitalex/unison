@@ -16,7 +16,7 @@ import {
   Upload,
 } from "lucide-react";
 import { ApiError, fetchArtifactBytes, replaceArtifact, uploadArtifact } from "./api.js";
-import { ago, name as participantLabel, submitOnModEnter } from "./backlogFormat.js";
+import { ago, itemNum, name as participantLabel, submitOnModEnter } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { itemLink, spaLink } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
@@ -272,6 +272,7 @@ function ArtifactListScreen({ artifacts, setArtifacts, items, participants, work
           <div className="artifact-list">
             {visible.map((art) => {
               const linkedItem = art.item_id ? items.find((it) => it.id === art.item_id) || art.item : null;
+              const linkedNum = art.item_number || itemNum(linkedItem) || art.item_id;
               const updater = actorDisplay(
                 art.updater_emoji || art.uploader_emoji,
                 art.updater_name || art.uploader_name,
@@ -294,10 +295,10 @@ function ArtifactListScreen({ artifacts, setArtifacts, items, participants, work
                       {art.item_id && (
                         <a
                           className="chip todo-link-chip"
-                          {...itemLink(art.item_id)}
-                          title={linkedItem?.title ? `#${art.item_id}: ${linkedItem.title}` : `Item #${art.item_id}`}
+                          {...itemLink(linkedNum)}
+                          title={linkedItem?.title ? `#${linkedNum}: ${linkedItem.title}` : `Item #${linkedNum}`}
                         >
-                          #{art.item_id}
+                          #{linkedNum}
                           {linkedItem?.title ? ` · ${linkedItem.title}` : ""}
                         </a>
                       )}
@@ -599,6 +600,7 @@ function ArtifactViewer({
   }
 
   const linkedItem = artifact.item_id ? items.find((it) => it.id === artifact.item_id) || artifact.item : null;
+  const linkedNum = artifact.item_number || itemNum(linkedItem) || artifact.item_id;
   const uploader = actorDisplay(artifact.uploader_emoji, artifact.uploader_name, artifact.uploaded_by, participants);
   const updater = actorDisplay(artifact.updater_emoji, artifact.updater_name, artifact.updated_by, participants);
   const hasCustomTitle = artifact.title && artifact.title !== artifact.name;
@@ -668,10 +670,10 @@ function ArtifactViewer({
           {artifact.item_id && (
             <a
               className="chip todo-link-chip"
-              {...itemLink(artifact.item_id)}
-              title={linkedItem?.title ? `#${artifact.item_id}: ${linkedItem.title}` : `Item #${artifact.item_id}`}
+              {...itemLink(linkedNum)}
+              title={linkedItem?.title ? `#${linkedNum}: ${linkedItem.title}` : `Item #${linkedNum}`}
             >
-              #{artifact.item_id}
+              #{linkedNum}
               {linkedItem?.title ? ` · ${linkedItem.title}` : ""}
             </a>
           )}
@@ -797,23 +799,29 @@ function ArtifactViewer({
 }
 
 export function UploadArtifactDialog({ workspaceId, token, items = [], initialItemId = 0, onClose, onUploaded }) {
+  const initialItemNum = useMemo(() => {
+    if (!initialItemId) return 0;
+    const match = items.find((it) => itemNum(it) === initialItemId) || items.find((it) => it.id === initialItemId);
+    return match ? itemNum(match) : initialItemId;
+  }, [items, initialItemId]);
+
   const [file, setFile] = useState(null);
   const [name, setName] = useState("");
   const [nameEdited, setNameEdited] = useState(false);
   const [title, setTitle] = useState("");
-  const [itemId, setItemId] = useState(initialItemId || 0);
+  const [itemId, setItemId] = useState(initialItemNum);
   const [busy, setBusy] = useState(false);
   const [err, setErr] = useState("");
   const fileInputRef = useRef(null);
 
   const selectableItems = useMemo(() => {
     const queued = items.filter((it) => it.status !== "done");
-    if (initialItemId && !queued.some((it) => it.id === initialItemId)) {
-      const extra = items.find((it) => it.id === initialItemId);
+    if (initialItemNum && !queued.some((it) => itemNum(it) === initialItemNum)) {
+      const extra = items.find((it) => itemNum(it) === initialItemNum || it.id === initialItemId);
       if (extra) return [extra, ...queued];
     }
     return queued;
-  }, [items, initialItemId]);
+  }, [items, initialItemNum, initialItemId]);
 
   const chooseFile = (picked) => {
     if (!picked) return;
@@ -895,8 +903,8 @@ export function UploadArtifactDialog({ workspaceId, token, items = [], initialIt
           <Select value={itemId} onChange={(e) => setItemId(Number(e.target.value))}>
             <option value={0}>None</option>
             {selectableItems.map((it) => (
-              <option key={it.id} value={it.id}>
-                #{it.id} — {it.title}
+              <option key={it.id} value={itemNum(it)}>
+                #{itemNum(it)} — {it.title}
               </option>
             ))}
           </Select>
@@ -917,18 +925,25 @@ export function UploadArtifactDialog({ workspaceId, token, items = [], initialIt
 }
 
 function EditArtifactMetaDialog({ artifact, items = [], onClose, onSave }) {
+  const initialItemNum = useMemo(() => {
+    if (!artifact.item_id) return 0;
+    if (artifact.item_number) return artifact.item_number;
+    const match = items.find((it) => it.id === artifact.item_id);
+    return match ? itemNum(match) : artifact.item_id;
+  }, [artifact.item_id, artifact.item_number, items]);
+
   const [title, setTitle] = useState(artifact.title === artifact.name ? "" : artifact.title || "");
-  const [itemId, setItemId] = useState(artifact.item_id || 0);
+  const [itemId, setItemId] = useState(initialItemNum);
   const [busy, setBusy] = useState(false);
 
   const selectableItems = useMemo(() => {
     const queued = items.filter((it) => it.status !== "done");
-    if (artifact.item_id && !queued.some((it) => it.id === artifact.item_id)) {
-      const extra = items.find((it) => it.id === artifact.item_id);
+    if (initialItemNum && !queued.some((it) => itemNum(it) === initialItemNum)) {
+      const extra = items.find((it) => itemNum(it) === initialItemNum || it.id === artifact.item_id);
       if (extra) return [extra, ...queued];
     }
     return queued;
-  }, [items, artifact.item_id]);
+  }, [items, initialItemNum, artifact.item_id]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -948,8 +963,8 @@ function EditArtifactMetaDialog({ artifact, items = [], onClose, onSave }) {
           <Select value={itemId} onChange={(e) => setItemId(Number(e.target.value))}>
             <option value={0}>None</option>
             {selectableItems.map((it) => (
-              <option key={it.id} value={it.id}>
-                #{it.id} — {it.title}
+              <option key={it.id} value={itemNum(it)}>
+                #{itemNum(it)} — {it.title}
               </option>
             ))}
           </Select>

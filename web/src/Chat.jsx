@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearDraft, getDraft, resolveImageUploadInDraft, setDraft } from "./chatDrafts.js";
 import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { itemNum } from "./backlogFormat.js";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
 import { MentionProvider, MentionTextarea } from "./mentions.jsx";
@@ -332,17 +333,18 @@ function ActivityLine({ event, participants }) {
   const [who, rest, item] = activityText(event, participants);
   const Icon = isRecurringRun(event) ? Repeat : ACTIVITY_ICONS[event.type] || ListChecks;
   const at = new Date(event.created_at);
+  const actNum = item ? itemNum(item) : 0;
   return (
     <div className={`activity activity-${event.type.replace(".", "-")}`} role="note">
       <span className="activity-pill">
         <Icon aria-hidden="true" />
         <span className="activity-text">
           <span className="activity-who">{who}</span> {rest}
-          {item?.id && (
+          {actNum > 0 && (
             <>
               {" "}
-              <a {...itemLink(item.id)}>
-                #{item.id} {item.title}
+              <a {...itemLink(actNum)}>
+                #{actNum} {item.title}
               </a>
             </>
           )}
@@ -494,10 +496,10 @@ function Composer({ workspaceId, parent, items, send: post, mention, onMentioned
       {
         body: sent,
         parent_id: parent?.id,
-        item_id: item?.id,
+        item_id: item ? itemNum(item) : undefined,
         action_required: wasNeedsAction && canAsk ? true : undefined,
       },
-      { item: item ? { id: item.id, title: item.title, status: item.status } : undefined },
+      { item: item ? { id: item.id, number: itemNum(item), title: item.title, status: item.status } : undefined },
     );
     if (!ok) {
       setText((t) => t || sent);
@@ -532,7 +534,7 @@ function Composer({ workspaceId, parent, items, send: post, mention, onMentioned
             onClick={() => setLinked(!linked)}
           >
             <ListChecks aria-hidden="true" />
-            {linked ? "Linked to" : "Link to"} #{mentionedItem.id} <span className="link-item-title">{mentionedItem.title}</span>
+            {linked ? "Linked to" : "Link to"} #{itemNum(mentionedItem)} <span className="link-item-title">{mentionedItem.title}</span>
           </button>
         ) : (
           <span className="hint">Enter to send · Shift+Enter for a new line</span>
@@ -557,11 +559,12 @@ function Composer({ workspaceId, parent, items, send: post, mention, onMentioned
   );
 }
 
-// itemMentioned is the first backlog item the text names as #id, if any.
+// itemMentioned is the first backlog item the text names as #number (or legacy #id), if any.
 function itemMentioned(text, items) {
   for (const m of text.matchAll(/(?:^|[^\w&/])#(\d+)\b/g)) {
     if (refersToPR(text.slice(Math.max(0, m.index - 16), m.index + m[0].indexOf("#")))) continue;
-    const item = items.find((it) => it.id === Number(m[1]));
+    const ref = Number(m[1]);
+    const item = items.find((it) => it.number === ref) || items.find((it) => it.id === ref);
     if (item) return item;
   }
   return null;
@@ -618,8 +621,8 @@ function Message({ message, onDone, isNew, participants, me, flashed, onReply, o
           <Markdown text={message.body} />
         </div>
         {message.item && (
-          <a className="chip msg-item" title={`About backlog item #${message.item.id}: ${message.item.title}`} {...itemLink(message.item.id)}>
-            <ListChecks aria-hidden="true" />#{message.item.id} <span className="msg-item-title">{message.item.title}</span>
+          <a className="chip msg-item" title={`About backlog item #${itemNum(message.item)}: ${message.item.title}`} {...itemLink(itemNum(message.item))}>
+            <ListChecks aria-hidden="true" />#{itemNum(message.item)} <span className="msg-item-title">{message.item.title}</span>
           </a>
         )}
         {message.action_required && <ActionLine message={message} participants={participants} me={me} asksMe={asksMe} needsMe={needsMe} onDone={onDone} />}

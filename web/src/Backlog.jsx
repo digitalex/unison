@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
-import { meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
+import { itemNum, meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
 import Kanban from "./Kanban.jsx";
 import { OPEN_ITEM } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
@@ -41,7 +41,7 @@ export default function Backlog({ section = null, sections = [], items, allItems
   );
   const moveTo = useCallback(
     (item, position) => {
-      if (position !== item.position) run("POST", `/backlog/${item.id}/move`, { position });
+      if (position !== item.position) run("POST", `/backlog/${itemNum(item)}/move`, { position });
     },
     [run],
   );
@@ -301,6 +301,7 @@ const BacklogRow = memo(function BacklogRow({
   hintId,
   onOpen,
 }) {
+  const num = itemNum(item);
   const queued = item.status !== "done";
   const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
   const classes = ["item", item.status];
@@ -309,7 +310,7 @@ const BacklogRow = memo(function BacklogRow({
   const open = (e) => {
     // Focus the title so closing the dialog returns focus to this row.
     e.currentTarget.querySelector(".row-title").focus();
-    onOpen(item.id);
+    onOpen(num);
   };
   return (
     <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status}>
@@ -320,7 +321,7 @@ const BacklogRow = memo(function BacklogRow({
               type="button"
               className="grip"
               data-grip={item.id}
-              aria-label={`Reorder #${item.id} ${item.title}`}
+              aria-label={`Reorder #${num} ${item.title}`}
               aria-describedby={hintId}
               aria-pressed={lifted}
               onPointerDown={(e) => {
@@ -336,7 +337,7 @@ const BacklogRow = memo(function BacklogRow({
           <span className="rank-number">{queued ? item.position : ""}</span>
         </span>
         <span className={`status ${item.status}`} title={item.status} />
-        <span className="item-id">#{item.id}</span>
+        <span className="item-id">#{num}</span>
         <RecurringMarker item={item} />
         <button type="button" className="row-title" aria-haspopup="dialog">
           {item.title}
@@ -375,7 +376,7 @@ const BacklogRow = memo(function BacklogRow({
         <span className="meta">{meta(item)}</span>
         {canStart && (
           <span className="row-actions" onClick={(e) => e.stopPropagation()}>
-            <Button title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${item.id}/start`)}>
+            <Button title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
               Start
             </Button>
           </span>
@@ -425,9 +426,10 @@ function useItemParam() {
   const [id, setId] = useState(itemFromURL);
   const pushDepth = useRef(0);
   const open = useCallback((next) => {
-    window.history.pushState(null, "", urlWithItem(next));
+    const nextNum = Number(next);
+    window.history.pushState(null, "", urlWithItem(nextNum));
     pushDepth.current += 1;
-    setId(next);
+    setId(nextNum);
   }, []);
   useEffect(() => {
     const onPop = () => {
@@ -460,7 +462,7 @@ function useItemParam() {
 // with a notice.
 function useOpenItem(openId, items, close, setNotice) {
   const seen = useRef(null);
-  const item = openId === null ? null : items.find((it) => it.id === openId);
+  const item = openId === null ? null : items.find((it) => it.number === openId) || items.find((it) => it.id === openId) || null;
   useEffect(() => {
     if (openId === null || item) {
       seen.current = item ? openId : null;
@@ -632,7 +634,7 @@ function useReorder(groups, moveTo) {
   }, []);
 
   const keyDown = useCallback((e, item, list) => {
-    const describe = (it, index, total) => `#${it.id} ${it.title}, position ${index + 1} of ${total}`;
+    const describe = (it, index, total) => `#${itemNum(it)} ${it.title}, position ${index + 1} of ${total}`;
     const curLifted = live.current.lifted;
     const idx = list.findIndex((it) => it.id === item.id);
     const isLifted = curLifted?.id === item.id;

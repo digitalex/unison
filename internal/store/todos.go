@@ -37,6 +37,7 @@ const (
 // TodoItem summarizes the backlog item a TODO is linked to.
 type TodoItem struct {
 	ID     int64  `json:"id"`
+	Number int64  `json:"number"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
 }
@@ -54,6 +55,7 @@ type Todo struct {
 	AssigneeName  string    `json:"assignee_name,omitempty"`
 	AssigneeEmoji string    `json:"assignee_emoji,omitempty"`
 	ItemID        *int64    `json:"item_id,omitempty"`
+	ItemNumber    int64     `json:"item_number,omitempty"`
 	Item          *TodoItem `json:"item,omitempty"`
 	PRURL         string    `json:"pr_url,omitempty"`
 	Status        string    `json:"status"`
@@ -111,7 +113,7 @@ const selectTodos = `SELECT t.id, t.workspace_id, t.title, t.body, t.creator_id,
 	ap.name, ap.emoji,
 	cp.name, cp.emoji,
 	dp.name, dp.emoji,
-	i.title, i.status
+	COALESCE(i.number, t.item_id), i.title, i.status
 	FROM todos t
 	JOIN participants ap ON ap.id = t.assignee_id
 	LEFT JOIN participants cp ON cp.id = t.creator_id
@@ -120,7 +122,7 @@ const selectTodos = `SELECT t.id, t.workspace_id, t.title, t.body, t.creator_id,
 
 func scanTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, error) {
 	var td Todo
-	var creatorID, itemID, snoozedUntil, doneByID, doneAt sql.NullInt64
+	var creatorID, itemID, itemNum, snoozedUntil, doneByID, doneAt sql.NullInt64
 	var creatorName, creatorEmoji, doneByName, doneByEmoji, itemTitle, itemStatus sql.NullString
 	dest := append([]any{
 		&td.ID, &td.WorkspaceID, &td.Title, &td.Body, &creatorID, &td.AssigneeID,
@@ -129,7 +131,7 @@ func scanTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, error) 
 		&td.AssigneeName, &td.AssigneeEmoji,
 		&creatorName, &creatorEmoji,
 		&doneByName, &doneByEmoji,
-		&itemTitle, &itemStatus,
+		&itemNum, &itemTitle, &itemStatus,
 	}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -144,7 +146,8 @@ func scanTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, error) 
 	}
 	if itemID.Valid {
 		td.ItemID = &itemID.Int64
-		td.Item = &TodoItem{ID: itemID.Int64, Title: itemTitle.String, Status: itemStatus.String}
+		td.ItemNumber = itemNum.Int64
+		td.Item = &TodoItem{ID: itemID.Int64, Number: itemNum.Int64, Title: itemTitle.String, Status: itemStatus.String}
 	}
 	if snoozedUntil.Valid {
 		td.SnoozedUntil = &snoozedUntil.Int64
@@ -278,16 +281,19 @@ func (s *Store) CreateTodo(ctx context.Context, actor *Participant, in TodoInput
 		if err != nil {
 			return err
 		}
+		var resolvedItemID *int64
 		if itemID != nil {
-			if _, err := getItem(t, actor.WorkspaceID, *itemID); errors.Is(err, ErrNotFound) {
+			it, err := getItem(t, actor.WorkspaceID, *itemID)
+			if errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("%w: there is no backlog item #%d in this workspace", ErrInvalid, *itemID)
 			} else if err != nil {
 				return err
 			}
+			resolvedItemID = &it.ID
 		}
 		id, err := t.insert(`INSERT INTO todos (workspace_id, title, body, creator_id, assignee_id, item_id, pr_url, status, created_at)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
-			actor.WorkspaceID, title, strings.TrimSpace(in.Body), actor.ID, assignee.ID, itemID, prURL, TodoStatusOpen, log.now)
+			actor.WorkspaceID, title, strings.TrimSpace(in.Body), actor.ID, assignee.ID, resolvedItemID, prURL, TodoStatusOpen, log.now)
 		if err != nil {
 			return err
 		}
@@ -337,12 +343,13 @@ func (s *Store) UpdateTodo(ctx context.Context, actor *Participant, id int64, p 
 			} else if *p.ItemID < 0 {
 				return fmt.Errorf("%w: item_id must be >= 0", ErrInvalid)
 			} else {
-				if _, err := getItem(t, actor.WorkspaceID, *p.ItemID); errors.Is(err, ErrNotFound) {
+				it, err := getItem(t, actor.WorkspaceID, *p.ItemID)
+				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("%w: there is no backlog item #%d in this workspace", ErrInvalid, *p.ItemID)
 				} else if err != nil {
 					return err
 				}
-				v := *p.ItemID
+				v := it.ID
 				itemID = &v
 			}
 		}
@@ -385,7 +392,7 @@ func todoStatusWhere(status string, now int64) (string, []any, error) {
 	}
 }
 
-const selectNotifyItems = `SELECT i.id, i.workspace_id, i.title, i.body, i.created_by, i.assignee_id,
+const selectNotifyItems = `SELECT i.id, COALESCE(i.number, i.id), i.workspace_id, i.title, i.body, i.created_by, i.assignee_id,
 	i.status, i.close_note, i.created_at, i.closed_at,
 	s.id, s.slug, s.name, s.icon,
 	i.choices_json, i.close_on_answer, i.answered_choice, i.answered_by_id, i.answered_at,
@@ -396,13 +403,13 @@ const selectNotifyItems = `SELECT i.id, i.workspace_id, i.title, i.body, i.creat
 
 func scanNotifyTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, error) {
 	var td Todo
-	var createdBy int64
+	var itemNum, createdBy int64
 	var itStatus, choicesJSON string
 	var closedAt, answeredByID, answeredAt sql.NullInt64
 	var creatorName, creatorEmoji sql.NullString
 	var secID int64
 	dest := append([]any{
-		&td.ID, &td.WorkspaceID, &td.Title, &td.Body, &createdBy, &td.AssigneeID,
+		&td.ID, &itemNum, &td.WorkspaceID, &td.Title, &td.Body, &createdBy, &td.AssigneeID,
 		&itStatus, &td.DoneNote, &td.CreatedAt, &closedAt,
 		&secID, &td.SectionSlug, &td.SectionName, &td.SectionIcon,
 		&choicesJSON, &td.CloseOnAnswer, &td.AnsweredChoice, &answeredByID, &answeredAt,
@@ -420,7 +427,8 @@ func scanNotifyTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, e
 	td.CreatorEmoji = creatorEmoji.String
 	itemID := td.ID
 	td.ItemID = &itemID
-	td.Item = &TodoItem{ID: itemID, Title: td.Title, Status: itStatus}
+	td.ItemNumber = itemNum
+	td.Item = &TodoItem{ID: itemID, Number: itemNum, Title: td.Title, Status: itStatus}
 	if itStatus == StatusDone {
 		td.Status = TodoStatusDone
 	} else {
@@ -556,7 +564,7 @@ func (s *Store) ListUserTodos(ctx context.Context, userID int64, status string) 
 		ap.name, ap.emoji,
 		cp.name, cp.emoji,
 		dp.name, dp.emoji,
-		i.title, i.status,
+		COALESCE(i.number, t.item_id), i.title, i.status,
 		w.name
 		FROM todos t
 		JOIN workspaces w ON w.id = t.workspace_id

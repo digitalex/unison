@@ -153,6 +153,7 @@ type NewMessage struct {
 // MessageItem is the backlog item a message is about, in brief.
 type MessageItem struct {
 	ID     int64  `json:"id"`
+	Number int64  `json:"number"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
 }
@@ -165,9 +166,11 @@ const (
 )
 
 // Item is a backlog item. Open and in-progress items are ordered by Position
-// (1 = highest priority); done items have Position 0.
+// (1 = highest priority); done items have Position 0. Number is sequential
+// per workspace starting at 1 (#920); ID is the internal database primary key.
 type Item struct {
 	ID             int64  `json:"id"`
+	Number         int64  `json:"number"`
 	WorkspaceID    string `json:"workspace_id"`
 	Title          string `json:"title"`
 	Body           string `json:"body"`
@@ -200,6 +203,17 @@ type Item struct {
 	PRs          []ItemPR `json:"prs"`
 	CommentCount int      `json:"comment_count"`
 	MessageCount int      `json:"message_count"`
+}
+
+// DisplayNumber returns the item's per-workspace number, falling back to ID.
+func (it *Item) DisplayNumber() int64 {
+	if it == nil {
+		return 0
+	}
+	if it.Number > 0 {
+		return it.Number
+	}
+	return it.ID
 }
 
 // Event records a change in a workspace. Seq is globally increasing.
@@ -956,14 +970,14 @@ func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch Par
 // ---- Chat ----
 
 // selectMessages selects messages (alias m) with the item each is about.
-const selectMessages = `SELECT m.id, m.workspace_id, m.author_id, m.parent_id, m.body, m.created_at, m.item_id, i.title, i.status
+const selectMessages = `SELECT m.id, m.workspace_id, m.author_id, m.parent_id, m.body, m.created_at, m.item_id, COALESCE(i.number, m.item_id), i.title, i.status
 	FROM messages m LEFT JOIN items i ON i.id = m.item_id`
 
 func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	var m Message
-	var parent, item sql.NullInt64
+	var parent, item, itemNum sql.NullInt64
 	var title, status sql.NullString
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt, &item, &title, &status); err != nil {
+	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt, &item, &itemNum, &title, &status); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -974,7 +988,7 @@ func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	}
 	if item.Valid {
 		m.ItemID = &item.Int64
-		m.Item = &MessageItem{ID: item.Int64, Title: title.String, Status: status.String}
+		m.Item = &MessageItem{ID: item.Int64, Number: itemNum.Int64, Title: title.String, Status: status.String}
 	}
 	return &m, nil
 }
@@ -1023,6 +1037,7 @@ func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (
 				parentID = parent.ParentID
 			}
 		}
+		var resolvedItemID *int64
 		var about *MessageItem
 		if itemID != nil {
 			it, err := getItem(t, author.WorkspaceID, *itemID)
@@ -1031,14 +1046,15 @@ func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (
 			} else if err != nil {
 				return err
 			}
-			about = &MessageItem{ID: it.ID, Title: it.Title, Status: it.Status}
+			resolvedItemID = &it.ID
+			about = &MessageItem{ID: it.ID, Number: it.DisplayNumber(), Title: it.Title, Status: it.Status}
 		}
 		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at, item_id) VALUES (?, ?, ?, ?, ?, ?)`, "id",
-			author.WorkspaceID, author.ID, parentID, body, log.now, itemID)
+			author.WorkspaceID, author.ID, parentID, body, log.now, resolvedItemID)
 		if err != nil {
 			return err
 		}
-		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: itemID, Item: about}
+		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: resolvedItemID, Item: about}
 		if msg.ActionRequired {
 			if err := addActions(t, m); err != nil {
 				return err
@@ -1103,17 +1119,15 @@ func (s *Store) withDetails(ctx context.Context, wsID string) func([]Message, er
 	}
 }
 
-// ItemMessages returns the chat messages about a backlog item, oldest
-// first, or ErrNotFound when the workspace has no such item.
+// ItemMessages returns the chat messages about a backlog item (resolved by
+// per-workspace number or legacy global ID), oldest first, or ErrNotFound
+// when the workspace has no such item.
 func (s *Store) ItemMessages(ctx context.Context, wsID string, itemID int64) ([]Message, error) {
-	var n int
-	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE workspace_id = ? AND id = ?`, wsID, itemID).Scan(&n); err != nil {
+	realID, err := s.ResolveItemID(ctx, wsID, itemID)
+	if err != nil {
 		return nil, err
 	}
-	if n == 0 {
-		return nil, ErrNotFound
-	}
-	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, itemID)))
+	return s.withDetails(ctx, wsID)(scanMessages(s.db.QueryContext(ctx, selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.id`, wsID, realID)))
 }
 
 // ---- Events ----

@@ -85,7 +85,14 @@ func (a *app) artifactList(args []string) error {
 	for _, art := range list {
 		itemTag := ""
 		if art.ItemID != nil {
-			itemTag = fmt.Sprintf("  [item #%d]", *art.ItemID)
+			num := art.ItemNumber
+			if num <= 0 && art.Item != nil && art.Item.Number > 0 {
+				num = art.Item.Number
+			}
+			if num <= 0 {
+				num = *art.ItemID
+			}
+			itemTag = fmt.Sprintf("  [item #%d]", num)
 		}
 		titlePart := ""
 		if art.Title != "" && art.Title != art.Name {

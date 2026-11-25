@@ -249,9 +249,24 @@ func todoState(td *store.Todo) string {
 	return fmt.Sprintf("[open → %s]", who)
 }
 
+func todoItemNum(td *store.Todo) int64 {
+	if td.ItemNumber > 0 {
+		return td.ItemNumber
+	}
+	if td.Item != nil && td.Item.Number > 0 {
+		return td.Item.Number
+	}
+	if td.ItemID != nil {
+		return *td.ItemID
+	}
+	return td.ID
+}
+
 func todoLine(td *store.Todo) string {
 	var extras []string
+	rowID := td.ID
 	if td.Kind == store.TodoKindSectionItem {
+		rowID = todoItemNum(td)
 		if td.SectionName != "" {
 			extras = append(extras, fmt.Sprintf("[section: %s]", td.SectionName))
 		}
@@ -261,7 +276,7 @@ func todoLine(td *store.Todo) string {
 			extras = append(extras, fmt.Sprintf("[choices: %s]", strings.Join(td.Choices, " | ")))
 		}
 	} else if td.ItemID != nil {
-		extras = append(extras, fmt.Sprintf("[item #%d]", *td.ItemID))
+		extras = append(extras, fmt.Sprintf("[item #%d]", todoItemNum(td)))
 	}
 	if td.PRURL != "" {
 		extras = append(extras, td.PRURL)
@@ -270,7 +285,7 @@ func todoLine(td *store.Todo) string {
 	if len(extras) > 0 {
 		tail = "  " + strings.Join(extras, " ")
 	}
-	return fmt.Sprintf("#%-4d %-36s %s%s", td.ID, td.Title, todoState(td), tail)
+	return fmt.Sprintf("#%-4d %-36s %s%s", rowID, td.Title, todoState(td), tail)
 }
 
 func (a *app) printTodoDetail(td *store.Todo) {
@@ -280,10 +295,11 @@ func (a *app) printTodoDetail(td *store.Todo) {
 		a.printf("Created   by %s, %s\n", todoPersonLabel(td.CreatorEmoji, td.CreatorName, *td.CreatorID), ago(td.CreatedAt))
 	}
 	if td.ItemID != nil {
+		num := todoItemNum(td)
 		if td.Item != nil && td.Item.Title != "" {
-			a.printf("Item      #%d %s\n", *td.ItemID, td.Item.Title)
+			a.printf("Item      #%d %s\n", num, td.Item.Title)
 		} else {
-			a.printf("Item      #%d\n", *td.ItemID)
+			a.printf("Item      #%d\n", num)
 		}
 	}
 	if td.PRURL != "" {

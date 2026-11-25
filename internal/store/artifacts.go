@@ -25,6 +25,7 @@ const (
 // ArtifactItem summarizes the backlog item an artifact is attached to.
 type ArtifactItem struct {
 	ID     int64  `json:"id"`
+	Number int64  `json:"number"`
 	Title  string `json:"title"`
 	Status string `json:"status"`
 }
@@ -40,6 +41,7 @@ type Artifact struct {
 	Size          int64         `json:"size"`
 	SHA256        string        `json:"sha256"`
 	ItemID        *int64        `json:"item_id,omitempty"`
+	ItemNumber    int64         `json:"item_number,omitempty"`
 	Item          *ArtifactItem `json:"item,omitempty"`
 	UploadedBy    *int64        `json:"uploaded_by,omitempty"`
 	UploaderName  string        `json:"uploader_name,omitempty"`
@@ -176,7 +178,7 @@ const selectArtifactsMeta = `SELECT a.id, a.workspace_id, a.name, a.title, a.mim
 	a.item_id, a.uploaded_by, a.updated_by, a.created_at, a.updated_at, a.version,
 	up.name, up.emoji,
 	ed.name, ed.emoji,
-	i.title, i.status
+	COALESCE(i.number, a.item_id), i.title, i.status
 	FROM artifacts a
 	LEFT JOIN participants up ON up.id = a.uploaded_by
 	LEFT JOIN participants ed ON ed.id = a.updated_by
@@ -184,14 +186,14 @@ const selectArtifactsMeta = `SELECT a.id, a.workspace_id, a.name, a.title, a.mim
 
 func scanArtifact(row interface{ Scan(...any) error }, extra ...any) (*Artifact, error) {
 	var a Artifact
-	var itemID, uploadedBy, updatedBy sql.NullInt64
+	var itemID, itemNum, uploadedBy, updatedBy sql.NullInt64
 	var uploaderName, uploaderEmoji, updaterName, updaterEmoji, itemTitle, itemStatus sql.NullString
 	dest := append([]any{
 		&a.ID, &a.WorkspaceID, &a.Name, &a.Title, &a.MimeType, &a.Size, &a.SHA256,
 		&itemID, &uploadedBy, &updatedBy, &a.CreatedAt, &a.UpdatedAt, &a.Version,
 		&uploaderName, &uploaderEmoji,
 		&updaterName, &updaterEmoji,
-		&itemTitle, &itemStatus,
+		&itemNum, &itemTitle, &itemStatus,
 	}, extra...)
 	if err := row.Scan(dest...); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -201,7 +203,8 @@ func scanArtifact(row interface{ Scan(...any) error }, extra ...any) (*Artifact,
 	}
 	if itemID.Valid {
 		a.ItemID = &itemID.Int64
-		a.Item = &ArtifactItem{ID: itemID.Int64, Title: itemTitle.String, Status: itemStatus.String}
+		a.ItemNumber = itemNum.Int64
+		a.Item = &ArtifactItem{ID: itemID.Int64, Number: itemNum.Int64, Title: itemTitle.String, Status: itemStatus.String}
 	}
 	if uploadedBy.Valid {
 		a.UploadedBy = &uploadedBy.Int64
@@ -277,16 +280,19 @@ func (s *Store) AddArtifact(ctx context.Context, actor *Participant, in Artifact
 		if !errors.Is(err, sql.ErrNoRows) {
 			return err
 		}
+		var resolvedItemID *int64
 		if itemID != nil {
-			if _, err := getItem(t, actor.WorkspaceID, *itemID); errors.Is(err, ErrNotFound) {
+			it, err := getItem(t, actor.WorkspaceID, *itemID)
+			if errors.Is(err, ErrNotFound) {
 				return fmt.Errorf("%w: there is no backlog item #%d in this workspace", ErrInvalid, *itemID)
 			} else if err != nil {
 				return err
 			}
+			resolvedItemID = &it.ID
 		}
 		_, err = t.insert(`INSERT INTO artifacts (workspace_id, name, title, mime_type, size, sha256, data, item_id, uploaded_by, updated_by, created_at, updated_at, version)
 			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`, "id",
-			actor.WorkspaceID, name, title, mimeType, int64(len(in.Data)), sum, in.Data, itemID, actor.ID, actor.ID, log.now, log.now)
+			actor.WorkspaceID, name, title, mimeType, int64(len(in.Data)), sum, in.Data, resolvedItemID, actor.ID, actor.ID, log.now, log.now)
 		if err != nil {
 			if isUniqueViolation(err) {
 				return fmt.Errorf("%w: artifact %q already exists in this workspace (use `unison artifact update %s` to replace it)", ErrConflict, name, name)
@@ -341,12 +347,13 @@ func (s *Store) UpdateArtifact(ctx context.Context, actor *Participant, name str
 			} else if *p.ItemID < 0 {
 				return fmt.Errorf("%w: item_id must be >= 0", ErrInvalid)
 			} else {
-				if _, err := getItem(t, actor.WorkspaceID, *p.ItemID); errors.Is(err, ErrNotFound) {
+				it, err := getItem(t, actor.WorkspaceID, *p.ItemID)
+				if errors.Is(err, ErrNotFound) {
 					return fmt.Errorf("%w: there is no backlog item #%d in this workspace", ErrInvalid, *p.ItemID)
 				} else if err != nil {
 					return err
 				}
-				v := *p.ItemID
+				v := it.ID
 				itemID = &v
 			}
 		}
@@ -380,7 +387,8 @@ func (s *Store) UpdateArtifact(ctx context.Context, actor *Participant, name str
 }
 
 // ListArtifacts lists artifact metadata in wsID (without raw bytes), ordered
-// newest updated_at first, optionally filtered by itemID (> 0).
+// newest updated_at first, optionally filtered by itemID (> 0, resolved by
+// per-workspace number or legacy global ID).
 func (s *Store) ListArtifacts(ctx context.Context, wsID string, itemID int64) ([]Artifact, error) {
 	if itemID < 0 {
 		return nil, fmt.Errorf("%w: item_id must be >= 0", ErrInvalid)
@@ -388,8 +396,15 @@ func (s *Store) ListArtifacts(ctx context.Context, wsID string, itemID int64) ([
 	q := selectArtifactsMeta + ` WHERE a.workspace_id = ?`
 	args := []any{wsID}
 	if itemID > 0 {
+		realID, err := s.ResolveItemID(ctx, wsID, itemID)
+		if errors.Is(err, ErrNotFound) {
+			return []Artifact{}, nil
+		}
+		if err != nil {
+			return nil, err
+		}
 		q += ` AND a.item_id = ?`
-		args = append(args, itemID)
+		args = append(args, realID)
 	}
 	q += ` ORDER BY a.updated_at DESC, a.id DESC`
 	return scanArtifacts(s.db.QueryContext(ctx, q, args...))
@@ -418,7 +433,7 @@ func (s *Store) GetArtifact(ctx context.Context, wsID, name string) (*Artifact, 
 		a.item_id, a.uploaded_by, a.updated_by, a.created_at, a.updated_at, a.version,
 		up.name, up.emoji,
 		ed.name, ed.emoji,
-		i.title, i.status,
+		COALESCE(i.number, a.item_id), i.title, i.status,
 		a.data
 		FROM artifacts a
 		LEFT JOIN participants up ON up.id = a.uploaded_by

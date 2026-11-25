@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Play, Plus, Repeat, Trash2 } from "lucide-react";
-import { submitOnModEnter } from "./backlogFormat.js";
+import { itemNum, submitOnModEnter } from "./backlogFormat.js";
 import { itemLink } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import Button from "./ui/Button.jsx";
@@ -109,11 +109,11 @@ export default function Recurring({ schedules, setSchedules, call, onError, head
             <span>
               {ran.added ? (
                 <>
-                  Added <a {...itemLink(ran.item.id)}>#{ran.item.id}</a> to the top of the backlog.
+                  Added <a {...itemLink(itemNum(ran.item))}>#{itemNum(ran.item)}</a> to the top of the backlog.
                 </>
               ) : (
                 <>
-                  <a {...itemLink(ran.item.id)}>#{ran.item.id}</a> from this recurring task is still open, so the run was noted on it.
+                  <a {...itemLink(itemNum(ran.item))}>#{itemNum(ran.item)}</a> from this recurring task is still open, so the run was noted on it.
                 </>
               )}
             </span>

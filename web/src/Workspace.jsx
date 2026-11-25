@@ -13,7 +13,7 @@ import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
-import { ago, useStableParticipants } from "./backlogFormat.js";
+import { ago, itemNum, useStableParticipants } from "./backlogFormat.js";
 import Ideas from "./Ideas.jsx";
 import Recurring from "./Recurring.jsx";
 import Todos, { isTodoActive, withTodo } from "./Todos.jsx";
@@ -426,7 +426,9 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   };
   // Item events carry the item (comment events too, as data.item).
   const applyItemEvent = ({ type, data }) => {
-    if (type === "backlog.deleted" && data?.id) return setBacklog((list) => list.filter((it) => it.id !== data.id));
+    if (type === "backlog.deleted" && (data?.id || data?.number)) {
+      return setBacklog((list) => list.filter((it) => !(data.id && it.id === data.id) && !(data.number && it.number === data.number)));
+    }
     const it = type.startsWith("comment.") ? data?.item : data;
     if ((type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) && it?.id) setBacklog((list) => withItem(list, it));
   };
@@ -434,8 +436,9 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     if (!type.startsWith("message.") || !data?.id) return;
     setMessages((list) => withMessage(list, data));
     // A message about an item changes that item's message count.
-    if (type === "message.created" && data.item_id) {
-      call("GET", `/backlog/${data.item_id}`).then((it) => setBacklog((list) => withItem(list, it)), refused);
+    const itemRef = data.item?.number || data.item_id;
+    if (type === "message.created" && itemRef) {
+      call("GET", `/backlog/${itemRef}`).then((it) => setBacklog((list) => withItem(list, it)), refused);
     }
     // A reply can mark its thread's first message done, which has no event
     // of its own: refetch just that message when it asks people to act.
@@ -821,10 +824,12 @@ function useScreens(id, view, sectionSlug, navigate, backlogNow, sectionsNow) {
   useEffect(() => {
     const onOpenItem = (e) => {
       const targetId = Number(e.detail);
-      const it = backlogNow?.current?.find((x) => x.id === targetId);
+      const list = backlogNow?.current || [];
+      const it = list.find((x) => x.number === targetId) || list.find((x) => x.id === targetId);
       const sec = it?.section_id && sectionsNow?.current?.find((s) => s.id === it.section_id);
       const targetScreen = sec ? `s/${sec.slug}` : "backlog";
-      if (current.current !== targetScreen) show(targetScreen, `?item=${e.detail}`);
+      const qItem = it ? itemNum(it) : e.detail;
+      if (current.current !== targetScreen) show(targetScreen, `?item=${qItem}`);
     };
     window.addEventListener(OPEN_ITEM, onOpenItem);
     return () => window.removeEventListener(OPEN_ITEM, onOpenItem);

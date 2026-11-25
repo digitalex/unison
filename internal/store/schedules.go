@@ -309,7 +309,7 @@ func runOnce(t *tx, log *eventLog, sc *Schedule, missNote string, quiet bool) (*
 				return nil, false, err
 			}
 			if noted > 0 {
-				it, err := getItem(t, sc.WorkspaceID, open)
+				it, err := getItemByID(t, sc.WorkspaceID, open)
 				return it, false, err
 			}
 		}
@@ -332,10 +332,11 @@ func missedRun(t *tx, log *eventLog, creator *Participant, itemID int64, note st
 		return nil, err
 	}
 	c.ID = id
-	it, err := getItem(t, creator.WorkspaceID, itemID)
+	it, err := getItemByID(t, creator.WorkspaceID, itemID)
 	if err != nil {
 		return nil, err
 	}
+	c.ItemNumber = it.DisplayNumber()
 	// The note is by the creator, the event by the system (see addItem).
 	return it, log.add(creator.WorkspaceID, "comment.added", 0, CommentEvent{Comment: c, Item: it})
 }
