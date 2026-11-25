@@ -1,6 +1,7 @@
 import { useState } from "react";
 import Button from "../ui/Button.jsx";
-import { notifySupported, useNotifyPref } from "../notify.js";
+import Checkbox from "../ui/Checkbox.jsx";
+import { NOTIFY_EVENTS, notifySupported, useNotifyPref } from "../notify.js";
 
 // What to check when the browser shows a notification that never reaches
 // the screen: the operating system decides last.
@@ -30,9 +31,9 @@ function showTestNotification() {
   });
 }
 
-// Settings → Notifications: desktop notifications for mentions, actions, and joins.
+// Settings → Notifications: master desktop notification switch and per-event toggles (#193).
 export default function Notifications() {
-  const [on, turnOn, turnOff] = useNotifyPref();
+  const [on, turnOn, turnOff, eventPrefs, setEventPref] = useNotifyPref();
   const [testStatus, setTestStatus] = useState("");
   const blocked = notifySupported && Notification.permission === "denied";
 
@@ -62,6 +63,8 @@ export default function Notifications() {
     );
   }
 
+  const enabledCount = NOTIFY_EVENTS.filter((ev) => eventPrefs[ev.id]).length;
+
   return (
     <div className="notify-settings">
       <div className="account-theme">
@@ -82,14 +85,40 @@ export default function Notifications() {
         )}
       </div>
       <p className="field-description">
-        Notifications appear while this tab is in the background for @mentions, messages asking you to act, and when someone joins.
+        Notifications are skipped for your own actions and whenever you are already viewing the relevant screen.
       </p>
       {blocked && (
         <p className="field-description muted">
           Notifications are currently blocked. To enable them, open your browser's site settings or permissions for this site and allow notifications.
         </p>
       )}
-      <div className="actions-row" style={{ marginTop: "0.75rem" }}>
+      {!blocked && !on && (
+        <p className="field-description muted">
+          Turn on desktop notifications above to receive browser alerts for the selected events below.
+        </p>
+      )}
+
+      <div className={on ? "notify-events" : "notify-events notify-events-inactive"} role="group" aria-label="Notification events">
+        {NOTIFY_EVENTS.map((ev) => (
+          <div key={ev.id} className="notify-event-item">
+            <Checkbox
+              checked={Boolean(eventPrefs[ev.id])}
+              onChange={(next) => setEventPref(ev.id, Boolean(next))}
+            >
+              {ev.label}
+            </Checkbox>
+            <p className="field-description notify-event-desc">{ev.description}</p>
+          </div>
+        ))}
+      </div>
+
+      {on && enabledCount === 0 && (
+        <p className="field-description muted">
+          No events are selected — check one or more events above to receive notifications.
+        </p>
+      )}
+
+      <div className="actions-row notify-test-row">
         <Button type="button" variant="secondary" onClick={sendTest} disabled={blocked}>
           Send test notification
         </Button>

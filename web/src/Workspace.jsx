@@ -10,7 +10,7 @@ import { GatePage, JoinForm } from "./Gate.jsx";
 import { LinkDialog } from "./Links.jsx";
 import MeDialog from "./MeDialog.jsx";
 import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
-import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
+import { notifySupported, useNotifier } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
 import { ago, itemNum, useStableParticipants } from "./backlogFormat.js";
@@ -18,6 +18,7 @@ import Ideas from "./Ideas.jsx";
 import Recurring from "./Recurring.jsx";
 import Todos, { isTodoActive, withTodo } from "./Todos.jsx";
 import { repoName } from "./repos.js";
+import { NotifyRow } from "./settings/Notifications.jsx";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { SectionIcon, withSection } from "./settings/Sections.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -258,7 +259,12 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
   }, [joined, shortcutsOpen]);
-  const notify = useNotifier(me, participants, view);
+  const notify = useNotifier(me, participants, view, {
+    workspaceId: id,
+    sectionSlug,
+    sections,
+    items: backlog,
+  });
   const reviews = usePendingReviews(call, joined ? workspace : null);
 
   useEffect(() => {
@@ -1254,31 +1260,6 @@ function AccountMenuExtra({ close, onOpenShortcuts, onStartTour }) {
         Keyboard shortcuts
       </button>
     </>
-  );
-}
-
-// NotifyRow turns desktop notifications on or off (see notify.js).
-function NotifyRow() {
-  const [on, turnOn, turnOff] = useNotifyPref();
-  const blocked = Notification.permission === "denied";
-  return (
-    <div className="account-theme">
-      <span className="muted">Desktop notifications</span>
-      {blocked ? (
-        <span className="muted" title="Allow notifications for this site in your browser's settings">
-          Blocked
-        </span>
-      ) : (
-        <div className="seg" role="group" aria-label="Desktop notifications">
-          <button type="button" aria-pressed={on} onClick={turnOn}>
-            On
-          </button>
-          <button type="button" aria-pressed={!on} onClick={turnOff}>
-            Off
-          </button>
-        </div>
-      )}
-    </div>
   );
 }
 
