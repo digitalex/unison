@@ -18,6 +18,7 @@ import Recurring from "./Recurring.jsx";
 import Todos, { isTodoActive, withTodo } from "./Todos.jsx";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
+import { SectionIcon, withSection } from "./settings/Sections.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
@@ -73,12 +74,18 @@ function collectionFor({ type, data }) {
     return type === "message.done" || type === "message.undone" || data.action_required ? ["me"] : [];
   }
   // Item events carry the item and are applied in place too (#105). Those
-  // that renumber the queue (adding, moving, closing, reopening, deleting)
-  // also reload the open and assigned items: small, unlike every done item.
+  // that renumber the queue (adding, moving, closing, reopening, deleting, or
+  // moving between sections via updated) also reload open and assigned items.
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) {
-    const reloads = RENUMBERS.includes(type) || !(data?.id || data?.item?.id) ? ["queued"] : [];
+    const reloads = RENUMBERS.includes(type) || type === "backlog.updated" || !(data?.id || data?.item?.id) ? ["queued"] : [];
     if (ACTIVITY_TYPES.includes(type)) reloads.push("activity");
+    if (data?.section_notify || type === "backlog.updated") reloads.push("me");
     return reloads;
+  }
+  if (type.startsWith("section.")) {
+    if (type === "section.deleted") return ["sections", "backlog", "me"];
+    if (type === "section.moved") return ["sections"];
+    return ["sections", "queued", "me"];
   }
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("schedule.")) return ["schedules"];
@@ -152,7 +159,7 @@ function useTabTitle(name) {
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
-export default function Workspace({ id, view, artifactFile = null, navigate, account }) {
+export default function Workspace({ id, view, artifactFile = null, sectionSlug = null, navigate, account }) {
   const token = account.user ? "" : getToken(id);
   const call = useMemo(() => workspaceApi(id, token), [id, token]);
   const uploader = useMemo(() => imageUploader(id, token), [id, token]);
@@ -172,6 +179,8 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
   const [activity, setActivity] = useState([]);
   const [hasMoreActivity, setHasMoreActivity] = useState(false);
   const [backlog, setBacklog] = useState([]);
+  const [sections, setSections] = useState([]);
+  const [sectionsLoaded, setSectionsLoaded] = useState(false);
   const [todos, setTodos] = useState([]);
   const [todosLoaded, setTodosLoaded] = useState(false);
   const [artifacts, setArtifacts] = useState([]);
@@ -180,7 +189,11 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
   const [members, setMembers] = useState({ members: [] });
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
-  const screens = useScreens(id, view, navigate);
+  const backlogNow = useRef(backlog);
+  backlogNow.current = backlog;
+  const sectionsNow = useRef(sections);
+  sectionsNow.current = sections;
+  const screens = useScreens(id, view, sectionSlug, navigate, backlogNow, sectionsNow);
   const shownMessage = useShownMessage(screens.show);
   const { unread, newAfter } = useChatUnread(id, messages, me, view === "chat", call);
   const [mention, setMention] = useState(null); // A name to start a chat message with.
@@ -258,15 +271,20 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
         });
         if (!hasOlder) setHasMoreActivity(fresh.length >= ACTIVITY_PAGE);
       }),
-    // Everything, done items included: on load and after a reconnect only.
-    backlog: () => call("GET", "/backlog?status=all").then(setBacklog),
-    // Open and assigned items, after events that renumber them (#105).
-    queued: () => call("GET", "/backlog").then((queued) => setBacklog((list) => withQueued(list, queued))),
+    // Everything, done items and custom sections included: on load and after a reconnect only.
+    backlog: () => call("GET", "/backlog?status=all&section=all").then(setBacklog),
+    // Open and assigned items across main Backlog and custom sections (#105, #919).
+    queued: () => call("GET", "/backlog?section=all").then((queued) => setBacklog((list) => withQueued(list, queued))),
+    sections: () =>
+      call("GET", "/sections").then((list) => {
+        setSections(list);
+        setSectionsLoaded(true);
+      }),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     schedules: () => call("GET", "/schedules").then(setSchedules),
     todos: () =>
       call("GET", "/todos?status=all").then((list) => {
-        setTodos(list);
+        setTodos(list.filter((t) => t.kind !== "section_item"));
         setTodosLoaded(true);
       }),
     artifacts: () => call("GET", "/artifacts").then(setArtifacts),
@@ -334,6 +352,7 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
     if (!account.ready) return;
     setGate(null);
     setParticipantsLoaded(false);
+    setSectionsLoaded(false);
     setTodosLoaded(false);
     setHasMoreMessages(false);
     setHasMoreActivity(false);
@@ -436,6 +455,14 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
     }
     setArtifacts((list) => withArtifact(list, data));
   };
+  const applySectionEvent = ({ type, data }) => {
+    if (!type.startsWith("section.") || !data?.id) return;
+    if (type === "section.deleted") {
+      setSections((list) => list.filter((s) => s.id !== data.id));
+      return;
+    }
+    setSections((list) => withSection(list, data));
+  };
   useEffect(() => {
     if (!account.ready || gate) return;
     const src = new EventSource(`/api/workspaces/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -474,6 +501,7 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
       applyItemEvent(event);
       applyTodoEvent(event);
       applyArtifactEvent(event);
+      applySectionEvent(event);
       collectionFor(event).forEach(reload);
       // Renamed, or a new emoji or status, from here or anywhere else (#303).
       if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
@@ -485,13 +513,40 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
     };
   }, [id, token, account.ready, Boolean(gate), joins]);
 
+  const mainBacklogItems = useMemo(() => backlog.filter((it) => !it.section_id), [backlog]);
+  const activeSection = useMemo(
+    () => (view === "section" && sectionSlug ? sections.find((s) => s.slug === sectionSlug) || null : null),
+    [view, sectionSlug, sections],
+  );
+  const activeSectionItems = useMemo(
+    () => (activeSection ? backlog.filter((it) => it.section_id === activeSection.id) : []),
+    [backlog, activeSection],
+  );
+  const notifySectionIds = useMemo(() => new Set(sections.filter((s) => s.notify).map((s) => s.id)), [sections]);
+  const sectionCounts = useMemo(() => {
+    const map = {};
+    for (const it of backlog) {
+      if (it.section_id && it.status !== "done") {
+        map[it.section_id] = (map[it.section_id] || 0) + 1;
+      }
+    }
+    return map;
+  }, [backlog]);
+
   if (!account.ready) return <main className="page"><p>Loading…</p></main>;
   if (gate) return <GatePage gate={gate} account={account} workspaceId={id} onJoined={onJoined} />;
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
-  const openTodos = todosLoaded && me ? todos.filter((t) => t.assignee_id === me.id && isTodoActive(t, now)).length : me?.open_todos || 0;
+  const openNotifyCount =
+    sectionsLoaded && me && !me.sponsor
+      ? backlog.filter((it) => it.status !== "done" && it.assignee_id === me.id && notifySectionIds.has(it.section_id)).length
+      : 0;
+  const openTodos =
+    todosLoaded && sectionsLoaded && me
+      ? todos.filter((t) => t.assignee_id === me.id && isTodoActive(t, now)).length + openNotifyCount
+      : me?.open_todos || 0;
   const counts = {
-    backlog: backlog.filter((it) => it.status !== "done").length,
+    backlog: mainBacklogItems.filter((it) => it.status !== "done").length,
     recurring: schedules.length,
     chat: unread,
     actions: me?.open_actions || 0,
@@ -537,6 +592,8 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
     <div className={joined ? "shell" : "shell shell-unjoined"}>
       <Sidebar
         workspace={workspace}
+        sections={sections}
+        sectionCounts={sectionCounts}
         view={view}
         joined={joined}
         live={live}
@@ -595,6 +652,7 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
         <main className="shell-main panel">
           <SettingsPage
             workspace={workspace}
+            sections={sections}
             members={members}
             invites={invites}
             participants={participants}
@@ -643,6 +701,7 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
               todos={todos}
               setTodos={setTodos}
               items={backlog}
+              sections={sections}
               participants={stableParticipants}
               me={me}
               workspace={workspace}
@@ -668,9 +727,50 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
               error={errorBar}
               navigate={navigate}
             />
+          ) : view === "section" ? (
+            !sectionsLoaded ? (
+              <div className="screen-body">
+                <p className="empty-row">Loading…</p>
+              </div>
+            ) : !activeSection ? (
+              <div className="screen-body">
+                {errorBar}
+                <p className="empty-row">
+                  Section not found.{" "}
+                  <Button variant="ghost" onClick={() => screens.show("backlog")}>
+                    Back to Backlog
+                  </Button>
+                </p>
+              </div>
+            ) : (
+              <Backlog
+                key={`sec-${activeSection.id}`}
+                section={activeSection}
+                sections={sections}
+                items={activeSectionItems}
+                allItems={backlog}
+                todos={todos}
+                setTodos={setTodos}
+                artifacts={artifacts}
+                setArtifacts={setArtifacts}
+                token={token}
+                onReloadMe={() => reload("me")}
+                participants={stableParticipants}
+                me={me}
+                workspace={workspace}
+                call={call}
+                onError={setError}
+                head={headExtras}
+                error={errorBar}
+              />
+            )
           ) : (
             <Backlog
-              items={backlog}
+              key="backlog"
+              section={null}
+              sections={sections}
+              items={mainBacklogItems}
+              allItems={backlog}
               todos={todos}
               setTodos={setTodos}
               artifacts={artifacts}
@@ -698,25 +798,31 @@ export default function Workspace({ id, view, artifactFile = null, navigate, acc
 // useScreens moves between the workspace's screens: link(screen) gives an
 // <a>'s props, show(screen, rest) goes there (rest: a query or hash to
 // keep). Links that open a backlog item from another screen (OPEN_ITEM: a
-// chat message's chip) go to the backlog, which opens it.
-function useScreens(id, view, navigate) {
+// chat message's chip) go to the backlog (or the item's custom section),
+// which opens it.
+function useScreens(id, view, sectionSlug, navigate, backlogNow, sectionsNow) {
+  const activeScreen = view === "section" && sectionSlug ? `s/${sectionSlug}` : view;
   const path = (screen) => (screen === "backlog" ? `/w/${id}` : `/w/${id}/${screen}`);
-  const current = useRef(view);
-  current.current = view;
+  const current = useRef(activeScreen);
+  current.current = activeScreen;
   const show = (screen, rest = "") => {
     const target = path(screen) + rest;
     if (current.current !== screen || rest || window.location.pathname !== path(screen)) navigate(target);
   };
   useEffect(() => {
     const onOpenItem = (e) => {
-      if (current.current !== "backlog") show("backlog", `?item=${e.detail}`);
+      const targetId = Number(e.detail);
+      const it = backlogNow?.current?.find((x) => x.id === targetId);
+      const sec = it?.section_id && sectionsNow?.current?.find((s) => s.id === it.section_id);
+      const targetScreen = sec ? `s/${sec.slug}` : "backlog";
+      if (current.current !== targetScreen) show(targetScreen, `?item=${e.detail}`);
     };
     window.addEventListener(OPEN_ITEM, onOpenItem);
     return () => window.removeEventListener(OPEN_ITEM, onOpenItem);
   }, [id]);
   const link = (screen) => ({
     href: path(screen),
-    "aria-current": view === screen ? "page" : undefined,
+    "aria-current": activeScreen === screen ? "page" : undefined,
     onClick: (e) => {
       if (e.metaKey || e.ctrlKey || e.shiftKey || e.button === 1) return;
       e.preventDefault();
@@ -880,7 +986,7 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
 // token, #127), links out (product, canvas, repositories, custom links #299),
 // then settings and your account at the bottom.
-function Sidebar({ workspace, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, navigate, participants, people, reviews, call }) {
+function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, navigate, participants, people, reviews, call }) {
   const repos = workspace.repos || [];
   const links = workspace.links || [];
   const [editingLink, setEditingLink] = useState(null); // A link, or "new".
@@ -927,15 +1033,31 @@ function Sidebar({ workspace, view, joined, live, counts, screens, account, onOp
       <div className="sidebar-content">
         {joined && (
           <ul className="nav-list" aria-label="Screens">
-            {SCREENS.map(({ id, label, Icon, key }) => (
-              <li key={id}>
-                <a className="nav-link" data-tour={id} aria-keyshortcuts={key} title={`${label} (${key})`} {...screens.link(id)}>
-                  <Icon aria-hidden="true" />
-                  {label}
-                  <ScreenCount screen={id} counts={counts} />
-                </a>
-              </li>
-            ))}
+            {SCREENS.flatMap(({ id, label, Icon, key }) => {
+              const mainItem = (
+                <li key={id}>
+                  <a className="nav-link" data-tour={id} aria-keyshortcuts={key} title={`${label} (${key})`} {...screens.link(id)}>
+                    <Icon aria-hidden="true" />
+                    {label}
+                    <ScreenCount screen={id} counts={counts} />
+                  </a>
+                </li>
+              );
+              if (id !== "backlog" || sections.length === 0) return [mainItem];
+              const sectionItems = sections.map((sec) => {
+                const count = sectionCounts[sec.id] || 0;
+                return (
+                  <li key={`sec-${sec.id}`}>
+                    <a className="nav-link nav-section-link" title={sec.name} {...screens.link(`s/${sec.slug}`)}>
+                      <SectionIcon icon={sec.icon} aria-hidden="true" />
+                      <span className="nav-text">{sec.name}</span>
+                      {count > 0 && <span className="nav-count">{count}</span>}
+                    </a>
+                  </li>
+                );
+              });
+              return [mainItem, ...sectionItems];
+            })}
           </ul>
         )}
         {people &&

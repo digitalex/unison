@@ -11,7 +11,7 @@ import Button from "./ui/Button.jsx";
 // last DONE_RECENT closed items unless expanded.
 const DONE_RECENT = 10;
 
-export default function Kanban({ groups, done, pending, participants, me, repos, run, reorder, hintId, created, onOpen, onAdd }) {
+export default function Kanban({ groups, done, pending, sectionLabel = "Backlog", participants, me, repos, run, reorder, hintId, created, onOpen, onAdd }) {
   const [allDone, setAllDone] = useState(false);
   const shownDone = allDone ? done : done.slice(0, DONE_RECENT);
   const cards = (status, list) =>
@@ -35,7 +35,7 @@ export default function Kanban({ groups, done, pending, participants, me, repos,
     ));
   return (
     <div className="kanban">
-      <Column status="open" label="Backlog" count={groups.open.length} add={<AddCard onAdd={onAdd} />}>
+      <Column status="open" label={sectionLabel} count={groups.open.length} add={<AddCard onAdd={onAdd} />}>
         {cards("open", groups.open)}
         {pending.map((x) => (
           <PendingCard key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />

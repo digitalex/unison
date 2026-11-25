@@ -257,3 +257,122 @@ func TestArtifactsTableMigration(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestSectionsAndItemsColumnsMigration(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+	p, _, _, _ := s.Join(ctx, ws.ID, "Ada", "")
+	existing, _, err := s.AddItem(ctx, p, "Legacy backlog item", "Before #919", 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+
+	// Simulate an existing pre-#919 database: no sections table and an items
+	// table without section_id, choices_json, close_on_answer, answered_choice,
+	// answered_by_id, or answered_at.
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw.pg {
+		for _, q := range []string{
+			`DROP INDEX IF EXISTS items_section`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS section_id`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS choices_json`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS close_on_answer`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS answered_choice`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS answered_by_id`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS answered_at`,
+			`DROP TABLE IF EXISTS sections`,
+		} {
+			if _, err := raw.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	} else {
+		for _, q := range []string{
+			`PRAGMA foreign_keys = OFF`,
+			`DROP INDEX IF EXISTS items_section`,
+			`CREATE TABLE items_pre919 (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+				title TEXT NOT NULL,
+				body TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL,
+				position INTEGER NOT NULL,
+				assignee_id INTEGER REFERENCES participants(id),
+				lease_expires_at INTEGER,
+				created_by INTEGER NOT NULL REFERENCES participants(id),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				closed_at INTEGER,
+				close_note TEXT NOT NULL DEFAULT '',
+				schedule_id INTEGER
+			)`,
+			`INSERT INTO items_pre919 (id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id)
+				SELECT id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id FROM items`,
+			`DROP TABLE items`,
+			`ALTER TABLE items_pre919 RENAME TO items`,
+			`CREATE INDEX items_ws ON items(workspace_id, status, position)`,
+			`DROP TABLE IF EXISTS sections`,
+			`PRAGMA foreign_keys = ON`,
+		} {
+			if _, err := raw.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		if !tableExists(t, s, "sections") {
+			t.Fatalf("boot %d: sections table was not created", boot)
+		}
+		got, _, err := s.GetItem(ctx, ws.ID, existing.ID)
+		if err != nil || got.Title != "Legacy backlog item" || got.SectionID != nil || len(got.Choices) != 0 {
+			t.Fatalf("boot %d legacy item = %+v, %v", boot, got, err)
+		}
+		if boot == 1 {
+			sec, _, err := s.AddSection(ctx, p, SectionInput{Name: "Decisions", Icon: "scale", Notify: true})
+			if err != nil {
+				t.Fatalf("AddSection after migration: %v", err)
+			}
+			dec, _, err := s.AddItemWithOptions(ctx, p, ItemInput{
+				Title:         "Pick cache",
+				SectionID:     &sec.ID,
+				Choices:       []string{"Redis", "In-memory"},
+				CloseOnAnswer: true,
+			})
+			if err != nil {
+				t.Fatalf("AddItemWithOptions after migration: %v", err)
+			}
+			if _, _, err := s.AnswerItem(ctx, p, dec.ID, "In-memory"); err != nil {
+				t.Fatalf("AnswerItem after migration: %v", err)
+			}
+		} else {
+			secs, err := s.ListSections(ctx, ws.ID)
+			if err != nil || len(secs) != 1 || secs[0].Slug != "decisions" {
+				t.Fatalf("boot %d ListSections = %+v, %v", boot, secs, err)
+			}
+			mainItems, _, err := s.ListBacklog(ctx, ws.ID, "all")
+			if err != nil || len(mainItems) != 1 || mainItems[0].ID != existing.ID {
+				t.Fatalf("boot %d main backlog = %+v, %v", boot, mainItems, err)
+			}
+			secItems, _, err := s.ListBacklogSection(ctx, ws.ID, "all", "decisions")
+			if err != nil || len(secItems) != 1 || secItems[0].Status != StatusDone || secItems[0].AnsweredChoice != "In-memory" {
+				t.Fatalf("boot %d section items = %+v, %v", boot, secItems, err)
+			}
+		}
+		s.Close()
+	}
+}

@@ -128,6 +128,11 @@ everyone else.** So you work in laps, and every lap ends parked on
    `unison todo add "Review PR #42" --to Alex --item <id> --pr <PR URL>`
    (PR-linked TODOs auto-close when the PR merges or closes; if you close a
    TODO yourself, `unison todo done <id> --note "<why>"` requires `--note`).
+   If the workspace configures custom **sections** (`unison section ls`), e.g.
+    a `Decisions` section with `--notify`, you can also park structured decision
+   items there with clickable options and `--close-on-answer`:
+   `unison backlog add "Choose storage driver" --section decisions --to Alex --choice "SQLite" --choice "Postgres" --close-on-answer`
+   (`backlog claim` skips custom sections so agents only auto-claim main Backlog items).
    You can also @mention them in chat with `--action` for quick inline thread
    prompts: `unison chat send "@Alex should X do Y or Z?" --item <id> --action`.
    It stands out for them and stays on their list (`unison actions`) until
@@ -326,13 +331,19 @@ or `#3`.
 | `unison todo delete <id>` | `DELETE /api/workspaces/{ws}/todos/{id}`: deletes the TODO (`todo.deleted`) |
 | `unison chat read [<message-id>] [--show]` | `PUT /api/workspaces/{ws}/read` `{"up_to": N}` moves your chat read marker forward to message N (older values change nothing; 404 for a message not in the workspace) and returns `{"up_to"}`; `GET /api/workspaces/{ws}/read` returns it. The marker is private (no event) and shared by your web, iOS and CLI sessions. When newly read messages had pushed to your phone, it gets a silent push to clear those notifications |
 | `unison chat react <message-id> <emoji>` | toggles your reaction: `GET /api/workspaces/{ws}/messages/{id}`, then `PUT` (react) or `DELETE` (take back) `/api/workspaces/{ws}/messages/{id}/reactions/{emoji}`. Reactions are 👍 👎 ❤️ 💪 💯 🚀 🎉 😂; in URLs and the CLI also `+1`, `-1`, `heart`, `muscle`, `100`, `rocket`, `party`, `laugh`. Others are refused (400). Each change is a `message.reacted` event |
-| `unison backlog [--status open\|in_progress\|done\|all]` | `GET /api/workspaces/{ws}/backlog` |
+| `unison section [ls]` | `GET /api/workspaces/{ws}/sections`: custom workspace sections alongside Backlog (`{id, slug, name, icon, notify, position}`), in order |
+| `unison section add <name> [--slug S] [--icon ICON] [--notify]` | `POST /api/workspaces/{ws}/sections` `{"name", "slug"?, "icon"?, "notify"?}`: creates a custom section (`icon` is one of `inbox`, `scale`, `flask-conical`, `sparkles`, `bug`, `compass`, `shield`, `layers`, `lightbulb`, `bookmark`, `flag`, `help-circle`, `folder`, `zap`, `clipboard-check`; `notify: true` surfaces non-done human-assigned items in Actionable / `open_todos` / `/todos` / `/api/me/todos`); records `section.created` |
+| `unison section edit <id-or-slug> [--name N] [--slug S] [--icon ICON] [--notify\|--no-notify]` | `PATCH /api/workspaces/{ws}/sections/{id}` (`{id}` accepts numeric ID or slug); records `section.updated` |
+| `unison section move <id-or-slug> <position>` | `POST /api/workspaces/{ws}/sections/{id}/move` `{"position"}`: reorders custom sections (1-based); records `section.moved` |
+| `unison section delete <id-or-slug>` | `DELETE /api/workspaces/{ws}/sections/{id}`: deletes the section and moves any remaining items back to the bottom of main Backlog (`section_id = null`); records `section.deleted` |
+| `unison backlog [--status open\|in_progress\|done\|all] [--section SLUG\|all]` | `GET /api/workspaces/{ws}/backlog[?status=…][&section=SLUG\|ID\|all]` (defaults to main Backlog `section_id = null` when `section` is omitted) |
 | `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `prs`, `comment_count` and `message_count`) |
 | `unison backlog show <id>` (chat part) | `GET /api/workspaces/{ws}/backlog/{id}/messages` (chat messages about the item, oldest first; each message's `item` is `{id, title, status}`) |
-| `unison backlog add <title> [--body B] [--position N] [--to NAME]` | `POST /api/workspaces/{ws}/backlog` (`{"title", "body"?, "position"?, "assignee_id"?}`) |
-| `unison backlog edit <id> [--title T] [--body B]` | `PATCH /api/workspaces/{ws}/backlog/{id}` |
-| `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` |
-| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` (atomically assigns & starts the top open item not assigned to someone else) |
+| `unison backlog add <title> [--body B] [--position N] [--to NAME] [--section SLUG\|none] [--choice TEXT]... [--close-on-answer\|--no-close-on-answer]` | `POST /api/workspaces/{ws}/backlog` (`{"title", "body"?, "position"?, "assignee_id"?, "section_id"? \| "section"?, "choices"?: […], "close_on_answer"?}`) |
+| `unison backlog edit <id> [--title T] [--body B] [--section SLUG\|none] [--choice TEXT]... [--clear-choices] [--close-on-answer\|--no-close-on-answer]` | `PATCH /api/workspaces/{ws}/backlog/{id}` (`{"title"?, "body"?, "section_id"? \| "section"?, "choices"?, "close_on_answer"?}`; `"section": "none"` or `"section_id": 0` moves back to main Backlog) |
+| `unison backlog answer <id> <choice>` | `POST /api/workspaces/{ws}/backlog/{id}/answer` `{"choice"}`: records a structured choice (by label or 1-based index), adds a decision comment, records `backlog.answered`, and atomically closes the item (`backlog.closed`) when `close_on_answer` is true |
+| `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` (within the item's section) |
+| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` (atomically assigns & starts the top open main-Backlog item not assigned to someone else; custom sections are skipped) |
 | `unison backlog start <id>` | `POST /api/workspaces/{ws}/backlog/{id}/start` (marks `in_progress` with a 12-hour lease, or renews your lease) |
 | `unison backlog stop <id>` | `POST /api/workspaces/{ws}/backlog/{id}/stop` (moves `in_progress` back to `open`, keeping `assignee_id`) |
 | `unison backlog assign <id> [--to NAME\|none]` / `backlog unassign <id>` | `POST /api/workspaces/{ws}/backlog/{id}/assign` (`{"assignee_id"?: N}`; omitted assigns to caller, `0` unassigns; keeps `status` as-is) |

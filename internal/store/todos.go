@@ -3,9 +3,11 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -15,6 +17,8 @@ import (
 const (
 	TodoStatusOpen = "open"
 	TodoStatusDone = "done"
+
+	TodoKindSectionItem = "section_item"
 
 	TodoFilterActive  = "active"  // open and not currently snoozed
 	TodoFilterSnoozed = "snoozed" // open and currently snoozed
@@ -60,6 +64,19 @@ type Todo struct {
 	DoneByEmoji   string    `json:"done_by_emoji,omitempty"`
 	CreatedAt     int64     `json:"created_at"`
 	DoneAt        *int64    `json:"done_at,omitempty"`
+
+	// Surfaced notify-section item fields (#919); omitted on regular TODOs.
+	Kind           string   `json:"kind,omitempty"`
+	SectionID      *int64   `json:"section_id,omitempty"`
+	SectionSlug    string   `json:"section_slug,omitempty"`
+	SectionName    string   `json:"section_name,omitempty"`
+	SectionIcon    string   `json:"section_icon,omitempty"`
+	Choices        []string `json:"choices,omitempty"`
+	CloseOnAnswer  bool     `json:"close_on_answer,omitempty"`
+	AnsweredChoice string   `json:"answered_choice,omitempty"`
+	AnsweredByID   *int64   `json:"answered_by_id,omitempty"`
+	AnsweredByName string   `json:"answered_by_name,omitempty"`
+	AnsweredAt     *int64   `json:"answered_at,omitempty"`
 }
 
 // UserTodo is a cross-workspace TODO returned by ListUserTodos (GET /api/me/todos).
@@ -368,9 +385,106 @@ func todoStatusWhere(status string, now int64) (string, []any, error) {
 	}
 }
 
+const selectNotifyItems = `SELECT i.id, i.workspace_id, i.title, i.body, i.created_by, i.assignee_id,
+	i.status, i.close_note, i.created_at, i.closed_at,
+	s.id, s.slug, s.name, s.icon,
+	i.choices_json, i.close_on_answer, i.answered_choice, i.answered_by_id, i.answered_at,
+	ap.name, ap.emoji,
+	cp.name, cp.emoji,
+	COALESCE(ab.name, ''),
+	COALESCE((SELECT p.url FROM item_prs p WHERE p.item_id = i.id ORDER BY p.id LIMIT 1), '')`
+
+func scanNotifyTodo(row interface{ Scan(...any) error }, extra ...any) (*Todo, error) {
+	var td Todo
+	var createdBy int64
+	var itStatus, choicesJSON string
+	var closedAt, answeredByID, answeredAt sql.NullInt64
+	var creatorName, creatorEmoji sql.NullString
+	var secID int64
+	dest := append([]any{
+		&td.ID, &td.WorkspaceID, &td.Title, &td.Body, &createdBy, &td.AssigneeID,
+		&itStatus, &td.DoneNote, &td.CreatedAt, &closedAt,
+		&secID, &td.SectionSlug, &td.SectionName, &td.SectionIcon,
+		&choicesJSON, &td.CloseOnAnswer, &td.AnsweredChoice, &answeredByID, &answeredAt,
+		&td.AssigneeName, &td.AssigneeEmoji,
+		&creatorName, &creatorEmoji,
+		&td.AnsweredByName,
+		&td.PRURL,
+	}, extra...)
+	if err := row.Scan(dest...); err != nil {
+		return nil, err
+	}
+	td.Kind = TodoKindSectionItem
+	td.CreatorID = &createdBy
+	td.CreatorName = creatorName.String
+	td.CreatorEmoji = creatorEmoji.String
+	itemID := td.ID
+	td.ItemID = &itemID
+	td.Item = &TodoItem{ID: itemID, Title: td.Title, Status: itStatus}
+	if itStatus == StatusDone {
+		td.Status = TodoStatusDone
+	} else {
+		td.Status = TodoStatusOpen
+	}
+	if closedAt.Valid {
+		td.DoneAt = &closedAt.Int64
+	}
+	td.SectionID = &secID
+	if choicesJSON != "" && choicesJSON != "[]" {
+		var choices []string
+		if err := json.Unmarshal([]byte(choicesJSON), &choices); err == nil && len(choices) > 0 {
+			td.Choices = choices
+		}
+	}
+	if answeredByID.Valid {
+		td.AnsweredByID = &answeredByID.Int64
+	}
+	if answeredAt.Valid {
+		td.AnsweredAt = &answeredAt.Int64
+	}
+	return &td, nil
+}
+
+func notifyItemStatusWhere(status string) (clause string, args []any, include bool) {
+	switch status {
+	case "", TodoFilterActive, TodoFilterOpen:
+		return ` AND i.status != ?`, []any{StatusDone}, true
+	case TodoFilterDone:
+		return ` AND i.status = ?`, []any{StatusDone}, true
+	case TodoFilterAll:
+		return ``, nil, true
+	default:
+		return ``, nil, false
+	}
+}
+
+func todoSortLess(a, b Todo) bool {
+	aDone := a.Status == TodoStatusDone
+	bDone := b.Status == TodoStatusDone
+	if aDone != bDone {
+		return !aDone
+	}
+	aTime := a.CreatedAt
+	if a.DoneAt != nil {
+		aTime = *a.DoneAt
+	}
+	bTime := b.CreatedAt
+	if b.DoneAt != nil {
+		bTime = *b.DoneAt
+	}
+	if aTime != bTime {
+		return aTime > bTime
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	return a.ID > b.ID
+}
+
 // ListTodos lists TODOs in wsID matching status ("active" [default: open and
 // not currently snoozed], "snoozed", "open", "done", or "all"), optionally
-// narrowed to assigneeID (> 0).
+// narrowed to assigneeID (> 0), plus human-assigned items in notify=true
+// custom sections (#919).
 func (s *Store) ListTodos(ctx context.Context, wsID, status string, assigneeID int64) ([]Todo, error) {
 	clause, statusArgs, err := todoStatusWhere(status, s.nowMillis())
 	if err != nil {
@@ -383,12 +497,54 @@ func (s *Store) ListTodos(ctx context.Context, wsID, status string, assigneeID i
 		args = append(args, assigneeID)
 	}
 	query += ` ORDER BY t.status = 'done', COALESCE(t.done_at, t.created_at) DESC, t.id DESC`
-	return scanTodos(s.db.QueryContext(ctx, query, args...))
+	out, err := scanTodos(s.db.QueryContext(ctx, query, args...))
+	if err != nil {
+		return nil, err
+	}
+
+	nClause, nArgs, include := notifyItemStatusWhere(status)
+	if !include {
+		return out, nil
+	}
+	nq := selectNotifyItems + `
+		FROM items i
+		JOIN sections s ON s.id = i.section_id
+		JOIN participants ap ON ap.id = i.assignee_id
+		LEFT JOIN participants cp ON cp.id = i.created_by
+		LEFT JOIN participants ab ON ab.id = i.answered_by_id
+		WHERE i.workspace_id = ? AND s.notify = ?
+		  AND ap.sponsor_user_id IS NULL AND COALESCE(ap.revoked_at, 0) = 0` + nClause
+	qArgs := append([]any{wsID, true}, nArgs...)
+	if assigneeID > 0 {
+		nq += ` AND i.assignee_id = ?`
+		qArgs = append(qArgs, assigneeID)
+	}
+	rows, err := s.db.QueryContext(ctx, nq, qArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	added := false
+	for rows.Next() {
+		td, err := scanNotifyTodo(rows)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, *td)
+		added = true
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if added {
+		sort.Slice(out, func(i, j int) bool { return todoSortLess(out[i], out[j]) })
+	}
+	return out, nil
 }
 
-// ListUserTodos lists TODOs assigned to userID's participants across all
-// workspaces userID is currently a member of, filtered by status ("active" by
-// default).
+// ListUserTodos lists TODOs (and notify=true section items, #919) assigned to
+// userID's human participants across all workspaces userID is currently a
+// member of, filtered by status ("active" by default).
 func (s *Store) ListUserTodos(ctx context.Context, userID int64, status string) ([]UserTodo, error) {
 	clause, statusArgs, err := todoStatusWhere(status, s.nowMillis())
 	if err != nil {
@@ -417,28 +573,82 @@ func (s *Store) ListUserTodos(ctx context.Context, userID int64, status string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 	out := []UserTodo{}
 	for rows.Next() {
 		var wsName string
 		td, err := scanTodo(rows, &wsName)
 		if err != nil {
+			rows.Close()
 			return nil, err
 		}
 		out = append(out, UserTodo{Todo: *td, WorkspaceName: wsName})
 	}
-	return out, rows.Err()
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+
+	nClause, nArgs, include := notifyItemStatusWhere(status)
+	if !include {
+		return out, nil
+	}
+	nq := selectNotifyItems + `, w.name
+		FROM items i
+		JOIN sections s ON s.id = i.section_id
+		JOIN workspaces w ON w.id = i.workspace_id
+		JOIN participants ap ON ap.id = i.assignee_id
+		LEFT JOIN participants cp ON cp.id = i.created_by
+		LEFT JOIN participants ab ON ab.id = i.answered_by_id
+		WHERE ap.user_id = ? AND ap.sponsor_user_id IS NULL AND COALESCE(ap.revoked_at, 0) = 0
+		  AND s.notify = ?
+		  AND EXISTS (SELECT 1 FROM memberships m WHERE m.workspace_id = i.workspace_id AND m.user_id = ?)` + nClause
+	qArgs := append([]any{userID, true, userID}, nArgs...)
+	nrows, err := s.db.QueryContext(ctx, nq, qArgs...)
+	if err != nil {
+		return nil, err
+	}
+	defer nrows.Close()
+	added := false
+	for nrows.Next() {
+		var wsName string
+		td, err := scanNotifyTodo(nrows, &wsName)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, UserTodo{Todo: *td, WorkspaceName: wsName})
+		added = true
+	}
+	if err := nrows.Err(); err != nil {
+		return nil, err
+	}
+	if added {
+		sort.Slice(out, func(i, j int) bool { return todoSortLess(out[i].Todo, out[j].Todo) })
+	}
+	return out, nil
 }
 
 // CountOpenTodos returns the number of active (open and not currently snoozed)
-// TODOs in actor's workspace assigned to actor.
+// TODOs in actor's workspace assigned to actor, plus (for human participants)
+// non-done items in notify=true sections assigned to actor (#919).
 func (s *Store) CountOpenTodos(ctx context.Context, actor *Participant) (int, error) {
 	var n int
-	err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM todos
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM todos
 		WHERE workspace_id = ? AND assignee_id = ? AND status = ?
 		  AND (snoozed_until IS NULL OR snoozed_until <= ?)`,
-		actor.WorkspaceID, actor.ID, TodoStatusOpen, s.nowMillis()).Scan(&n)
-	return n, err
+		actor.WorkspaceID, actor.ID, TodoStatusOpen, s.nowMillis()).Scan(&n); err != nil {
+		return 0, err
+	}
+	if actor.Sponsor == nil && actor.RevokedAt == 0 {
+		var secItems int
+		if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items i
+			JOIN sections s ON s.id = i.section_id
+			WHERE i.workspace_id = ? AND i.assignee_id = ? AND i.status != ? AND s.notify = ?`,
+			actor.WorkspaceID, actor.ID, StatusDone, true).Scan(&secItems); err != nil {
+			return 0, err
+		}
+		n += secItems
+	}
+	return n, nil
 }
 
 // DoneTodo marks a TODO done with an optional completion note. Agents

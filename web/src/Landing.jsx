@@ -138,18 +138,35 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
     };
   }, [account.user?.id]);
 
+  const refreshTodos = () =>
+    api("GET", "/api/me/todos?status=active").then(
+      (list) => setMyTodos(Array.isArray(list) ? list : []),
+      () => {},
+    );
+
+  const sameEntry = (a, b) => (a.kind || "") === (b.kind || "") && a.workspace_id === b.workspace_id && a.id === b.id;
+
   const markTodoDone = (td) => {
-    setMyTodos((list) => list.filter((x) => !(x.workspace_id === td.workspace_id && x.id === td.id)));
-    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/done`, { body: { note: "" } }).catch(() => {
-      api("GET", "/api/me/todos?status=active").then(setMyTodos, () => {});
-    });
+    setMyTodos((list) => list.filter((x) => !sameEntry(x, td)));
+    if (td.kind === "section_item") {
+      api("POST", `/api/workspaces/${td.workspace_id}/backlog/${td.id}/close`, { body: { note: "" } }).catch(refreshTodos);
+      return;
+    }
+    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/done`, { body: { note: "" } }).catch(refreshTodos);
+  };
+
+  const answerSectionChoice = (td, choice) => {
+    if (td.close_on_answer) {
+      setMyTodos((list) => list.filter((x) => !sameEntry(x, td)));
+    } else {
+      setMyTodos((list) => list.map((x) => (sameEntry(x, td) ? { ...x, answered_choice: choice } : x)));
+    }
+    api("POST", `/api/workspaces/${td.workspace_id}/backlog/${td.id}/answer`, { body: { choice } }).catch(refreshTodos);
   };
 
   const snoozeTodo = (td, duration) => {
-    setMyTodos((list) => list.filter((x) => !(x.workspace_id === td.workspace_id && x.id === td.id)));
-    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/snooze`, { body: { duration } }).catch(() => {
-      api("GET", "/api/me/todos?status=active").then(setMyTodos, () => {});
-    });
+    setMyTodos((list) => list.filter((x) => !sameEntry(x, td)));
+    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/snooze`, { body: { duration } }).catch(refreshTodos);
   };
 
   const sorted = workspaces ? [...workspaces].sort((a, b) => a.name.localeCompare(b.name)) : null;
@@ -202,49 +219,88 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
             <span className="chip">{myTodos.length}</span>
           </div>
           <ul className="ws-dock-todo-list">
-            {myTodos.map((td) => (
-              <li key={`${td.workspace_id}-${td.id}`} className="ws-dock-todo-row">
-                <a
-                  className="ws-dock-todo-link"
-                  href={`/w/${td.workspace_id}/todos`}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    navigate(`/w/${td.workspace_id}/todos`);
-                  }}
-                >
-                  <span className="ws-dock-todo-ws">{td.workspace_name}</span>
-                  <span className="ws-dock-todo-title">{td.title}</span>
-                </a>
-                <div className="ws-dock-todo-actions">
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    title="Mark done"
-                    aria-label={`Mark "${td.title}" done`}
-                    onClick={() => markTodoDone(td)}
+            {myTodos.map((td) => {
+              const isSectionItem = td.kind === "section_item";
+              const targetHref = isSectionItem
+                ? `/w/${td.workspace_id}/s/${td.section_slug}?item=${td.id}`
+                : `/w/${td.workspace_id}/todos`;
+              return (
+                <li key={`${td.kind || "todo"}-${td.workspace_id}-${td.id}`} className="ws-dock-todo-row">
+                  <a
+                    className="ws-dock-todo-link"
+                    href={targetHref}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(targetHref);
+                    }}
                   >
-                    <Check aria-hidden="true" />
-                    Done
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    title="Snooze for 1 day"
-                    onClick={() => snoozeTodo(td, "1d")}
-                  >
-                    1d
-                  </Button>
-                  <Button
-                    size="small"
-                    variant="ghost"
-                    title="Snooze for 1 week"
-                    onClick={() => snoozeTodo(td, "1w")}
-                  >
-                    1w
-                  </Button>
-                </div>
-              </li>
-            ))}
+                    <span className="ws-dock-todo-ws">
+                      {td.workspace_name}
+                      {isSectionItem && td.section_name ? ` · ${td.section_name}` : ""}
+                    </span>
+                    <span className="ws-dock-todo-title">{td.title}</span>
+                  </a>
+                  <div className="ws-dock-todo-actions">
+                    {isSectionItem ? (
+                      <>
+                        {td.choices?.map((choice) => (
+                          <Button
+                            key={choice}
+                            size="small"
+                            variant={td.answered_choice === choice ? "primary" : "secondary"}
+                            onClick={() => answerSectionChoice(td, choice)}
+                          >
+                            {td.answered_choice === choice && <Check aria-hidden="true" />}
+                            {choice}
+                          </Button>
+                        ))}
+                        {(!td.choices?.length || !td.close_on_answer) && (
+                          <Button
+                            size="small"
+                            variant="ghost"
+                            title="Close item"
+                            aria-label={`Close "${td.title}"`}
+                            onClick={() => markTodoDone(td)}
+                          >
+                            <Check aria-hidden="true" />
+                            Close
+                          </Button>
+                        )}
+                      </>
+                    ) : (
+                      <>
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          title="Mark done"
+                          aria-label={`Mark "${td.title}" done`}
+                          onClick={() => markTodoDone(td)}
+                        >
+                          <Check aria-hidden="true" />
+                          Done
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          title="Snooze for 1 day"
+                          onClick={() => snoozeTodo(td, "1d")}
+                        >
+                          1d
+                        </Button>
+                        <Button
+                          size="small"
+                          variant="ghost"
+                          title="Snooze for 1 week"
+                          onClick={() => snoozeTodo(td, "1w")}
+                        >
+                          1w
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
       )}

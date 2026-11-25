@@ -6,6 +6,7 @@ import Kanban from "./Kanban.jsx";
 import { OPEN_ITEM } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import { RecurringMarker } from "./Recurring.jsx";
+import { SectionIcon } from "./settings/Sections.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
@@ -18,7 +19,7 @@ const EMPTY_REPOS = [];
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
-export default function Backlog({ items, todos = [], setTodos, artifacts = [], setArtifacts, token = "", onReloadMe, participants, me, workspace, call, onError, head, error }) {
+export default function Backlog({ section = null, sections = [], items, allItems = null, todos = [], setTodos, artifacts = [], setArtifacts, token = "", onReloadMe, participants, me, workspace, call, onError, head, error }) {
   const [view, setView] = useBacklogView();
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -55,8 +56,9 @@ export default function Backlog({ items, todos = [], setTodos, artifacts = [], s
     const nextDone = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
     return { queued: nextQueued, groups: nextGroups, done: nextDone };
   }, [items]);
+  const lookupItems = allItems || items;
   const reorder = useReorder(groups, moveTo);
-  const openedItem = useOpenItem(openId, items, closeItem, setNotice);
+  const openedItem = useOpenItem(openId, lookupItems, closeItem, setNotice);
   useDismiss(notice, setNotice);
   useRevealCreated(created, items, setCreated);
   const hintId = useId();
@@ -81,34 +83,57 @@ export default function Backlog({ items, todos = [], setTodos, artifacts = [], s
         onOpen={openItem}
       />
     ));
-  const create = async ({ title, body, assignee_id }) => {
+  const create = async ({ title, body, assignee_id, section_id, choices, close_on_answer }) => {
     setCreating(false);
-    const temp = { id: `pending-${Date.now()}`, title, body, assignee_id };
-    setAdding((list) => [...list, temp]);
-    const payload = assignee_id ? { title, body, assignee_id } : { title, body };
+    const targetSectionId = section_id !== undefined ? Number(section_id) : section?.id || 0;
+    const staysHere = targetSectionId === (section?.id || 0);
+    const temp = staysHere ? { id: `pending-${Date.now()}`, title, body, assignee_id } : null;
+    if (temp) setAdding((list) => [...list, temp]);
+    const payload = { title, body };
+    if (assignee_id > 0) payload.assignee_id = assignee_id;
+    if (targetSectionId > 0) payload.section_id = targetSectionId;
+    if (choices?.length > 0) {
+      payload.choices = choices;
+      if (close_on_answer) payload.close_on_answer = true;
+    }
     const item = await run("POST", "/backlog", payload);
     if (item) {
-      setAdding((list) => list.map((x) => (x === temp ? { ...x, realId: item.id } : x)));
-      setCreated(item.id);
+      if (temp) {
+        setAdding((list) => list.map((x) => (x === temp ? { ...x, realId: item.id } : x)));
+        setCreated(item.id);
+      }
+      if (item.section_notify) onReloadMe?.();
     } else {
       // Failed (the error bar says why): give the text back to try again.
-      setAdding((list) => list.filter((x) => x !== temp));
-      setCreating({ title, body, assignee_id });
+      if (temp) setAdding((list) => list.filter((x) => x !== temp));
+      setCreating({ title, body, assignee_id, section_id: targetSectionId, choices, close_on_answer });
     }
   };
-  const ids = new Set(items.map((it) => it.id));
+  const ids = new Set(lookupItems.map((it) => it.id));
   const pendingRows = adding.filter((x) => !ids.has(x.realId));
   useEffect(() => {
     if (pendingRows.length < adding.length) setAdding(pendingRows);
   }, [pendingRows.length, adding.length]);
 
+  const screenLabel = section ? section.name : "Backlog";
+  const newButtonLabel = section ? `New ${section.name}` : "New item";
+  const headTitle = section ? (
+    <span className="section-head-title">
+      <SectionIcon icon={section.icon} aria-hidden="true" />
+      <span>{section.name}</span>
+      {section.notify && <span className="chip section-notify-chip">Actionable</span>}
+    </span>
+  ) : (
+    "Backlog"
+  );
+
   return (
-    <section className="screen" aria-label="Backlog">
-      <ScreenHead title="Backlog" tools={<ViewSwitch view={view} onChange={setView} />}>
+    <section className="screen" aria-label={screenLabel}>
+      <ScreenHead title={headTitle} tools={<ViewSwitch view={view} onChange={setView} />}>
         {head}
-        <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog" aria-label="New item">
+        <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog" aria-label={newButtonLabel}>
           <Plus aria-hidden="true" />
-          <span className="label">New item</span>
+          <span className="label">{newButtonLabel}</span>
         </Button>
       </ScreenHead>
       {error}
@@ -131,6 +156,7 @@ export default function Backlog({ items, todos = [], setTodos, artifacts = [], s
         {view === "kanban" ? (
           <Kanban
             {...{ groups, done, me, repos, run, reorder, hintId, created }}
+            sectionLabel={screenLabel}
             participants={stableParticipants}
             pending={pendingRows}
             onOpen={openItem}
@@ -159,11 +185,21 @@ export default function Backlog({ items, todos = [], setTodos, artifacts = [], s
         )}
       </div>
 
-      {creating && <NewItemDialog initial={creating === true ? null : creating} participants={stableParticipants} onClose={() => setCreating(false)} onCreate={create} />}
+      {creating && (
+        <NewItemDialog
+          initial={creating === true ? null : creating}
+          section={section}
+          sections={sections}
+          participants={stableParticipants}
+          onClose={() => setCreating(false)}
+          onCreate={create}
+        />
+      )}
       {openedItem && (
         <ItemDialog
           item={openedItem}
-          items={items}
+          items={lookupItems}
+          sections={sections}
           todos={todos}
           setTodos={setTodos}
           artifacts={artifacts}
@@ -308,6 +344,11 @@ const BacklogRow = memo(function BacklogRow({
         </button>
         {queued ? (
           <>
+            {item.choices?.length > 0 && (
+              <span className={item.answered_choice ? "chip choice-chip choice-chip-answered" : "chip choice-chip"}>
+                {item.answered_choice ? `✓ ${item.answered_choice}` : `${item.choices.length} choices`}
+              </span>
+            )}
             <PRChips prs={item.prs} repos={repos} />
             {item.comment_count > 0 && (
               <span className="comment-count" title={`${item.comment_count} comment${item.comment_count === 1 ? "" : "s"}`}>

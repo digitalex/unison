@@ -1,9 +1,10 @@
 import { useCallback, useMemo, useRef, useState } from "react";
-import { Clock, GitPullRequest, Plus, RotateCcw, Trash2 } from "lucide-react";
+import { Check, Clock, GitPullRequest, Plus, RotateCcw, Trash2 } from "lucide-react";
 import { ago, name as participantLabel, prLabel, submitOnModEnter } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { MentionTextarea } from "./mentions.jsx";
 import { itemLink } from "./nav.js";
+import { SectionIcon } from "./settings/Sections.jsx";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import Button from "./ui/Button.jsx";
 import Checkbox from "./ui/Checkbox.jsx";
@@ -50,7 +51,7 @@ function personDisplay(emoji, pname, id, participants) {
   return participantLabel(participants, id);
 }
 
-export default function Todos({ todos, setTodos, items, participants, me, workspace, now, call, onReloadMe, onError, head, error }) {
+export default function Todos({ todos, setTodos, items, sections = [], participants, me, workspace, now, call, onReloadMe, onError, head, error }) {
   const isAgent = Boolean(me?.sponsor);
   const [filter, setFilter] = useState("active");
   const [scope, setScope] = useState(() => (isAgent ? "all" : "mine"));
@@ -72,15 +73,45 @@ export default function Todos({ todos, setTodos, items, participants, me, worksp
   const repos = useMemo(() => workspace?.repos || EMPTY_REPOS, [workspace?.repos]);
   const humans = useMemo(() => participants.filter((p) => !p.sponsor && !p.revoked_at), [participants]);
 
+  const combinedTodos = useMemo(() => {
+    const notifyMap = new Map(sections.filter((s) => s.notify).map((s) => [s.id, s]));
+    if (notifyMap.size === 0) return todos;
+    const humanIds = new Set(humans.map((p) => p.id));
+    const notifyEntries = [];
+    for (const it of items) {
+      const sec = it.section_id && notifyMap.get(it.section_id);
+      if (!sec || !it.assignee_id || !humanIds.has(it.assignee_id)) continue;
+      notifyEntries.push({
+        kind: "section_item",
+        id: it.id,
+        item: it,
+        section: sec,
+        assignee_id: it.assignee_id,
+        status: it.status === "done" ? "done" : "open",
+        created_at: it.created_at,
+        done_at: it.closed_at,
+      });
+    }
+    if (notifyEntries.length === 0) return todos;
+    return [...todos, ...notifyEntries].sort((a, b) => {
+      const aDone = a.status === "done" ? 1 : 0;
+      const bDone = b.status === "done" ? 1 : 0;
+      if (aDone !== bDone) return aDone - bDone;
+      const aTime = a.done_at || a.created_at || 0;
+      const bTime = b.done_at || b.created_at || 0;
+      return bTime - aTime || b.id - a.id;
+    });
+  }, [todos, items, sections, humans]);
+
   const scopedTodos = useMemo(() => {
-    if (scope === "mine" && me) return todos.filter((t) => t.assignee_id === me.id);
-    return todos;
-  }, [todos, scope, me]);
+    if (scope === "mine" && me) return combinedTodos.filter((t) => t.assignee_id === me.id);
+    return combinedTodos;
+  }, [combinedTodos, scope, me]);
 
   const tabCounts = useMemo(
     () => ({
-      active: scopedTodos.filter((t) => isTodoActive(t, now)).length,
-      snoozed: scopedTodos.filter((t) => isTodoSnoozed(t, now)).length,
+      active: scopedTodos.filter((t) => (t.kind === "section_item" ? t.status === "open" : isTodoActive(t, now))).length,
+      snoozed: scopedTodos.filter((t) => t.kind !== "section_item" && isTodoSnoozed(t, now)).length,
       open: scopedTodos.filter((t) => t.status === "open").length,
       done: scopedTodos.filter((t) => t.status === "done").length,
     }),
@@ -90,13 +121,13 @@ export default function Todos({ todos, setTodos, items, participants, me, worksp
   const visibleTodos = useMemo(() => {
     switch (filter) {
       case "snoozed":
-        return scopedTodos.filter((t) => isTodoSnoozed(t, now));
+        return scopedTodos.filter((t) => t.kind !== "section_item" && isTodoSnoozed(t, now));
       case "open":
         return scopedTodos.filter((t) => t.status === "open");
       case "done":
         return scopedTodos.filter((t) => t.status === "done");
       default:
-        return scopedTodos.filter((t) => isTodoActive(t, now));
+        return scopedTodos.filter((t) => (t.kind === "section_item" ? t.status === "open" : isTodoActive(t, now)));
     }
   }, [scopedTodos, filter, now]);
 
@@ -207,20 +238,32 @@ export default function Todos({ todos, setTodos, items, participants, me, worksp
           </p>
         ) : (
           <div className="todo-list">
-            {visibleTodos.map((td) => (
-              <TodoRow
-                key={td.id}
-                todo={td}
-                items={items}
-                participants={participants}
-                repos={repos}
-                now={now}
-                showAssignee={scope === "all"}
-                onToggleDone={handleToggleDone}
-                onSnooze={handleSnooze}
-                onDelete={handleDelete}
-              />
-            ))}
+            {visibleTodos.map((td) =>
+              td.kind === "section_item" ? (
+                <NotifyItemRow
+                  key={`sec-item-${td.id}`}
+                  entry={td}
+                  participants={participants}
+                  repos={repos}
+                  showAssignee={scope === "all"}
+                  run={run}
+                  onReloadMe={onReloadMe}
+                />
+              ) : (
+                <TodoRow
+                  key={`todo-${td.id}`}
+                  todo={td}
+                  items={items}
+                  participants={participants}
+                  repos={repos}
+                  now={now}
+                  showAssignee={scope === "all"}
+                  onToggleDone={handleToggleDone}
+                  onSnooze={handleSnooze}
+                  onDelete={handleDelete}
+                />
+              ),
+            )}
           </div>
         )}
       </div>
@@ -244,6 +287,109 @@ export default function Todos({ todos, setTodos, items, participants, me, worksp
         />
       )}
     </section>
+  );
+}
+
+function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReloadMe }) {
+  const { item, section } = entry;
+  const [busyChoice, setBusyChoice] = useState(null);
+  const isDone = item.status === "done";
+  const assignee = participantLabel(participants, item.assignee_id);
+  const creator = participantLabel(participants, item.created_by);
+
+  const toggleClose = async () => {
+    const updated = isDone
+      ? await run("POST", `/backlog/${item.id}/reopen`)
+      : await run("POST", `/backlog/${item.id}/close`, { note: "" });
+    if (updated) onReloadMe?.();
+  };
+
+  const answerChoice = async (choice) => {
+    setBusyChoice(choice);
+    const updated = await run("POST", `/backlog/${item.id}/answer`, { choice });
+    setBusyChoice(null);
+    if (updated) onReloadMe?.();
+  };
+
+  return (
+    <div className={isDone ? "todo-item todo-done" : "todo-item"}>
+      <div className="todo-main">
+        <div className="todo-check">
+          <Checkbox
+            checked={isDone}
+            onChange={toggleClose}
+            aria-label={isDone ? `Reopen item #${item.id}: ${item.title}` : `Close item #${item.id}: ${item.title}`}
+          />
+        </div>
+        <div className="todo-content">
+          <div className="todo-head-row">
+            <span className="item-id">#{item.id}</span>
+            <a className="todo-title todo-item-link" {...itemLink(item.id)}>
+              {item.title}
+            </a>
+            <span className="chip section-chip">
+              <SectionIcon icon={section.icon} aria-hidden="true" />
+              {section.name}
+            </span>
+            {showAssignee && <span className="chip">{assignee}</span>}
+            {item.prs?.map((pr) => (
+              <a key={pr.id} className="chip todo-link-chip" href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.url}>
+                <GitPullRequest aria-hidden="true" />
+                {prLabel(pr.url, repos)}
+              </a>
+            ))}
+          </div>
+          {item.body && (
+            <div className="todo-body">
+              <MemoMarkdown text={item.body} />
+            </div>
+          )}
+          {item.choices?.length > 0 && (
+            <div className="todo-choices-bar" role="group" aria-label={`Decision choices for #${item.id}`}>
+              {item.choices.map((choice) => {
+                const selected = item.answered_choice === choice;
+                return (
+                  <button
+                    key={choice}
+                    type="button"
+                    className={selected ? "decision-choice decision-choice-inline selected" : "decision-choice decision-choice-inline"}
+                    aria-pressed={selected}
+                    disabled={busyChoice !== null || isDone}
+                    onClick={() => answerChoice(choice)}
+                  >
+                    {selected && <Check aria-hidden="true" />}
+                    <span>{choice}</span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+          <div className="todo-sub">
+            {item.answered_choice && (
+              <span className="todo-done-note">
+                Decision: <b>{item.answered_choice}</b>
+                {item.answered_by_id ? ` by ${participantLabel(participants, item.answered_by_id)}` : ""}
+              </span>
+            )}
+            {isDone ? (
+              <span>Closed {item.closed_at ? ago(item.closed_at) : ""}</span>
+            ) : (
+              <span>
+                Added {ago(item.created_at)} by {creator}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className="todo-actions">
+          <a className="button button-ghost" {...itemLink(item.id)}>
+            Open
+          </a>
+          <Button size="small" variant="ghost" onClick={toggleClose}>
+            {isDone ? "Reopen" : "Close"}
+          </Button>
+        </div>
+      </div>
+    </div>
   );
 }
 

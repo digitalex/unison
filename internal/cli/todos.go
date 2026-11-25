@@ -251,7 +251,16 @@ func todoState(td *store.Todo) string {
 
 func todoLine(td *store.Todo) string {
 	var extras []string
-	if td.ItemID != nil {
+	if td.Kind == store.TodoKindSectionItem {
+		if td.SectionName != "" {
+			extras = append(extras, fmt.Sprintf("[section: %s]", td.SectionName))
+		}
+		if td.AnsweredChoice != "" {
+			extras = append(extras, fmt.Sprintf("[decision: %s]", td.AnsweredChoice))
+		} else if len(td.Choices) > 0 {
+			extras = append(extras, fmt.Sprintf("[choices: %s]", strings.Join(td.Choices, " | ")))
+		}
+	} else if td.ItemID != nil {
 		extras = append(extras, fmt.Sprintf("[item #%d]", *td.ItemID))
 	}
 	if td.PRURL != "" {

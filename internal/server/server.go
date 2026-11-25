@@ -3,6 +3,7 @@
 package server
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -274,6 +275,11 @@ func (s *Server) routes() {
 	h("POST "+ws+"/todos/{id}/reopen", s.auth(s.reopenTodo))
 	h("POST "+ws+"/todos/{id}/snooze", s.auth(s.snoozeTodo))
 	h("DELETE "+ws+"/todos/{id}", s.auth(s.deleteTodo))
+	h("GET "+ws+"/sections", s.listSections)
+	h("POST "+ws+"/sections", s.auth(s.addSection))
+	h("PATCH "+ws+"/sections/{id}", s.auth(s.editSection))
+	h("POST "+ws+"/sections/{id}/move", s.auth(s.moveSection))
+	h("DELETE "+ws+"/sections/{id}", s.auth(s.deleteSection))
 	h("GET "+ws+"/backlog", s.listBacklog)
 	h("POST "+ws+"/backlog", s.auth(s.addItem))
 	h("POST "+ws+"/backlog/claim", s.auth(s.claimNext))
@@ -287,6 +293,7 @@ func (s *Server) routes() {
 	h("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
 	h("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	h("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
+	h("POST "+ws+"/backlog/{id}/answer", s.auth(s.answerItem))
 	h("GET "+ws+"/backlog/{id}/comments", s.listComments)
 	h("GET "+ws+"/backlog/{id}/messages", s.listItemMessages)
 	h("POST "+ws+"/backlog/{id}/comments", s.auth(s.addComment))
@@ -834,7 +841,8 @@ func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
 // ---- Backlog ----
 
 func (s *Server) listBacklog(w http.ResponseWriter, r *http.Request) {
-	list, evs, err := s.store.ListBacklog(r.Context(), r.PathValue("ws"), r.URL.Query().Get("status"))
+	q := r.URL.Query()
+	list, evs, err := s.store.ListBacklogSection(r.Context(), r.PathValue("ws"), q.Get("status"), q.Get("section"))
 	s.respond(w, http.StatusOK, list, evs, err)
 }
 
@@ -848,16 +856,11 @@ func (s *Server) getItem(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) addItem(w http.ResponseWriter, r *http.Request) {
-	var req struct {
-		Title      string `json:"title"`
-		Body       string `json:"body"`
-		Position   int    `json:"position"`
-		AssigneeID int64  `json:"assignee_id"`
-	}
+	var req store.ItemInput
 	if !decode(w, r, &req) {
 		return
 	}
-	it, evs, err := s.store.AddItemAssigned(r.Context(), actor(r), req.Title, req.Body, req.Position, req.AssigneeID)
+	it, evs, err := s.store.AddItemWithOptions(r.Context(), actor(r), req)
 	if err == nil {
 		s.track(eventItemCreated, participantActor(actor(r)))
 		if req.AssigneeID != 0 {
@@ -869,11 +872,43 @@ func (s *Server) addItem(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) updateItem(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
-	var p store.ItemPatch
-	if !ok || !decode(w, r, &p) {
+	var raw json.RawMessage
+	if !ok || !decode(w, r, &raw) {
 		return
 	}
+	var p store.ItemPatch
+	if len(raw) > 0 {
+		if err := json.Unmarshal(raw, &p); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body: "+err.Error())
+			return
+		}
+		var keys map[string]json.RawMessage
+		if json.Unmarshal(raw, &keys) == nil {
+			if v, has := keys["section_id"]; has && bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+				p.ClearSection = true
+			}
+			if v, has := keys["choices"]; has && bytes.Equal(bytes.TrimSpace(v), []byte("null")) {
+				empty := []string{}
+				p.Choices = &empty
+			}
+		}
+	}
 	it, evs, err := s.store.UpdateItem(r.Context(), actor(r), id, p)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) answerItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	var req struct {
+		Choice string `json:"choice"`
+	}
+	if !ok || !decode(w, r, &req) {
+		return
+	}
+	it, evs, err := s.store.AnswerItem(r.Context(), actor(r), id, req.Choice)
+	if err == nil && countEventType(evs, "backlog.closed") > 0 {
+		s.track(eventItemClosed, participantActor(actor(r)))
+	}
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 

@@ -211,12 +211,25 @@ TODOs (actionable tasks for humans, with 1d/1w snooze):
   todo snooze <id> (1d | 1w | off)   snooze for 24h or 7d, or unsnooze
   todo delete <id>                   delete a TODO
 
+Sections (optional custom sections alongside Backlog, e.g. Triage, Decisions):
+  section [ls]                       list workspace custom sections
+  section add <name> [--slug S] [--icon ICON] [--notify]
+                                     create a section (--notify surfaces open
+                                     human-assigned items in Actionable / TODOs)
+  section edit <id-or-slug> [--name N] [--slug S] [--icon ICON] [--notify|--no-notify]
+  section move <id-or-slug> <position>
+  section delete <id-or-slug>        delete section (items move back to Backlog)
+
 Backlog (#1 is the highest priority):
-  backlog [list] [--status open|in_progress|done|all]
+  backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]
   backlog show <id>                  the item, its comments and the chat
                                      messages about it
-  backlog add <title> [--body B] [--position N] [--to NAME]
-  backlog edit <id> [--title T] [--body B]
+  backlog add <title> [--body B] [--position N] [--to NAME] [--section SLUG|none]
+              [--choice TEXT]... [--close-on-answer|--no-close-on-answer]
+  backlog edit <id> [--title T] [--body B] [--section SLUG|none]
+               [--choice TEXT]... [--clear-choices] [--close-on-answer|--no-close-on-answer]
+  backlog answer <id> <choice>       record a structured decision choice (label
+                                     or 1-based index; closes item if configured)
   backlog move <id> <position>
   backlog claim                      atomically assign & start the top open item
                                      not assigned to someone else
@@ -409,6 +422,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return a.image(rest)
 	case "artifact", "artifacts":
 		return a.artifact(rest)
+	case "section", "sections":
+		return a.section(rest)
 	case "backlog":
 		return a.backlog(rest)
 	case "webhook", "webhooks":
@@ -1895,6 +1910,8 @@ func (a *app) backlog(args []string) error {
 		return a.itemCommand(pos, "POST", "/close", map[string]string{"note": *note}, true)
 	case "reopen":
 		return a.itemCommand(args, "POST", "/reopen", nil, true)
+	case "answer":
+		return a.backlogAnswer(args)
 	case "delete", "rm":
 		if len(args) != 1 {
 			return fmt.Errorf("%w: backlog delete <id>", errUsage)
@@ -1932,11 +1949,21 @@ func (a *app) itemCommand(args []string, method, suffix string, body any, auth b
 func (a *app) backlogList(args []string) error {
 	fs := flag.NewFlagSet("backlog list", flag.ContinueOnError)
 	status := fs.String("status", "", "open, in_progress, done or all (default: open and in_progress)")
-	if _, err := parseFlags(fs, args); err != nil {
+	section := fs.String("section", "", "section slug or id, or all (default: main Backlog)")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
 		return err
 	}
+	if len(pos) != 0 {
+		return fmt.Errorf("%w: backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]", errUsage)
+	}
+	q := url.Values{}
+	q.Set("status", *status)
+	if strings.TrimSpace(*section) != "" {
+		q.Set("section", strings.TrimSpace(*section))
+	}
 	var items []store.Item
-	if ok, err := a.call("GET", "/backlog?status="+*status, nil, &items, false); !ok {
+	if ok, err := a.call("GET", "/backlog?"+q.Encode(), nil, &items, false); !ok {
 		return err
 	}
 	people, err := a.participants()
@@ -1944,7 +1971,11 @@ func (a *app) backlogList(args []string) error {
 		return err
 	}
 	if len(items) == 0 {
-		a.printf("The backlog is empty.\n")
+		if *section != "" && !strings.EqualFold(*section, "none") && !strings.EqualFold(*section, "backlog") && !strings.EqualFold(*section, "all") {
+			a.printf("Section %q is empty.\n", *section)
+		} else {
+			a.printf("The backlog is empty.\n")
+		}
 	}
 	for _, it := range items {
 		a.printf("%s\n", itemLine(people, &it))
@@ -1957,7 +1988,16 @@ func itemLine(people map[int64]store.Participant, it *store.Item) string {
 	if it.Status != store.StatusDone {
 		pos = fmt.Sprintf("%d.", it.Position)
 	}
-	return fmt.Sprintf("%-4s #%-4d %-40s %s  by %s", pos, it.ID, it.Title, itemState(people, it), label(people, it.CreatedBy))
+	extra := ""
+	if it.SectionName != "" {
+		extra += fmt.Sprintf("  [%s]", it.SectionName)
+	}
+	if it.AnsweredChoice != "" {
+		extra += fmt.Sprintf("  [decision: %s]", it.AnsweredChoice)
+	} else if len(it.Choices) > 0 {
+		extra += fmt.Sprintf("  [choices: %s]", strings.Join(it.Choices, " | "))
+	}
+	return fmt.Sprintf("%-4s #%-4d %-40s %s  by %s%s", pos, it.ID, it.Title, itemState(people, it), label(people, it.CreatedBy), extra)
 }
 
 func itemState(people map[int64]store.Participant, it *store.Item) string {
@@ -1994,11 +2034,39 @@ func (a *app) printItemDetail(it *store.Item) error {
 		return err
 	}
 	a.printf("#%d  %s\n", it.ID, it.Title)
+	if it.SectionName != "" {
+		a.printf("Section   %s (%s)\n", it.SectionName, it.SectionSlug)
+	}
 	if it.Status != store.StatusDone {
 		a.printf("Priority  %d\n", it.Position)
 	}
 	a.printf("State     %s\n", itemState(people, it))
 	a.printf("Created   by %s, %s\n", label(people, it.CreatedBy), ago(it.CreatedAt))
+	if len(it.Choices) > 0 {
+		var formatted []string
+		for i, c := range it.Choices {
+			mark := ""
+			if it.AnsweredChoice == c {
+				mark = " ✓"
+			}
+			formatted = append(formatted, fmt.Sprintf("%d. %s%s", i+1, c, mark))
+		}
+		tail := ""
+		if it.CloseOnAnswer {
+			tail = "  (closes on answer)"
+		}
+		a.printf("Choices   %s%s\n", strings.Join(formatted, "   "), tail)
+	}
+	if it.AnsweredChoice != "" {
+		dec := it.AnsweredChoice
+		if it.AnsweredByID != nil {
+			dec += " by " + label(people, *it.AnsweredByID)
+		}
+		if it.AnsweredAt != nil {
+			dec += ", " + ago(*it.AnsweredAt)
+		}
+		a.printf("Decision  %s\n", dec)
+	}
 	for i, pr := range it.PRs {
 		heading := "PRs      "
 		if i > 0 {
@@ -2168,6 +2236,21 @@ func (a *app) backlogAdd(args []string) error {
 	body := fs.String("body", "", "description")
 	position := fs.Int("position", 0, "priority position (1 = top; default bottom)")
 	to := fs.String("to", "", "participant name to assign to (without starting work)")
+	section := fs.String("section", "", "custom section slug or id (or none for main Backlog)")
+	var choices []string
+	fs.Func("choice", "structured decision choice (repeatable)", func(v string) error {
+		choices = append(choices, v)
+		return nil
+	})
+	var closeOnAnswer bool
+	fs.BoolFunc("close-on-answer", "close item automatically when answered", func(string) error {
+		closeOnAnswer = true
+		return nil
+	})
+	fs.BoolFunc("no-close-on-answer", "keep item open when answered", func(string) error {
+		closeOnAnswer = false
+		return nil
+	})
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -2183,6 +2266,15 @@ func (a *app) backlogAdd(args []string) error {
 		}
 		req["assignee_id"] = assigneeID
 	}
+	if strings.TrimSpace(*section) != "" {
+		req["section"] = strings.TrimSpace(*section)
+	}
+	if len(choices) > 0 {
+		req["choices"] = choices
+	}
+	if closeOnAnswer {
+		req["close_on_answer"] = true
+	}
 	var it store.Item
 	if ok, err := a.call("POST", "/backlog", req, &it, true); !ok {
 		return err
@@ -2192,12 +2284,43 @@ func (a *app) backlogAdd(args []string) error {
 
 func (a *app) backlogEdit(args []string) error {
 	fs := flag.NewFlagSet("backlog edit", flag.ContinueOnError)
-	var patch store.ItemPatch
-	fs.Func("title", "new title", func(v string) error { patch.Title = &v; return nil })
-	fs.Func("body", "new description", func(v string) error { patch.Body = &v; return nil })
+	patch := map[string]any{}
+	fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
+	fs.Func("body", "new description", func(v string) error { patch["body"] = v; return nil })
+	fs.Func("section", "move to custom section slug/id, or none for Backlog", func(v string) error {
+		patch["section"] = strings.TrimSpace(v)
+		return nil
+	})
+	var choices []string
+	var hasChoices, clearChoices bool
+	fs.Func("choice", "set structured decision choice (repeatable)", func(v string) error {
+		choices = append(choices, v)
+		hasChoices = true
+		return nil
+	})
+	fs.BoolFunc("clear-choices", "remove all structured choices", func(string) error {
+		clearChoices = true
+		return nil
+	})
+	fs.BoolFunc("close-on-answer", "close item automatically when answered", func(string) error {
+		patch["close_on_answer"] = true
+		return nil
+	})
+	fs.BoolFunc("no-close-on-answer", "keep item open when answered", func(string) error {
+		patch["close_on_answer"] = false
+		return nil
+	})
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
+	}
+	if hasChoices && clearChoices {
+		return fmt.Errorf("%w: --choice and --clear-choices cannot be combined", errUsage)
+	}
+	if clearChoices {
+		patch["choices"] = []string{}
+	} else if hasChoices {
+		patch["choices"] = choices
 	}
 	return a.itemCommand(pos, "PATCH", "", patch, true)
 }
@@ -2802,12 +2925,18 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		if e.Type == "backlog.lease_expired" {
 			return fmt.Sprintf("📋 the lease on #%d %q expired; it is open again", it.ID, it.Title)
 		}
+		if e.Type == "backlog.answered" {
+			return fmt.Sprintf("📋 %s answered #%d %q → %q", who, it.ID, it.Title, it.AnsweredChoice)
+		}
 		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, it.ID, it.Title)
+		if it.SectionName != "" {
+			line += fmt.Sprintf(" [%s]", it.SectionName)
+		}
 		switch e.Type {
 		case "backlog.added":
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
-			} else {
+			} else if it.SectionID == nil {
 				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", it.ID)
 			}
 		case "backlog.assigned":
@@ -2898,6 +3027,10 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			return fmt.Sprintf("📄 %s deleted artifact %s", who, art.Name)
 		}
 		return fmt.Sprintf("📄 %s %s artifact %s", who, strings.TrimPrefix(e.Type, "artifact."), art.Name)
+	case strings.HasPrefix(e.Type, "section."):
+		var sec store.Section
+		json.Unmarshal(e.Data, &sec)
+		return fmt.Sprintf("📂 %s %s section %q (%s)", who, strings.TrimPrefix(e.Type, "section."), sec.Name, sec.Slug)
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
 }

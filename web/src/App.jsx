@@ -45,6 +45,23 @@ export default function App() {
       />
     );
   }
+  const sectionMatch = path.match(/^\/w\/([^/]+)\/s\/([^/]+)\/?$/);
+  if (sectionMatch) {
+    let sectionSlug = sectionMatch[2];
+    try {
+      sectionSlug = decodeURIComponent(sectionSlug);
+    } catch {}
+    return (
+      <Workspace
+        key={sectionMatch[1]}
+        id={sectionMatch[1]}
+        view="section"
+        sectionSlug={sectionSlug}
+        navigate={navigate}
+        account={account}
+      />
+    );
+  }
   const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat|todos|artifacts))?/);
   if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live

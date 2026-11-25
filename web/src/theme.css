@@ -5590,3 +5590,301 @@ button.md-mention-chip.md-mention-me:hover {
   }
 }
 
+/* ---- Optional Custom Sections & Structured Choice Cards (#919) ---- */
+.nav-section-link {
+  padding-left: calc(var(--space-s) + var(--space-xs));
+}
+
+.section-head-title {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.section-head-title .lucide {
+  width: 16px;
+  height: 16px;
+  color: var(--text-secondary);
+}
+
+.section-notify-chip {
+  font-size: var(--size-xxs);
+  font-weight: var(--weight-ui-medium);
+}
+
+.section-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.section-chip .lucide {
+  width: 12px;
+  height: 12px;
+}
+
+.todo-item-link {
+  color: var(--text);
+  text-decoration: none;
+}
+
+.todo-item-link:hover {
+  color: var(--link);
+  text-decoration: underline;
+}
+
+.sections-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-m);
+}
+
+.sections-list {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.section-settings-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-s);
+  padding: var(--space-s);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.section-settings-icon {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
+  color: var(--text-secondary);
+}
+
+.section-settings-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.section-settings-title-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.section-settings-name {
+  font-weight: var(--weight-ui-medium);
+}
+
+.section-settings-actions {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.section-icon-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(34px, 1fr));
+  gap: var(--space-xxs);
+  max-width: 440px;
+}
+
+.section-icon-option {
+  display: grid;
+  place-items: center;
+  height: 34px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  color: var(--text-secondary);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  cursor: pointer;
+  transition: background-color var(--motion-duration) var(--motion-easing), color var(--motion-duration) var(--motion-easing);
+}
+
+.section-icon-option:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.section-icon-option.selected {
+  background: var(--accent-soft);
+  color: var(--text);
+  box-shadow: inset 0 0 0 var(--border-l) var(--focus);
+}
+
+.section-create-form,
+.section-edit-card {
+  padding: var(--space-m);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.section-edit-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-s);
+}
+
+.choices-add-row {
+  display: flex;
+  align-items: center;
+}
+
+.choices-editor {
+  padding: var(--space-s);
+  border-radius: var(--radius-s);
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  gap: var(--space-xs);
+}
+
+.choices-inputs {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+}
+
+.choice-input-row {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xxs);
+}
+
+.choices-editor-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.decision-card {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  padding: var(--space-s) var(--space-m);
+  border-radius: var(--radius-s);
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.decision-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.decision-card-title {
+  font-weight: var(--weight-ui-semibold);
+  font-size: var(--size-s);
+}
+
+.decision-card-hint {
+  font-size: var(--size-xs);
+}
+
+.decision-choices,
+.todo-choices-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-xs);
+}
+
+.todo-choices-bar {
+  margin-top: var(--space-xxs);
+}
+
+.decision-choice {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xxs);
+  min-height: 30px;
+  padding: 4px var(--space-s);
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong), var(--control-shadow);
+  font: inherit;
+  font-weight: var(--weight-ui-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-duration) var(--motion-easing), transform var(--motion-duration) var(--motion-easing);
+}
+
+.decision-choice:hover:not(:disabled) {
+  background: var(--surface-hover);
+}
+
+.decision-choice:active:not(:disabled) {
+  transform: translateY(var(--motion-press-distance));
+}
+
+.decision-choice.selected {
+  background: var(--accent);
+  color: var(--accent-text);
+  box-shadow: var(--accent-glow);
+}
+
+.decision-choice:disabled {
+  cursor: default;
+  opacity: 0.72;
+}
+
+.decision-choice.selected:disabled {
+  opacity: 0.92;
+}
+
+.decision-choice-inline {
+  min-height: 26px;
+  padding: 2px var(--space-xs);
+  font-size: var(--size-xs);
+}
+
+.decision-choice .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.decision-summary {
+  margin: 0;
+  font-size: var(--size-xs);
+  color: var(--text-secondary);
+}
+
+.choice-chip {
+  font-size: var(--size-xs);
+}
+
+.choice-chip-answered {
+  font-weight: var(--weight-ui-medium);
+}
+
+@media (max-width: 640px) {
+  .section-settings-row {
+    flex-wrap: wrap;
+  }
+
+  .section-settings-actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+}
+
+

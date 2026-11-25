@@ -3,18 +3,32 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
+	"strconv"
 	"strings"
 )
 
-const itemCols = `id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id`
+const itemCols = `id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id,
+	section_id, choices_json, close_on_answer, answered_choice, answered_by_id, answered_at,
+	COALESCE((SELECT slug FROM sections s WHERE s.id = items.section_id), ''),
+	COALESCE((SELECT name FROM sections s WHERE s.id = items.section_id), ''),
+	COALESCE((SELECT icon FROM sections s WHERE s.id = items.section_id), ''),
+	(SELECT notify FROM sections s WHERE s.id = items.section_id)`
 
 func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var it Item
-	var assignee, lease, closed, schedule sql.NullInt64
-	if err := row.Scan(&it.ID, &it.WorkspaceID, &it.Title, &it.Body, &it.Status, &it.Position, &assignee, &lease,
-		&it.CreatedBy, &it.CreatedAt, &it.UpdatedAt, &closed, &it.CloseNote, &schedule); err != nil {
+	var assignee, lease, closed, schedule, sectionID, answeredBy, answeredAt sql.NullInt64
+	var choicesJSON, secSlug, secName, secIcon string
+	var secNotify sql.NullBool
+	if err := row.Scan(
+		&it.ID, &it.WorkspaceID, &it.Title, &it.Body, &it.Status, &it.Position, &assignee, &lease,
+		&it.CreatedBy, &it.CreatedAt, &it.UpdatedAt, &closed, &it.CloseNote, &schedule,
+		&sectionID, &choicesJSON, &it.CloseOnAnswer, &it.AnsweredChoice, &answeredBy, &answeredAt,
+		&secSlug, &secName, &secIcon, &secNotify,
+	); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -32,6 +46,25 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	if schedule.Valid {
 		it.ScheduleID = &schedule.Int64
 	}
+	if sectionID.Valid {
+		it.SectionID = &sectionID.Int64
+		it.SectionSlug = secSlug
+		it.SectionName = secName
+		it.SectionIcon = secIcon
+		it.SectionNotify = secNotify.Bool
+	}
+	if choicesJSON != "" && choicesJSON != "[]" {
+		var choices []string
+		if err := json.Unmarshal([]byte(choicesJSON), &choices); err == nil && len(choices) > 0 {
+			it.Choices = choices
+		}
+	}
+	if answeredBy.Valid {
+		it.AnsweredByID = &answeredBy.Int64
+	}
+	if answeredAt.Valid {
+		it.AnsweredAt = &answeredAt.Int64
+	}
 	it.PRs = []ItemPR{}
 	return &it, nil
 }
@@ -47,9 +80,23 @@ func getItem(t *tx, wsID string, id int64) (*Item, error) {
 	return it, attachExtras(t, wsID, []*Item{it})
 }
 
-// queuedIDs returns the IDs of open and assigned items in priority order.
-func queuedIDs(t *tx, wsID string) ([]int64, error) {
-	rows, err := t.Query(`SELECT id FROM items WHERE workspace_id = ? AND status != ? ORDER BY position, id`, wsID, StatusDone)
+func equalInt64Ptr(a, b *int64) bool {
+	if a == nil || b == nil {
+		return a == nil && b == nil
+	}
+	return *a == *b
+}
+
+// queuedIDs returns the IDs of open and in-progress items in the given section
+// (nil = main Backlog) in priority order.
+func queuedIDs(t *tx, wsID string, sectionID *int64) ([]int64, error) {
+	var rows *sql.Rows
+	var err error
+	if sectionID == nil {
+		rows, err = t.Query(`SELECT id FROM items WHERE workspace_id = ? AND section_id IS NULL AND status != ? ORDER BY position, id`, wsID, StatusDone)
+	} else {
+		rows, err = t.Query(`SELECT id FROM items WHERE workspace_id = ? AND section_id = ? AND status != ? ORDER BY position, id`, wsID, *sectionID, StatusDone)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -105,10 +152,10 @@ func renumber(t *tx, ids []int64) error {
 	return nil
 }
 
-// insertAt places id at the 1-based position (clamped) within the queue.
-// position <= 0 means the bottom of the queue.
-func insertAt(t *tx, wsID string, id int64, position int) error {
-	ids, err := queuedIDs(t, wsID)
+// insertAt places id at the 1-based position (clamped) within sectionID's queue
+// (nil = main Backlog). position <= 0 means the bottom of that queue.
+func insertAt(t *tx, wsID string, sectionID *int64, id int64, position int) error {
+	ids, err := queuedIDs(t, wsID, sectionID)
 	if err != nil {
 		return err
 	}
@@ -169,14 +216,22 @@ func (s *Store) ExpireLeases(ctx context.Context) ([]Event, error) {
 	return s.tx(ctx, func(t *tx, log *eventLog) error { return expireLeases(t, log, "") })
 }
 
-// ListBacklog returns items with the given status ("" = open and in_progress,
-// "all" = everything). Queued items come in priority order; done items come
-// most recently closed first.
+// ListBacklog returns main-Backlog items (section_id IS NULL) with the given
+// status ("" = open and in_progress, "all" = everything). Queued items come in
+// priority order; done items come most recently closed first.
 func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, []Event, error) {
+	return s.ListBacklogSection(ctx, wsID, status, "")
+}
+
+// ListBacklogSection returns items filtered by status and sectionFilter:
+//   - "" / "none" / "backlog": main Backlog items (section_id IS NULL)
+//   - "all": main Backlog and all custom sections
+//   - <id|slug>: items in that custom section
+func (s *Store) ListBacklogSection(ctx context.Context, wsID, status, sectionFilter string) ([]Item, []Event, error) {
 	var out []Item
 	evs, err := s.readBacklog(ctx, wsID, func(t *tx) error {
 		var err error
-		out, err = listItems(t, wsID, status)
+		out, err = listItems(t, wsID, status, sectionFilter)
 		return err
 	})
 	if err != nil {
@@ -185,12 +240,27 @@ func (s *Store) ListBacklog(ctx context.Context, wsID, status string) ([]Item, [
 	return out, evs, nil
 }
 
-func listItems(t *tx, wsID, status string) ([]Item, error) {
+func listItems(t *tx, wsID, status, sectionFilter string) ([]Item, error) {
 	if status == "assigned" {
 		status = StatusInProgress // Legacy CLI/API query compatibility (#146).
 	}
 	query := `SELECT ` + itemCols + ` FROM items WHERE workspace_id = ?`
 	args := []any{wsID}
+
+	secFilter := strings.TrimSpace(sectionFilter)
+	switch strings.ToLower(secFilter) {
+	case "", "none", "backlog":
+		query += ` AND section_id IS NULL`
+	case "all":
+	default:
+		sec, err := resolveSectionTx(t, wsID, secFilter)
+		if err != nil {
+			return nil, err
+		}
+		query += ` AND section_id = ?`
+		args = append(args, sec.ID)
+	}
+
 	switch status {
 	case "":
 		query += ` AND status != ?`
@@ -202,7 +272,11 @@ func listItems(t *tx, wsID, status string) ([]Item, error) {
 	default:
 		return nil, fmt.Errorf("%w: unknown status %q (want open, in_progress, done or all)", ErrInvalid, status)
 	}
-	query += ` ORDER BY status = 'done', position, closed_at DESC, id`
+	if strings.EqualFold(secFilter, "all") {
+		query += ` ORDER BY status = 'done', COALESCE(section_id, 0), position, closed_at DESC, id`
+	} else {
+		query += ` ORDER BY status = 'done', position, closed_at DESC, id`
+	}
 	rows, err := t.Query(query, args...)
 	if err != nil {
 		return nil, err
@@ -270,32 +344,83 @@ func (s *Store) readBacklog(ctx context.Context, wsID string, read func(*tx) err
 	return nil, read(t)
 }
 
+// ItemInput holds fields for creating an item, optionally in a custom section
+// or with structured decision choices (#919).
+type ItemInput struct {
+	Title         string   `json:"title"`
+	Body          string   `json:"body"`
+	Position      int      `json:"position"`
+	AssigneeID    int64    `json:"assignee_id"`
+	SectionID     *int64   `json:"section_id"`
+	Section       string   `json:"section"`
+	Choices       []string `json:"choices"`
+	CloseOnAnswer bool     `json:"close_on_answer"`
+}
+
+func resolveItemSection(t *tx, wsID string, sectionID *int64, sectionRef string) (*int64, error) {
+	if sectionID != nil {
+		if *sectionID == 0 {
+			return nil, nil
+		}
+		if *sectionID < 0 {
+			return nil, fmt.Errorf("%w: section_id must be >= 0", ErrInvalid)
+		}
+		sec, err := resolveSectionTx(t, wsID, strconv.FormatInt(*sectionID, 10))
+		if err != nil {
+			return nil, err
+		}
+		return &sec.ID, nil
+	}
+	ref := strings.TrimSpace(sectionRef)
+	if ref == "" || strings.EqualFold(ref, "none") || strings.EqualFold(ref, "backlog") || ref == "0" {
+		return nil, nil
+	}
+	sec, err := resolveSectionTx(t, wsID, ref)
+	if err != nil {
+		return nil, err
+	}
+	return &sec.ID, nil
+}
+
 // AddItem adds an unassigned backlog item at the 1-based position (<= 0: bottom).
 func (s *Store) AddItem(ctx context.Context, actor *Participant, title, body string, position int) (*Item, []Event, error) {
-	return s.AddItemAssigned(ctx, actor, title, body, position, 0)
+	return s.AddItemWithOptions(ctx, actor, ItemInput{Title: title, Body: body, Position: position})
 }
 
 // AddItemAssigned adds an open backlog item at position (<= 0: bottom),
 // optionally assigned to assigneeID (> 0) without starting progress (#146).
 func (s *Store) AddItemAssigned(ctx context.Context, actor *Participant, title, body string, position int, assigneeID int64) (*Item, []Event, error) {
-	title = strings.TrimSpace(title)
+	return s.AddItemWithOptions(ctx, actor, ItemInput{Title: title, Body: body, Position: position, AssigneeID: assigneeID})
+}
+
+// AddItemWithOptions adds an open item in the main Backlog or a custom section,
+// optionally with structured decision choices and close_on_answer (#919).
+func (s *Store) AddItemWithOptions(ctx context.Context, actor *Participant, in ItemInput) (*Item, []Event, error) {
+	title := strings.TrimSpace(in.Title)
 	if title == "" {
 		return nil, nil, fmt.Errorf("%w: item title is required", ErrInvalid)
 	}
-	if assigneeID < 0 {
+	if in.AssigneeID < 0 {
 		return nil, nil, fmt.Errorf("%w: assignee_id must be >= 0", ErrInvalid)
+	}
+	_, choicesJSON, err := validChoices(in.Choices)
+	if err != nil {
+		return nil, nil, err
 	}
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		var assignee *int64
-		if assigneeID > 0 {
-			if err := checkParticipant(t, actor.WorkspaceID, assigneeID); err != nil {
+		if in.AssigneeID > 0 {
+			if err := checkParticipant(t, actor.WorkspaceID, in.AssigneeID); err != nil {
 				return err
 			}
-			assignee = &assigneeID
+			assignee = &in.AssigneeID
 		}
-		var err error
-		it, err = addItem(t, log, actor, title, body, position, assignee, nil)
+		sectionID, err := resolveItemSection(t, actor.WorkspaceID, in.SectionID, in.Section)
+		if err != nil {
+			return err
+		}
+		it, err = addItemFull(t, log, actor, title, in.Body, in.Position, assignee, nil, sectionID, choicesJSON, in.CloseOnAnswer)
 		return err
 	})
 	if err != nil {
@@ -304,16 +429,20 @@ func (s *Store) AddItemAssigned(ctx context.Context, actor *Participant, title, 
 	return it, evs, nil
 }
 
-// addItem inserts an open item at position (<= 0: bottom) and records
-// backlog.added. title and assignee must already be validated. scheduleID
-// marks a schedule's run (#112); nil for other items.
+// addItem inserts an open item in the main Backlog at position (<= 0: bottom)
+// and records backlog.added. scheduleID marks a schedule's run (#112).
 func addItem(t *tx, log *eventLog, actor *Participant, title, body string, position int, assignee *int64, scheduleID *int64) (*Item, error) {
-	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, assignee_id, created_by, created_at, updated_at, schedule_id) VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?)`, "id",
-		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, assignee, actor.ID, log.now, log.now, scheduleID)
+	return addItemFull(t, log, actor, title, body, position, assignee, scheduleID, nil, "[]", false)
+}
+
+func addItemFull(t *tx, log *eventLog, actor *Participant, title, body string, position int, assignee *int64, scheduleID *int64, sectionID *int64, choicesJSON string, closeOnAnswer bool) (*Item, error) {
+	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, assignee_id, created_by, created_at, updated_at, schedule_id, section_id, choices_json, close_on_answer)
+		VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, assignee, actor.ID, log.now, log.now, scheduleID, sectionID, choicesJSON, closeOnAnswer)
 	if err != nil {
 		return nil, err
 	}
-	if err := insertAt(t, actor.WorkspaceID, id, position); err != nil {
+	if err := insertAt(t, actor.WorkspaceID, sectionID, id, position); err != nil {
 		return nil, err
 	}
 	it, err := getItem(t, actor.WorkspaceID, id)
@@ -332,11 +461,16 @@ func addItem(t *tx, log *eventLog, actor *Participant, title, body string, posit
 
 // ItemPatch holds optional item field updates.
 type ItemPatch struct {
-	Title *string `json:"title"`
-	Body  *string `json:"body"`
+	Title         *string   `json:"title"`
+	Body          *string   `json:"body"`
+	SectionID     *int64    `json:"section_id"` // 0 moves back to main Backlog
+	Section       *string   `json:"section"`    // "" / "none" / "backlog" / "0" moves back to main Backlog
+	ClearSection  bool      `json:"-"`          // set when caller explicitly sends "section_id": null
+	Choices       *[]string `json:"choices"`    // empty slice clears choices
+	CloseOnAnswer *bool     `json:"close_on_answer"`
 }
 
-// UpdateItem edits an item's title and/or body.
+// UpdateItem edits an item's title, body, section, choices, and/or close_on_answer.
 func (s *Store) UpdateItem(ctx context.Context, actor *Participant, id int64, p ItemPatch) (*Item, []Event, error) {
 	return s.mutateItem(ctx, actor, id, "backlog.updated", func(t *tx, log *eventLog, it *Item) error {
 		now := log.now
@@ -349,12 +483,174 @@ func (s *Store) UpdateItem(ctx context.Context, actor *Participant, id int64, p 
 		if p.Body != nil {
 			it.Body = strings.TrimSpace(*p.Body)
 		}
-		_, err := t.Exec(`UPDATE items SET title = ?, body = ?, updated_at = ? WHERE id = ?`, it.Title, it.Body, now, it.ID)
-		return err
+
+		oldSectionID := it.SectionID
+		newSectionID := it.SectionID
+		switch {
+		case p.ClearSection:
+			newSectionID = nil
+		case p.SectionID != nil:
+			var err error
+			newSectionID, err = resolveItemSection(t, actor.WorkspaceID, p.SectionID, "")
+			if err != nil {
+				return err
+			}
+		case p.Section != nil:
+			var err error
+			newSectionID, err = resolveItemSection(t, actor.WorkspaceID, nil, *p.Section)
+			if err != nil {
+				return err
+			}
+		}
+
+		choicesJSON := "[]"
+		if len(it.Choices) > 0 {
+			b, _ := json.Marshal(it.Choices)
+			choicesJSON = string(b)
+		}
+		answeredChoice := it.AnsweredChoice
+		answeredBy := it.AnsweredByID
+		answeredAt := it.AnsweredAt
+		if p.Choices != nil {
+			var choices []string
+			var err error
+			choices, choicesJSON, err = validChoices(*p.Choices)
+			if err != nil {
+				return err
+			}
+			it.Choices = choices
+			if answeredChoice != "" && !slices.Contains(choices, answeredChoice) {
+				answeredChoice = ""
+				answeredBy = nil
+				answeredAt = nil
+			}
+		}
+
+		closeOnAnswer := it.CloseOnAnswer
+		if p.CloseOnAnswer != nil {
+			closeOnAnswer = *p.CloseOnAnswer
+		}
+
+		if _, err := t.Exec(`UPDATE items SET title = ?, body = ?, section_id = ?, choices_json = ?, close_on_answer = ?, answered_choice = ?, answered_by_id = ?, answered_at = ?, updated_at = ? WHERE id = ?`,
+			it.Title, it.Body, newSectionID, choicesJSON, closeOnAnswer, answeredChoice, answeredBy, answeredAt, now, it.ID); err != nil {
+			return err
+		}
+
+		if !equalInt64Ptr(oldSectionID, newSectionID) && it.Status != StatusDone {
+			oldIDs, err := queuedIDs(t, it.WorkspaceID, oldSectionID)
+			if err != nil {
+				return err
+			}
+			if err := renumber(t, oldIDs); err != nil {
+				return err
+			}
+			if err := insertAt(t, it.WorkspaceID, newSectionID, it.ID, 0); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 }
 
-// MoveItem moves a queued item to the 1-based position (clamped).
+// AnswerItem records a structured choice decision on item id, adds a concise
+// decision comment, emits backlog.answered, and — when close_on_answer is true —
+// atomically closes the item in the same transaction (#919).
+func (s *Store) AnswerItem(ctx context.Context, actor *Participant, id int64, choice string) (*Item, []Event, error) {
+	choice = strings.TrimSpace(choice)
+	if choice == "" {
+		return nil, nil, fmt.Errorf("%w: choice is required", ErrInvalid)
+	}
+	var out *Item
+	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		if err := expireLeases(t, log, actor.WorkspaceID); err != nil {
+			return err
+		}
+		it, err := getItem(t, actor.WorkspaceID, id)
+		if err != nil {
+			return err
+		}
+		if it.Status == StatusDone {
+			return fmt.Errorf("%w: item #%d is already done; reopen it first", ErrConflict, it.ID)
+		}
+		if len(it.Choices) == 0 {
+			return fmt.Errorf("%w: item #%d has no choices", ErrInvalid, it.ID)
+		}
+		matched, ok := matchItemChoice(it.Choices, choice)
+		if !ok {
+			return fmt.Errorf("%w: invalid choice %q (want one of: %s)", ErrInvalid, choice, strings.Join(it.Choices, ", "))
+		}
+
+		now := log.now
+		if _, err := t.Exec(`UPDATE items SET answered_choice = ?, answered_by_id = ?, answered_at = ?, updated_at = ? WHERE id = ?`,
+			matched, actor.ID, now, now, it.ID); err != nil {
+			return err
+		}
+
+		note := "Decision: " + matched
+		cid, err := t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
+			it.ID, it.WorkspaceID, actor.ID, note, now)
+		if err != nil {
+			return err
+		}
+		c := &Comment{ID: cid, ItemID: it.ID, WorkspaceID: it.WorkspaceID, AuthorID: actor.ID, Body: note, CreatedAt: now}
+		updated, err := getItem(t, actor.WorkspaceID, it.ID)
+		if err != nil {
+			return err
+		}
+		if err := log.add(actor.WorkspaceID, "comment.added", actor.ID, CommentEvent{Comment: c, Item: updated}); err != nil {
+			return err
+		}
+		if err := log.add(actor.WorkspaceID, "backlog.answered", actor.ID, updated); err != nil {
+			return err
+		}
+
+		if updated.CloseOnAnswer && updated.Status != StatusDone {
+			if _, err := t.Exec(`UPDATE items SET status = ?, position = 0, lease_expires_at = NULL, closed_at = ?, close_note = ?, updated_at = ? WHERE id = ?`,
+				StatusDone, now, note, now, updated.ID); err != nil {
+				return err
+			}
+			ids, err := queuedIDs(t, updated.WorkspaceID, updated.SectionID)
+			if err != nil {
+				return err
+			}
+			if err := renumber(t, ids); err != nil {
+				return err
+			}
+			updated, err = getItem(t, actor.WorkspaceID, updated.ID)
+			if err != nil {
+				return err
+			}
+			if err := log.add(actor.WorkspaceID, "backlog.closed", actor.ID, updated); err != nil {
+				return err
+			}
+		}
+		out = updated
+		return nil
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return out, evs, nil
+}
+
+func matchItemChoice(choices []string, input string) (string, bool) {
+	for _, c := range choices {
+		if c == input {
+			return c, true
+		}
+	}
+	for _, c := range choices {
+		if strings.EqualFold(c, input) {
+			return c, true
+		}
+	}
+	if idx, err := strconv.Atoi(input); err == nil && idx >= 1 && idx <= len(choices) {
+		return choices[idx-1], true
+	}
+	return "", false
+}
+
+// MoveItem moves a queued item to the 1-based position (clamped) within its section.
 func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, position int) (*Item, []Event, error) {
 	if position < 1 {
 		return nil, nil, fmt.Errorf("%w: position must be >= 1", ErrInvalid)
@@ -367,7 +663,7 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 		if _, err := t.Exec(`UPDATE items SET updated_at = ? WHERE id = ?`, now, it.ID); err != nil {
 			return err
 		}
-		return insertAt(t, it.WorkspaceID, it.ID, position)
+		return insertAt(t, it.WorkspaceID, it.SectionID, it.ID, position)
 	})
 }
 
@@ -445,8 +741,9 @@ func startItem(t *tx, it *Item, actorID, now int64) error {
 	return nil
 }
 
-// ClaimNext atomically claims and starts the highest-priority open item that
-// is unassigned or already assigned to actor. It returns ErrNotFound if none.
+// ClaimNext atomically claims and starts the highest-priority open item in the
+// main Backlog (section_id IS NULL) that is unassigned or already assigned to
+// actor. Custom section items are skipped (#919). Returns ErrNotFound if none.
 func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Event, error) {
 	var it *Item
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
@@ -455,7 +752,7 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 		}
 		var err error
 		it, err = scanItem(t.QueryRow(`SELECT `+itemCols+` FROM items
-			WHERE workspace_id = ? AND status = ? AND (assignee_id IS NULL OR assignee_id = ?)
+			WHERE workspace_id = ? AND section_id IS NULL AND status = ? AND (assignee_id IS NULL OR assignee_id = ?)
 			ORDER BY position, id LIMIT 1`,
 			actor.WorkspaceID, StatusOpen, actor.ID))
 		if errors.Is(err, ErrNotFound) {
@@ -519,7 +816,7 @@ func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, not
 		if err := linkPRsInNote(t, log, actor, it, it.CloseNote); err != nil {
 			return err
 		}
-		ids, err := queuedIDs(t, it.WorkspaceID)
+		ids, err := queuedIDs(t, it.WorkspaceID, it.SectionID)
 		if err != nil {
 			return err
 		}
@@ -527,18 +824,18 @@ func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, not
 	})
 }
 
-// ReopenItem returns a done item to the bottom of the open queue.
+// ReopenItem returns a done item to the bottom of its section's open queue.
 func (s *Store) ReopenItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
 	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *tx, log *eventLog, it *Item) error {
 		now := log.now
 		if it.Status != StatusDone {
 			return fmt.Errorf("%w: item #%d is not done", ErrConflict, it.ID)
 		}
-		if _, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, closed_at = NULL, close_note = '', updated_at = ? WHERE id = ?`,
+		if _, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, closed_at = NULL, close_note = '', answered_choice = '', answered_by_id = NULL, answered_at = NULL, updated_at = ? WHERE id = ?`,
 			StatusOpen, now, it.ID); err != nil {
 			return err
 		}
-		return insertAt(t, it.WorkspaceID, it.ID, 0)
+		return insertAt(t, it.WorkspaceID, it.SectionID, it.ID, 0)
 	})
 }
 
@@ -566,7 +863,7 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}
-		ids, err := queuedIDs(t, actor.WorkspaceID)
+		ids, err := queuedIDs(t, actor.WorkspaceID, it.SectionID)
 		if err != nil {
 			return err
 		}

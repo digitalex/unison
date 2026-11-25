@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
@@ -7,25 +7,108 @@ import { messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import { NewTodoDialog, withTodo } from "./Todos.jsx";
 import Button from "./ui/Button.jsx";
+import Checkbox from "./ui/Checkbox.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { MentionTextarea } from "./mentions.jsx";
 import { Input, Select } from "./ui/Input.jsx";
 
+function ChoicesField({ choices, setChoices, closeOnAnswer, setCloseOnAnswer }) {
+  if (choices.length === 0) {
+    return (
+      <div className="choices-add-row">
+        <Button type="button" size="small" variant="ghost" onClick={() => setChoices(["", ""])}>
+          <Plus aria-hidden="true" />
+          Add choice
+        </Button>
+      </div>
+    );
+  }
+  const updateAt = (idx, value) => setChoices(choices.map((c, i) => (i === idx ? value : c)));
+  const removeAt = (idx) => {
+    const next = choices.filter((_, i) => i !== idx);
+    setChoices(next);
+    if (next.length === 0) setCloseOnAnswer(false);
+  };
+  return (
+    <div className="field choices-editor">
+      <div className="detail-section-head">
+        <span className="field-label">Decision choices</span>
+        <Button
+          type="button"
+          size="small"
+          variant="ghost"
+          onClick={() => {
+            setChoices([]);
+            setCloseOnAnswer(false);
+          }}
+        >
+          Clear choices
+        </Button>
+      </div>
+      <div className="choices-inputs">
+        {choices.map((val, idx) => (
+          <div key={idx} className="choice-input-row">
+            <Input
+              maxLength={120}
+              aria-label={`Choice ${idx + 1}`}
+              value={val}
+              onChange={(e) => updateAt(idx, e.target.value)}
+              placeholder={`Option ${idx + 1} (e.g. ${idx === 0 ? "Approve" : "Request changes"})`}
+            />
+            <Button
+              type="button"
+              iconOnly
+              variant="ghost"
+              aria-label={`Remove choice ${idx + 1}`}
+              title="Remove choice"
+              onClick={() => removeAt(idx)}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </div>
+        ))}
+      </div>
+      <div className="choices-editor-foot">
+        {choices.length < 10 && (
+          <Button type="button" size="small" variant="ghost" onClick={() => setChoices([...choices, ""])}>
+            <Plus aria-hidden="true" />
+            Add choice
+          </Button>
+        )}
+        <Checkbox checked={closeOnAnswer} onChange={setCloseOnAnswer}>
+          Close item automatically when answered
+        </Checkbox>
+      </div>
+    </div>
+  );
+}
+
 // NewItemDialog writes a backlog item: a title, description, and optional
-// assignee (#146), starting from initial ({title, body, assignee_id}) if
-// given, e.g. after a failed add. ⌘/Ctrl+Enter submits; onCreate gets
-// {title, body, assignee_id} and adds it, so the dialog closes at once (#128).
-export function NewItemDialog({ initial, participants = [], onClose, onCreate }) {
+// assignee (#146), plus custom section & structured decision choices (#919)
+// when sections are configured.
+export function NewItemDialog({ initial, section = null, sections = [], participants = [], onClose, onCreate }) {
   const [title, setTitle] = useState(initial?.title || "");
   const [body, setBody] = useState(initial?.body || "");
   const [assigneeId, setAssigneeId] = useState(initial?.assignee_id || 0);
+  const [sectionId, setSectionId] = useState(() => initial?.section_id ?? (section?.id || 0));
+  const [choices, setChoices] = useState(() => (initial?.choices ? [...initial.choices] : []));
+  const [closeOnAnswer, setCloseOnAnswer] = useState(() => Boolean(initial?.close_on_answer));
   const create = (e) => {
     e.preventDefault();
-    onCreate({ title, body, assignee_id: assigneeId });
+    const cleanedChoices = choices.map((c) => c.trim()).filter(Boolean);
+    onCreate({
+      title,
+      body,
+      assignee_id: assigneeId,
+      section_id: sectionId,
+      choices: cleanedChoices,
+      close_on_answer: closeOnAnswer && cleanedChoices.length > 0,
+    });
   };
+  const dialogTitle = section ? `New ${section.name} item` : "New backlog item";
   return (
-    <Dialog title="New backlog item" onClose={onClose} className="item-dialog">
+    <Dialog title={dialogTitle} onClose={onClose} className="item-dialog">
       <form className="form item-form" onSubmit={create} onKeyDown={submitOnModEnter}>
         <Field label="Title">
           <Input required data-autofocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing?" />
@@ -33,6 +116,18 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
         <Field label="Description">
           <MentionTextarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Details, acceptance criteria, links, screenshots… (Markdown)" />
         </Field>
+        {sections.length > 0 && (
+          <Field label="Section">
+            <Select value={sectionId} onChange={(e) => setSectionId(Number(e.target.value))}>
+              <option value={0}>Backlog</option>
+              {sections.map((s) => (
+                <option key={s.id} value={s.id}>
+                  {s.name}
+                </option>
+              ))}
+            </Select>
+          </Field>
+        )}
         <Field label="Assignee">
           <Select value={assigneeId} onChange={(e) => setAssigneeId(Number(e.target.value))}>
             <option value={0}>Unassigned</option>
@@ -43,6 +138,14 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
             ))}
           </Select>
         </Field>
+        {(sections.length > 0 || choices.length > 0) && (
+          <ChoicesField
+            choices={choices}
+            setChoices={setChoices}
+            closeOnAnswer={closeOnAnswer}
+            setCloseOnAnswer={setCloseOnAnswer}
+          />
+        )}
         <div className="actions-row dialog-actions">
           <span className="muted dialog-hint">⌘/Ctrl+Enter to create</span>
           <Button type="button" variant="ghost" onClick={onClose}>
@@ -59,7 +162,7 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
 
 // ItemDialog shows one item with everything you can do to it. It renders
 // whatever the live list holds, so other people's changes show up here.
-export function ItemDialog({ item, items = [], todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onClose }) {
+export function ItemDialog({ item, items = [], sections = [], todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onClose }) {
   const path = `/backlog/${item.id}`;
   const [editing, setEditing] = useState(false);
   const stableParticipants = useStableParticipants(participants);
@@ -84,9 +187,14 @@ export function ItemDialog({ item, items = [], todos = [], setTodos, artifacts =
       className="item-dialog"
     >
       {editing ? (
-        <EditForm item={item} path={path} run={run} onDone={() => setEditing(false)} />
+        <EditForm item={item} sections={sections} path={path} run={run} onReloadMe={onReloadMe} onDone={() => setEditing(false)} />
       ) : (
-        <div className="item-description">{item.body ? <MemoMarkdown text={item.body} /> : <p className="muted">No description.</p>}</div>
+        <>
+          <div className="item-description">{item.body ? <MemoMarkdown text={item.body} /> : <p className="muted">No description.</p>}</div>
+          {item.choices?.length > 0 && (
+            <DecisionCard item={item} path={path} participants={stableParticipants} run={run} onReloadMe={onReloadMe} />
+          )}
+        </>
       )}
       <ItemFacts item={item} participants={stableParticipants} />
       <ItemActions item={item} path={path} participants={stableParticipants} me={me} run={run} onDeleted={onClose} />
@@ -116,12 +224,72 @@ export function ItemDialog({ item, items = [], todos = [], setTodos, artifacts =
   );
 }
 
-function EditForm({ item, path, run, onDone }) {
+function DecisionCard({ item, path, participants, run, onReloadMe }) {
+  const [busyChoice, setBusyChoice] = useState(null);
+  const choose = async (choice) => {
+    setBusyChoice(choice);
+    const updated = await run("POST", `${path}/answer`, { choice });
+    setBusyChoice(null);
+    if (updated) onReloadMe?.();
+  };
+  const isDone = item.status === "done";
+  return (
+    <section className="decision-card" aria-label="Decision choices">
+      <div className="decision-card-head">
+        <span className="decision-card-title">Decision</span>
+        {item.close_on_answer && !isDone && <span className="muted decision-card-hint">Resolves & closes item on click</span>}
+      </div>
+      <div className="decision-choices">
+        {item.choices.map((choice) => {
+          const selected = item.answered_choice === choice;
+          return (
+            <button
+              key={choice}
+              type="button"
+              className={selected ? "decision-choice selected" : "decision-choice"}
+              aria-pressed={selected}
+              disabled={busyChoice !== null || isDone}
+              onClick={() => choose(choice)}
+            >
+              {selected && <Check aria-hidden="true" />}
+              <span>{choice}</span>
+            </button>
+          );
+        })}
+      </div>
+      {item.answered_choice && (
+        <p className="decision-summary">
+          Selected <b>{item.answered_choice}</b>
+          {item.answered_by_id ? ` by ${name(participants, item.answered_by_id)}` : ""}
+          {item.answered_at ? ` · ${ago(item.answered_at)}` : ""}
+        </p>
+      )}
+    </section>
+  );
+}
+
+function EditForm({ item, sections = [], path, run, onReloadMe, onDone }) {
   const [title, setTitle] = useState(item.title);
   const [body, setBody] = useState(item.body);
+  const [sectionId, setSectionId] = useState(item.section_id || 0);
+  const [choices, setChoices] = useState(() => (item.choices ? [...item.choices] : []));
+  const [closeOnAnswer, setCloseOnAnswer] = useState(Boolean(item.close_on_answer));
   const save = async (e) => {
     e.preventDefault();
-    if (await run("PATCH", path, { title, body })) onDone();
+    const cleanedChoices = choices.map((c) => c.trim()).filter(Boolean);
+    const payload = {
+      title,
+      body,
+      choices: cleanedChoices,
+      close_on_answer: closeOnAnswer && cleanedChoices.length > 0,
+    };
+    if (sections.length > 0 || item.section_id) {
+      payload.section_id = sectionId;
+    }
+    if (await run("PATCH", path, payload)) {
+      onReloadMe?.();
+      onDone();
+    }
   };
   return (
     <form className="form item-form" onSubmit={save} onKeyDown={submitOnModEnter}>
@@ -131,6 +299,24 @@ function EditForm({ item, path, run, onDone }) {
       <Field label="Description">
         <MentionTextarea rows={10} value={body} onChange={(e) => setBody(e.target.value)} />
       </Field>
+      {(sections.length > 0 || item.section_id) && (
+        <Field label="Section">
+          <Select value={sectionId} onChange={(e) => setSectionId(Number(e.target.value))}>
+            <option value={0}>Backlog</option>
+            {sections.map((s) => (
+              <option key={s.id} value={s.id}>
+                {s.name}
+              </option>
+            ))}
+          </Select>
+        </Field>
+      )}
+      <ChoicesField
+        choices={choices}
+        setChoices={setChoices}
+        closeOnAnswer={closeOnAnswer}
+        setCloseOnAnswer={setCloseOnAnswer}
+      />
       <div className="actions-row dialog-actions">
         <Button type="button" variant="ghost" onClick={onDone}>
           Cancel
@@ -145,6 +331,7 @@ function EditForm({ item, path, run, onDone }) {
 
 function ItemFacts({ item, participants }) {
   const facts = [["Status", STATUS_LABELS[item.status]]];
+  if (item.section_name) facts.push(["Section", item.section_name]);
   if (item.assignee_id) facts.push([item.status === "done" ? "Done by" : "Assignee", name(participants, item.assignee_id)]);
   if (item.status === "in_progress" && item.lease_expires_at) facts.push(["Lease", `${hoursLeft(item.lease_expires_at)}h left`]);
   if (item.status === "done" && item.close_note) facts.push(["Note", item.close_note]);
