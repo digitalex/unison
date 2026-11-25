@@ -851,7 +851,15 @@ func (s *Server) listActions(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) listBacklog(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
+	sortBy := q.Get("sort")
+	if err := store.SortBacklogItems(nil, sortBy); err != nil {
+		storeError(w, err)
+		return
+	}
 	list, evs, err := s.store.ListBacklogSection(r.Context(), r.PathValue("ws"), q.Get("status"), q.Get("section"))
+	if err == nil {
+		err = store.SortBacklogItems(list, sortBy)
+	}
 	s.respond(w, http.StatusOK, list, evs, err)
 }
 

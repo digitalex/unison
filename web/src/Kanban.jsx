@@ -11,7 +11,7 @@ import Button from "./ui/Button.jsx";
 // last DONE_RECENT closed items unless expanded.
 const DONE_RECENT = 10;
 
-export default function Kanban({ groups, done, pending, sectionLabel = "Backlog", participants, me, repos, run, reorder, hintId, created, onOpen, onAdd }) {
+export default function Kanban({ groups, done, pending, sectionLabel = "Backlog", participants, me, repos, run, reorder, canReorder = true, hintId, created, onOpen, onAdd }) {
   const [allDone, setAllDone] = useState(false);
   const shownDone = allDone ? done : done.slice(0, DONE_RECENT);
   const cards = (status, list) =>
@@ -25,6 +25,7 @@ export default function Kanban({ groups, done, pending, sectionLabel = "Backlog"
         me={me}
         repos={repos}
         run={run}
+        canReorder={canReorder}
         dragClass={reorder.classesFor(it).join(" ")}
         lifted={reorder.isLifted(it)}
         onReorderPointerDown={reorder.pointerDown}
@@ -158,6 +159,7 @@ const KanbanCard = memo(function KanbanCard({
   me,
   repos,
   run,
+  canReorder = true,
   dragClass,
   lifted,
   onReorderPointerDown,
@@ -183,26 +185,33 @@ const KanbanCard = memo(function KanbanCard({
       data-id={item.id}
       data-status={item.status}
       onClick={open}
-      onPointerDown={(e) => onReorderPointerDown(e, item, false)}
+      onPointerDown={canReorder ? (e) => onReorderPointerDown(e, item, false) : undefined}
     >
       <div className="kcard-top">
         {queued && (
-          <button
-            type="button"
-            className="kcard-grip"
-            data-grip={item.id}
-            aria-label={`Reorder #${num} ${item.title}`}
-            aria-describedby={hintId}
-            aria-pressed={lifted}
-            onPointerDown={(e) => {
-              e.stopPropagation();
-              onReorderPointerDown(e, item, true);
-            }}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => onReorderKeyDown(e, item, list)}
-          >
-            <GripVertical aria-hidden="true" />
-          </button>
+          <span className="rank kcard-rank">
+            {canReorder && (
+              <button
+                type="button"
+                className="kcard-grip"
+                data-grip={item.id}
+                aria-label={`Reorder #${num} ${item.title}`}
+                aria-describedby={hintId}
+                aria-pressed={lifted}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  onReorderPointerDown(e, item, true);
+                }}
+                onClick={(e) => e.stopPropagation()}
+                onKeyDown={(e) => onReorderKeyDown(e, item, list)}
+              >
+                <GripVertical aria-hidden="true" />
+              </button>
+            )}
+            <span className="rank-number" title={`Priority ${item.position}`}>
+              {item.position}.
+            </span>
+          </span>
         )}
         <span className="item-id">#{num}</span>
         <RecurringMarker item={item} />

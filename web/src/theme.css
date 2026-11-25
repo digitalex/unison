@@ -1816,17 +1816,44 @@ a.ws-mark:hover {
   text-align: left;
 }
 
-.screen-body > .group-head:first-of-type {
+.screen-body > .group-head:first-of-type,
+.group-head + .group-head {
   border-top: 0;
 }
 
 button.group-head {
   cursor: pointer;
+  user-select: none;
+  transition: background-color var(--motion-duration) var(--motion-easing);
+}
+
+button.group-head:hover {
+  background: var(--surface-hover);
+}
+
+.group-head > .lucide:first-child {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+}
+
+.group-head-icon.lucide {
+  width: 14px;
+  height: 14px;
+  color: var(--text-secondary);
+}
+
+.group-head-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .group-head .count {
   color: var(--text-muted);
   font-weight: var(--weight-ui-regular);
+  font-variant-numeric: tabular-nums;
 }
 
 .row {
@@ -2868,15 +2895,70 @@ html.reordering * {
   height: 14px;
 }
 
-/* ---- Backlog board (Kanban.jsx): List | Kanban in the header ---- */
+/* ---- Backlog board & view toolbar (Backlog.jsx, Kanban.jsx, backlogView.jsx) ---- */
+.backlog-tools {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-xs);
+  margin-left: var(--space-xs);
+  min-width: 0;
+}
+
 .view-switch {
   margin-left: var(--space-s);
+}
+
+.backlog-tools .view-switch {
+  margin-left: 0;
 }
 
 .view-switch button {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xxs);
+}
+
+.backlog-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+}
+
+.backlog-select > select.control {
+  appearance: none;
+  width: auto;
+  height: 28px;
+  padding: 0 calc(var(--space-xs) + 14px) 0 calc(var(--space-xs) + 15px);
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  color: var(--text);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge), var(--control-shadow);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-medium);
+  line-height: var(--line-xs);
+  cursor: pointer;
+}
+
+.backlog-select > select.control:hover {
+  background: var(--surface-hover);
+}
+
+.backlog-select-icon.lucide,
+.backlog-select-chevron.lucide {
+  position: absolute;
+  width: 13px;
+  height: 13px;
+  color: var(--text-muted);
+  pointer-events: none;
+}
+
+.backlog-select-icon.lucide {
+  left: var(--space-xs);
+}
+
+.backlog-select-chevron.lucide {
+  right: 6px;
 }
 
 .screen-body.kanban-body {
@@ -3041,13 +3123,25 @@ html.reordering * {
   display: inline-flex;
 }
 
+.kcard-rank {
+  display: inline-flex;
+  align-items: center;
+  width: auto;
+  min-width: 14px;
+  text-align: left;
+  font-size: var(--size-xs);
+}
+
 .kcard-grip {
+  position: absolute;
+  top: 50%;
+  left: -4px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 18px;
   height: 20px;
-  margin-left: -6px;
+  margin-top: -10px;
   padding: 0;
   border: 0;
   border-radius: var(--radius-xs);
@@ -3077,11 +3171,24 @@ html.reordering * {
   opacity: 1;
 }
 
+.kcard:hover .kcard-rank:has(.kcard-grip) .rank-number,
+.kcard-rank:has(.kcard-grip:focus-visible) .rank-number,
+.kcard.lifted .kcard-rank .rank-number,
+.kcard.dragging .kcard-rank .rank-number {
+  visibility: hidden;
+}
+
 @media (pointer: coarse) {
   .kcard-grip {
+    left: -6px;
     width: 28px;
     height: 28px;
+    margin-top: -14px;
     opacity: 1;
+  }
+
+  .kcard-rank:has(.kcard-grip) .rank-number {
+    visibility: hidden;
   }
 
   .kcard-actions {
@@ -4807,6 +4914,27 @@ button.md-mention-chip.md-mention-me:hover {
     gap: var(--space-xs);
     padding: var(--space-s) var(--space-s) var(--space-xxs) var(--space-m);
     border-bottom: 0;
+  }
+
+  .screen-head:has(.backlog-tools) {
+    flex-wrap: wrap;
+  }
+
+  .screen-head .backlog-tools {
+    order: 2;
+    width: 100%;
+    margin-left: 0;
+    padding-bottom: var(--space-xxs);
+    overflow-x: auto;
+    scrollbar-width: none;
+  }
+
+  .screen-head .backlog-tools::-webkit-scrollbar {
+    display: none;
+  }
+
+  .screen-head .backlog-tools .seg.view-switch {
+    margin-left: 0;
   }
 
   .screen-title {
