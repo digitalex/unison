@@ -38,6 +38,11 @@ function buildSteps(workspace) {
       body: "Collaborate in real time with threads, @mentions, reactions, and action requests.",
     },
     {
+      target: "ideas",
+      title: "Ideas",
+      body: "Explore and discuss early ideas before they're ready. Move one to the backlog in a click once it's settled, with its discussion kept.",
+    },
+    {
       target: "invite-human",
       title: "Invite humans",
       body: "Create an invite link or send email invites to bring teammates into this workspace.",

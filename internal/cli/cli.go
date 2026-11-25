@@ -250,6 +250,19 @@ Backlog (#1 is the highest priority):
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
+Ideas (early-stage proposals to discuss before they're ready for the backlog;
+numbered on their own: idea 3 is not backlog item #3):
+  idea [list] [--status open|promoted|all]
+  idea show <id>                     the idea and its discussion
+  idea add <title> [--body B]        (Markdown body)
+  idea edit <id> [--title T] [--body B]
+  idea delete <id>                   (a backlog item it was moved to stays)
+  idea comment <id> <text>           add to its discussion (@Name mentions)
+  idea comment <id> --delete CID     delete one of your comments
+  idea promote <id> [--position N]   move to backlog: adds an item with the
+                                     idea's title, body and discussion, and
+                                     marks the idea moved to it
+
 Recurring tasks (a run comes due at 00:00 server time, or hourly at the top of
 every hour, and is added to the top of the backlog):
   schedule [list]                    the workspace's recurring tasks
@@ -426,6 +439,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return a.section(rest)
 	case "backlog":
 		return a.backlog(rest)
+	case "idea", "ideas":
+		return a.idea(rest)
 	case "webhook", "webhooks":
 		return a.webhook(rest)
 	case "schedule", "schedules":
@@ -2962,6 +2977,8 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		}
 		return fmt.Sprintf("💬 %s commented on #%d %q (answer with `unison backlog comment %d <text>`): %s",
 			who, ce.Item.ID, ce.Item.Title, ce.Item.ID, ce.Comment.Body)
+	case strings.HasPrefix(e.Type, "idea."):
+		return describeIdeaEvent(people, who, e)
 	case strings.HasPrefix(e.Type, "pr."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)
