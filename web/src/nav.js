@@ -24,8 +24,22 @@ export function spaLink(to, onNavigate) {
 export const OPEN_ITEM = "unison:open-item";
 export const SHOW_MESSAGE = "unison:show-message";
 
-function workspaceBase() {
+export function workspaceBase(workspaceId) {
+  if (workspaceId) return `/w/${workspaceId}`;
+  if (typeof window === "undefined") return "";
   return window.location.pathname.match(/^(\/w\/[^/]+)/)?.[1] || "";
+}
+
+export function itemHref(id, workspaceId) {
+  return `${workspaceBase(workspaceId)}?item=${id}`;
+}
+
+export function messageHref(id, workspaceId) {
+  return `${workspaceBase(workspaceId)}/chat#msg-${id}`;
+}
+
+export function ideaHref(id, workspaceId) {
+  return `${workspaceBase(workspaceId)}/ideas?idea=${id}`;
 }
 
 function eventLink(href, type, id) {
@@ -41,10 +55,10 @@ function eventLink(href, type, id) {
 
 // itemLink returns props for an <a> that opens backlog item id (/w/:ws?item=id).
 export function itemLink(id) {
-  return eventLink(`${workspaceBase()}?item=${id}`, OPEN_ITEM, id);
+  return eventLink(itemHref(id), OPEN_ITEM, id);
 }
 
 // messageLink returns props for an <a> that shows chat message id (/w/:ws/chat#msg-id).
 export function messageLink(id) {
-  return eventLink(`${workspaceBase()}/chat#msg-${id}`, SHOW_MESSAGE, id);
+  return eventLink(messageHref(id), SHOW_MESSAGE, id);
 }

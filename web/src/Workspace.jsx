@@ -163,7 +163,7 @@ function isGateError(e) {
 // the data and live updates.
 // The title the page came with (index.html): what Home shows, and what a
 // tab goes back to on leaving a workspace.
-const HOME_TITLE = document.title;
+const HOME_TITLE = typeof document !== "undefined" ? document.title : "Unison";
 
 // useTabTitle names the browser tab for the workspace (#302), so tabs open
 // on several workspaces can be told apart: "<Workspace> | Unison" once it
@@ -189,6 +189,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   const token = account.user ? "" : getToken(id);
   const call = useMemo(() => workspaceApi(id, token), [id, token]);
   const uploader = useMemo(() => imageUploader(id, token), [id, token]);
+  const shellRef = useRef(null);
+  const [sidebarWidth, setSidebarWidth] = useSidebarWidth();
   const [gate, setGate] = useState(null); // {code, message} when refused
   const [joins, setJoins] = useState(0); // bumped on joining: reload everything
   const [workspace, setWorkspace] = useState(null);
@@ -627,7 +629,11 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   return (
     <ImageUpload.Provider value={uploader}>
     <MentionProvider participants={stableParticipants} items={backlog} me={me}>
-    <div className={joined ? "shell" : "shell shell-unjoined"}>
+    <div
+      ref={shellRef}
+      className={joined ? "shell" : "shell shell-unjoined"}
+      style={sidebarWidth ? { "--sidebar-w": `${sidebarWidth}px` } : undefined}
+    >
       <Sidebar
         workspace={workspace}
         sections={sections}
@@ -644,6 +650,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
         participants={participantsLoaded ? sidebarParticipants : null}
         reviews={reviews}
         call={call}
+        resizer={<SidebarResizer shellRef={shellRef} width={sidebarWidth} onWidth={setSidebarWidth} />}
         people={
           joined &&
           ((kind) => {
@@ -936,6 +943,7 @@ function storedNumber(key) {
 
 // messageFromURL reads a deep link to a chat message: #msg-12 or ?msg=12.
 function messageFromURL() {
+  if (typeof window === "undefined") return null;
   const m = window.location.hash.match(/^#msg-(\d+)$/) || window.location.search.match(/[?&]msg=(\d+)/);
   return m ? Number(m[1]) : null;
 }
@@ -948,16 +956,134 @@ function useShownMessage(show) {
     const id = messageFromURL();
     return id ? { id, at: Date.now() } : null;
   });
+  const showRef = useRef(show);
+  showRef.current = show;
   useEffect(() => {
-    if (shown) show("chat", `#msg-${shown.id}`);
+    if (shown) showRef.current("chat", `#msg-${shown.id}`);
     const onShow = (e) => {
-      show("chat", `#msg-${e.detail}`);
-      setShown({ id: e.detail, at: Date.now() });
+      showRef.current("chat", `#msg-${e.detail}`);
+      setShown({ id: Number(e.detail), at: Date.now() });
+    };
+    const onURLChange = () => {
+      const id = messageFromURL();
+      if (id) {
+        showRef.current("chat", `#msg-${id}`);
+        setShown({ id, at: Date.now() });
+      }
     };
     window.addEventListener(SHOW_MESSAGE, onShow);
-    return () => window.removeEventListener(SHOW_MESSAGE, onShow);
+    window.addEventListener("hashchange", onURLChange);
+    window.addEventListener("popstate", onURLChange);
+    return () => {
+      window.removeEventListener(SHOW_MESSAGE, onShow);
+      window.removeEventListener("hashchange", onURLChange);
+      window.removeEventListener("popstate", onURLChange);
+    };
   }, []);
   return shown;
+}
+
+export const SIDEBAR_WIDTH_KEY = "unison.sidebarWidth";
+export const DEFAULT_SIDEBAR_WIDTH = 232;
+export const SIDEBAR_MIN = 180;
+export const SIDEBAR_MAX = 420;
+export const MAIN_MIN = 360;
+
+export function clampSidebarWidth(w, totalWidth = 0) {
+  const maxAllowed =
+    totalWidth > 0 ? Math.max(SIDEBAR_MIN, Math.min(SIDEBAR_MAX, totalWidth - MAIN_MIN)) : SIDEBAR_MAX;
+  return Math.round(Math.max(SIDEBAR_MIN, Math.min(w, maxAllowed)));
+}
+
+export function parseStoredSidebarWidth(raw) {
+  if (!raw) return null;
+  const n = Number(raw);
+  if (!Number.isFinite(n) || n <= 0) return null;
+  return clampSidebarWidth(n);
+}
+
+function useSidebarWidth() {
+  const [width, setWidth] = useState(() => {
+    try {
+      return parseStoredSidebarWidth(localStorage.getItem(SIDEBAR_WIDTH_KEY));
+    } catch {
+      return null;
+    }
+  });
+  useEffect(() => {
+    const onStorage = (e) => {
+      if (e.key !== SIDEBAR_WIDTH_KEY) return;
+      setWidth(parseStoredSidebarWidth(e.newValue));
+    };
+    window.addEventListener("storage", onStorage);
+    return () => window.removeEventListener("storage", onStorage);
+  }, []);
+  const save = (w) => {
+    const next = w == null ? null : clampSidebarWidth(w);
+    setWidth(next);
+    try {
+      if (next) localStorage.setItem(SIDEBAR_WIDTH_KEY, String(next));
+      else localStorage.removeItem(SIDEBAR_WIDTH_KEY);
+    } catch {
+      // Storage may be unavailable (private windows); the width just won't stick.
+    }
+  };
+  return [width, save];
+}
+
+export function SidebarResizer({ shellRef, width, onWidth }) {
+  const clamp = (w) => {
+    const total = shellRef?.current?.getBoundingClientRect().width || 0;
+    return clampSidebarWidth(w, total);
+  };
+  const current = () =>
+    shellRef?.current?.querySelector(".sidebar")?.getBoundingClientRect().width || width || DEFAULT_SIDEBAR_WIDTH;
+  const onPointerDown = (e) => {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    const el = e.currentTarget;
+    el.setPointerCapture(e.pointerId);
+    el.dataset.dragging = "true";
+    const left = shellRef?.current?.getBoundingClientRect().left || 0;
+    const move = (ev) => onWidth(clamp(ev.clientX - left));
+    const up = () => {
+      el.removeEventListener("pointermove", move);
+      el.removeEventListener("pointerup", up);
+      el.removeEventListener("pointercancel", up);
+      delete el.dataset.dragging;
+      document.documentElement.classList.remove("resizing");
+    };
+    el.addEventListener("pointermove", move);
+    el.addEventListener("pointerup", up);
+    el.addEventListener("pointercancel", up);
+    document.documentElement.classList.add("resizing");
+  };
+  const onKeyDown = (e) => {
+    const step = e.shiftKey ? 80 : 24;
+    if (e.key === "ArrowRight") onWidth(clamp(current() + step));
+    else if (e.key === "ArrowLeft") onWidth(clamp(current() - step));
+    else if (e.key === "Home") onWidth(SIDEBAR_MIN);
+    else if (e.key === "End") onWidth(clamp(SIDEBAR_MAX));
+    else if (e.key === "Enter") onWidth(null);
+    else return;
+    e.preventDefault();
+  };
+  return (
+    <div
+      className="sidebar-resizer"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuemin={SIDEBAR_MIN}
+      aria-valuemax={SIDEBAR_MAX}
+      aria-valuenow={width || DEFAULT_SIDEBAR_WIDTH}
+      title="Drag to resize · double-click to reset"
+      tabIndex={0}
+      onPointerDown={onPointerDown}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => onWidth(null)}
+    />
+  );
 }
 
 const SCREENS = [
@@ -1029,7 +1155,7 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
 // token, #127), links out (product, canvas, repositories, custom links #299),
 // then settings and your account at the bottom.
-function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, navigate, participants, people, reviews, call }) {
+function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, navigate, participants, people, reviews, call, resizer = null }) {
   const repos = workspace.repos || [];
   const links = workspace.links || [];
   const [editingLink, setEditingLink] = useState(null); // A link, or "new".
@@ -1210,6 +1336,7 @@ function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, l
           <ThemeSwitch />
         </div>
       </div>
+      {resizer}
     </nav>
   );
 }
