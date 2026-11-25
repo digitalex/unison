@@ -1,7 +1,17 @@
-import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
+import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
 import { itemNum, meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
+import {
+  BacklogToolbar,
+  CollapsibleGroupHead,
+  buildBacklogSectionView,
+  buildBacklogStatusView,
+  formatStatusLabel,
+  useBacklogGroup,
+  useBacklogSort,
+  useCollapsedGroups,
+} from "./backlogView.jsx";
 import Kanban from "./Kanban.jsx";
 import { OPEN_ITEM } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
@@ -21,7 +31,9 @@ const EMPTY_REPOS = [];
 // here, Invite), error the workspace's error bar.
 export default function Backlog({ section = null, sections = [], items, allItems = null, todos = [], setTodos, artifacts = [], setArtifacts, token = "", onReloadMe, participants, me, workspace, call, onError, head, error }) {
   const [view, setView] = useBacklogView();
-  const [showDone, setShowDone] = useState(false);
+  const [sort, setSort] = useBacklogSort();
+  const [groupBy, setGroupBy] = useBacklogGroup();
+  const { isExpanded, toggleGroup, expandGroups } = useCollapsedGroups();
   const [creating, setCreating] = useState(false);
   useKeyShortcut(
     (e) => !e.shiftKey && (e.key === "c" || e.key === "C"),
@@ -46,26 +58,24 @@ export default function Backlog({ section = null, sections = [], items, allItems
     [run],
   );
   const stableParticipants = useStableParticipants(participants);
-  const { queued, groups, done } = useMemo(() => {
-    const nextQueued = items.filter((it) => it.status !== "done");
-    const nextGroups = {
-      in_progress: nextQueued.filter((it) => it.status === "in_progress"),
-      open: nextQueued.filter((it) => it.status === "open"),
-    };
-    // Most recently closed first (items closed live are added at the end).
-    const nextDone = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
-    return { queued: nextQueued, groups: nextGroups, done: nextDone };
-  }, [items]);
+  const showGroupControl = view === "list" && !section && sections.length > 0;
+  const effectiveGroupBy = showGroupControl ? groupBy : "status";
+  const canReorder = sort === "priority" && effectiveGroupBy === "status";
   const lookupItems = allItems || items;
-  const reorder = useReorder(groups, moveTo);
+  const { queued, groups, extraStatuses, done } = useMemo(() => buildBacklogStatusView(items, sort), [items, sort]);
+  const sectionView = useMemo(
+    () => (effectiveGroupBy === "section" ? buildBacklogSectionView(lookupItems, sections, sort) : null),
+    [effectiveGroupBy, lookupItems, sections, sort],
+  );
+  const reorder = useReorder(groups, moveTo, canReorder);
   const openedItem = useOpenItem(openId, lookupItems, closeItem, setNotice);
   useDismiss(notice, setNotice);
-  useRevealCreated(created, items, setCreated);
+  useRevealCreated(created, effectiveGroupBy === "section" ? lookupItems : items, setCreated);
   const hintId = useId();
   const repos = useMemo(() => workspace?.repos || EMPTY_REPOS, [workspace?.repos]);
 
-  const rows = (status, list) =>
-    reorder.arrange(status, list).map((it) => (
+  const rows = (groupKey, list) =>
+    reorder.arrange(groupKey, list).map((it) => (
       <BacklogRow
         key={it.id}
         item={it}
@@ -74,6 +84,7 @@ export default function Backlog({ section = null, sections = [], items, allItems
         participants={stableParticipants}
         me={me}
         run={run}
+        canReorder={canReorder}
         dragClass={reorder.classesFor(it).join(" ")}
         lifted={reorder.isLifted(it)}
         onReorderPointerDown={reorder.pointerDown}
@@ -86,8 +97,15 @@ export default function Backlog({ section = null, sections = [], items, allItems
   const create = async ({ title, body, assignee_id, section_id, choices, close_on_answer }) => {
     setCreating(false);
     const targetSectionId = section_id !== undefined ? Number(section_id) : section?.id || 0;
-    const staysHere = targetSectionId === (section?.id || 0);
-    const temp = staysHere ? { id: `pending-${Date.now()}`, title, body, assignee_id } : null;
+    const staysInSection = targetSectionId === (section?.id || 0);
+    const staysHere = staysInSection || (!section && effectiveGroupBy === "section");
+    if (staysHere) {
+      expandGroups([
+        staysInSection ? "open" : null,
+        !section ? (targetSectionId > 0 ? `section:${targetSectionId}` : "section:backlog") : null,
+      ]);
+    }
+    const temp = staysHere ? { id: `pending-${Date.now()}`, title, body, assignee_id, section_id: targetSectionId } : null;
     if (temp) setAdding((list) => [...list, temp]);
     const payload = { title, body };
     if (assignee_id > 0) payload.assignee_id = assignee_id;
@@ -111,6 +129,7 @@ export default function Backlog({ section = null, sections = [], items, allItems
   };
   const ids = new Set(lookupItems.map((it) => it.id));
   const pendingRows = adding.filter((x) => !ids.has(x.realId));
+  const statusPendingRows = pendingRows.filter((x) => (x.section_id || 0) === (section?.id || 0));
   useEffect(() => {
     if (pendingRows.length < adding.length) setAdding(pendingRows);
   }, [pendingRows.length, adding.length]);
@@ -126,10 +145,20 @@ export default function Backlog({ section = null, sections = [], items, allItems
   ) : (
     "Backlog"
   );
+  const toolbar = (
+    <BacklogToolbar
+      viewSwitch={<ViewSwitch view={view} onChange={setView} />}
+      sort={sort}
+      onSortChange={setSort}
+      showGroupControl={showGroupControl}
+      groupBy={groupBy}
+      onGroupChange={setGroupBy}
+    />
+  );
 
   return (
     <section className="screen" aria-label={screenLabel}>
-      <ScreenHead title={headTitle} tools={<ViewSwitch view={view} onChange={setView} />}>
+      <ScreenHead title={headTitle} tools={toolbar}>
         {head}
         <Button variant="primary" size="small" onClick={() => setCreating(true)} aria-haspopup="dialog" aria-label={newButtonLabel}>
           <Plus aria-hidden="true" />
@@ -155,33 +184,34 @@ export default function Backlog({ section = null, sections = [], items, allItems
 
         {view === "kanban" ? (
           <Kanban
-            {...{ groups, done, me, repos, run, reorder, hintId, created }}
+            {...{ groups, done, me, repos, run, reorder, canReorder, hintId, created }}
             sectionLabel={screenLabel}
             participants={stableParticipants}
-            pending={pendingRows}
+            pending={statusPendingRows}
             onOpen={openItem}
             onAdd={create}
           />
+        ) : effectiveGroupBy === "section" && sectionView ? (
+          <SectionGroupList
+            sectionView={sectionView}
+            pendingRows={pendingRows}
+            participants={stableParticipants}
+            isExpanded={isExpanded}
+            onToggle={toggleGroup}
+            renderRows={rows}
+          />
         ) : (
-          <>
-            <GroupHead status="in_progress" label="In progress" count={groups.in_progress.length} />
-            {rows("in_progress", groups.in_progress)}
-
-            <GroupHead status="open" label="Open" count={groups.open.length} />
-            {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
-            {rows("open", groups.open)}
-            {pendingRows.map((x) => (
-              <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={stableParticipants} />
-            ))}
-
-            <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
-              {showDone ? <ChevronDown aria-hidden="true" /> : <ChevronRight aria-hidden="true" />}
-              <span className="status done" />
-              Done
-              <span className="count">{done.length}</span>
-            </button>
-            {showDone && rows("done", done)}
-          </>
+          <StatusGroupList
+            queued={queued}
+            groups={groups}
+            extraStatuses={extraStatuses}
+            done={done}
+            pendingRows={statusPendingRows}
+            participants={stableParticipants}
+            isExpanded={isExpanded}
+            onToggle={toggleGroup}
+            renderRows={rows}
+          />
         )}
       </div>
 
@@ -259,13 +289,108 @@ function ViewSwitch({ view, onChange }) {
   );
 }
 
-function GroupHead({ status, label, count }) {
+function StatusGroupList({ queued, groups, extraStatuses, done, pendingRows, participants, isExpanded, onToggle, renderRows }) {
+  const inProgressOpen = isExpanded("in_progress");
+  const openExpanded = isExpanded("open");
+  const doneExpanded = isExpanded("done");
   return (
-    <h3 className="group-head">
-      <span className={`status ${status}`} />
-      {label}
-      <span className="count">{count}</span>
-    </h3>
+    <>
+      <CollapsibleGroupHead
+        expanded={inProgressOpen}
+        onToggle={() => onToggle("in_progress")}
+        status="in_progress"
+        label="In progress"
+        count={groups.in_progress.length}
+      />
+      {inProgressOpen && renderRows("in_progress", groups.in_progress)}
+
+      {extraStatuses.map((status) => {
+        const list = groups[status] || [];
+        const expanded = isExpanded(status);
+        return (
+          <Fragment key={status}>
+            <CollapsibleGroupHead
+              expanded={expanded}
+              onToggle={() => onToggle(status)}
+              status={status}
+              label={formatStatusLabel(status)}
+              count={list.length}
+            />
+            {expanded && renderRows(status, list)}
+          </Fragment>
+        );
+      })}
+
+      <CollapsibleGroupHead
+        expanded={openExpanded}
+        onToggle={() => onToggle("open")}
+        status="open"
+        label="Open"
+        count={groups.open.length}
+      />
+      {openExpanded && (
+        <>
+          {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
+          {renderRows("open", groups.open)}
+          {pendingRows.map((x) => (
+            <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
+          ))}
+        </>
+      )}
+
+      <CollapsibleGroupHead
+        expanded={doneExpanded}
+        onToggle={() => onToggle("done")}
+        status="done"
+        label="Done"
+        count={done.length}
+      />
+      {doneExpanded && renderRows("done", done)}
+    </>
+  );
+}
+
+function SectionGroupList({ sectionView, pendingRows, participants, isExpanded, onToggle, renderRows }) {
+  const { activeCount, sectionGroups, done } = sectionView;
+  const doneExpanded = isExpanded("done");
+  return (
+    <>
+      {sectionGroups.map((group) => {
+        const expanded = isExpanded(group.key);
+        const groupPending = pendingRows.filter((x) => (x.section_id || 0) === group.sectionId);
+        return (
+          <Fragment key={group.key}>
+            <CollapsibleGroupHead
+              expanded={expanded}
+              onToggle={() => onToggle(group.key)}
+              isBacklogSection={group.isBacklog}
+              sectionIcon={group.icon}
+              label={group.label}
+              notify={group.notify}
+              count={group.items.length}
+            />
+            {expanded && (
+              <>
+                {group.isBacklog && activeCount === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
+                {renderRows(group.key, group.items)}
+                {groupPending.map((x) => (
+                  <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
+                ))}
+              </>
+            )}
+          </Fragment>
+        );
+      })}
+
+      <CollapsibleGroupHead
+        expanded={doneExpanded}
+        onToggle={() => onToggle("done")}
+        status="done"
+        label="Done"
+        count={done.length}
+      />
+      {doneExpanded && renderRows("done", done)}
+    </>
   );
 }
 
@@ -294,6 +419,7 @@ const BacklogRow = memo(function BacklogRow({
   me,
   repos,
   run,
+  canReorder = true,
   dragClass,
   lifted,
   onReorderPointerDown,
@@ -314,9 +440,9 @@ const BacklogRow = memo(function BacklogRow({
   };
   return (
     <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status}>
-      <div className="row" onClick={open} onPointerDown={(e) => onReorderPointerDown(e, item, false)}>
+      <div className="row" onClick={open} onPointerDown={canReorder ? (e) => onReorderPointerDown(e, item, false) : undefined}>
         <span className="rank">
-          {queued && (
+          {canReorder && queued && (
             <button
               type="button"
               className="grip"
@@ -546,17 +672,26 @@ function swallowNextClick() {
 //     and the rest of the row scrolls as usual.
 //   - Keyboard: on the grip, Space/Enter picks up, arrows move, Space/Enter
 //     drops, Escape cancels; moves are announced (announcement).
-function useReorder(groups, moveTo) {
+function useReorder(groups, moveTo, canReorder = true) {
   const [drag, setDrag] = useState(null); // The item being dragged.
   const [drop, setDrop] = useState(null); // { id, where: "before" | "after" }
   const [lifted, setLifted] = useState(null); // Keyboard: { id, status, from, index }
   const [announcement, setAnnouncement] = useState("");
   const live = useRef({});
-  live.current = { drag, drop, groups, lifted, moveTo };
+  live.current = { canReorder, drag, drop, groups, lifted, moveTo };
   const refocus = useRef(null); // Keyboard: the grip to keep focused after a drop.
 
+  useEffect(() => {
+    if (!canReorder) {
+      setDrag(null);
+      setDrop(null);
+      setLifted(null);
+      document.documentElement.classList.remove("reordering");
+    }
+  }, [canReorder]);
+
   const pointerDown = useCallback((e, item, fromGrip) => {
-    if (item.status === "done" || live.current.drag) return;
+    if (!live.current.canReorder || item.status === "done" || live.current.drag) return;
     const touch = e.pointerType === "touch";
     if (touch ? !fromGrip : e.button !== 0) return;
     if (!fromGrip && e.target.closest("a, select, input, textarea, button:not(.row-title)")) return;
@@ -634,6 +769,7 @@ function useReorder(groups, moveTo) {
   }, []);
 
   const keyDown = useCallback((e, item, list) => {
+    if (!live.current.canReorder) return;
     const describe = (it, index, total) => `#${itemNum(it)} ${it.title}, position ${index + 1} of ${total}`;
     const curLifted = live.current.lifted;
     const idx = list.findIndex((it) => it.id === item.id);
@@ -688,7 +824,7 @@ function useReorder(groups, moveTo) {
 
   // arrange previews a keyboard move: the lifted item shown at its new index.
   const arrange = (status, list) => {
-    if (!lifted || lifted.status !== status || lifted.index === lifted.from) return list;
+    if (!canReorder || !lifted || lifted.status !== status || lifted.index === lifted.from) return list;
     const out = list.filter((it) => it.id !== lifted.id);
     out.splice(lifted.index, 0, list[lifted.from]);
     return out;

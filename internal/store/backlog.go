@@ -1,6 +1,7 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -345,6 +346,67 @@ func listItems(t *tx, wsID, status, sectionFilter string) ([]Item, error) {
 		out = append(out, *it)
 	}
 	return out, nil
+}
+
+// Backlog view-only sort orders (#922). Sorting never mutates Item.Position.
+const (
+	SortPriority = "priority"
+	SortNewest   = "newest"
+	SortOldest   = "oldest"
+	SortUpdated  = "updated"
+	SortTitle    = "title"
+)
+
+// SortBacklogItems orders items in-memory by a view-only sort order (#922):
+// "" or "priority" preserves ListBacklogSection's canonical order; "newest",
+// "oldest", "updated", and "title" sort in-memory without touching DB state.
+func SortBacklogItems(items []Item, sortBy string) error {
+	switch strings.ToLower(strings.TrimSpace(sortBy)) {
+	case "", SortPriority:
+		return nil
+	case SortNewest:
+		slices.SortFunc(items, compareItemsNewest)
+	case SortOldest:
+		slices.SortFunc(items, compareItemsOldest)
+	case SortUpdated:
+		slices.SortFunc(items, compareItemsUpdated)
+	case SortTitle:
+		slices.SortFunc(items, compareItemsTitle)
+	default:
+		return fmt.Errorf("%w: unknown sort %q (want priority, newest, oldest, updated or title)", ErrInvalid, sortBy)
+	}
+	return nil
+}
+
+func compareItemsNewest(a, b Item) int {
+	if c := cmp.Compare(b.CreatedAt, a.CreatedAt); c != 0 {
+		return c
+	}
+	return cmp.Compare(b.ID, a.ID)
+}
+
+func compareItemsOldest(a, b Item) int {
+	if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.ID, b.ID)
+}
+
+func compareItemsUpdated(a, b Item) int {
+	if c := cmp.Compare(b.UpdatedAt, a.UpdatedAt); c != 0 {
+		return c
+	}
+	return cmp.Compare(b.ID, a.ID)
+}
+
+func compareItemsTitle(a, b Item) int {
+	if c := cmp.Compare(strings.ToLower(a.Title), strings.ToLower(b.Title)); c != 0 {
+		return c
+	}
+	if c := cmp.Compare(a.Position, b.Position); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.ID, b.ID)
 }
 
 // GetItem returns one backlog item.

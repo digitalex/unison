@@ -604,9 +604,73 @@ func TestBacklogAssignmentCLI(t *testing.T) {
 	}
 
 	help := e.ok(agent, "help")
-	for _, want := range []string{"not assigned to someone else", "--mentions wakes only for @mentions"} {
+	for _, want := range []string{"not assigned to someone else", "--mentions wakes only for @mentions", "--sort priority|newest|oldest|updated|title"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("help missing %q:\n%s", want, help)
 		}
+	}
+}
+
+func TestBacklogListSort(t *testing.T) {
+	e := newTestEnv(t)
+	human := t.TempDir()
+
+	now := time.UnixMilli(1_700_000_000_000)
+	e.st.SetClock(func() time.Time { return now })
+
+	e.login("Alex", "")
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+	e.ok(human, "join", e.url+"/w/"+ws.ID, "--name", "Alex", "--emoji", "🧑", "--account")
+
+	e.ok(human, "backlog", "add", "Charlie item")
+	now = now.Add(10 * time.Second)
+	e.ok(human, "backlog", "add", "alpha item")
+	now = now.Add(10 * time.Second)
+	e.ok(human, "backlog", "add", "Bravo item")
+	now = now.Add(10 * time.Second)
+	e.ok(human, "backlog", "edit", "1", "--body", "updated description")
+
+	orderFromJSON := func(args ...string) ([]int64, []int64) {
+		t.Helper()
+		var items []store.Item
+		raw := e.ok(human, append(args, "--json")...)
+		if err := json.Unmarshal([]byte(raw), &items); err != nil {
+			t.Fatalf("unmarshal %v: %v", args, err)
+		}
+		nums := make([]int64, len(items))
+		positions := make([]int64, len(items))
+		for i, it := range items {
+			nums[i] = it.Number
+			positions[i] = it.Position
+		}
+		return nums, positions
+	}
+
+	if nums, pos := orderFromJSON("backlog", "list", "--sort", "newest"); fmt.Sprint(nums) != "[3 2 1]" || fmt.Sprint(pos) != "[3 2 1]" {
+		t.Errorf("--sort newest nums=%v pos=%v, want [3 2 1] with canonical positions [3 2 1]", nums, pos)
+	}
+	if nums, _ := orderFromJSON("backlog", "list", "--sort", "oldest"); fmt.Sprint(nums) != "[1 2 3]" {
+		t.Errorf("--sort oldest nums=%v, want [1 2 3]", nums)
+	}
+	if nums, _ := orderFromJSON("backlog", "list", "--sort", "updated"); fmt.Sprint(nums) != "[1 3 2]" {
+		t.Errorf("--sort updated nums=%v, want [1 3 2]", nums)
+	}
+	if nums, _ := orderFromJSON("backlog", "list", "--sort", "title"); fmt.Sprint(nums) != "[2 3 1]" {
+		t.Errorf("--sort title nums=%v, want [2 3 1]", nums)
+	}
+
+	// Text output still prints canonical priority position numbers when sorted by newest.
+	txt := e.ok(human, "backlog", "list", "--sort", "newest")
+	lines := strings.Split(strings.TrimSpace(txt), "\n")
+	if len(lines) != 3 || !strings.HasPrefix(lines[0], "3.   #3 ") || !strings.HasPrefix(lines[2], "1.   #1 ") {
+		t.Errorf("unexpected text lines for --sort newest:\n%s", txt)
+	}
+
+	// Invalid --sort fails with non-zero exit code.
+	if _, errOut, code := e.run(human, "backlog", "list", "--sort", "bogus"); code == 0 || !strings.Contains(errOut, "unknown sort") {
+		t.Errorf("--sort bogus: code=%d stderr=%q, want non-zero mentioning unknown sort", code, errOut)
 	}
 }

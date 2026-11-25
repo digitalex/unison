@@ -222,6 +222,7 @@ Sections (optional custom sections alongside Backlog, e.g. Triage, Decisions):
 
 Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also resolve):
   backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]
+                 [--sort priority|newest|oldest|updated|title]
   backlog show <id>                  the item, its comments and the chat
                                      messages about it
   backlog add <title> [--body B] [--position N] [--to NAME] [--section SLUG|none]
@@ -1994,17 +1995,21 @@ func (a *app) backlogList(args []string) error {
 	fs := flag.NewFlagSet("backlog list", flag.ContinueOnError)
 	status := fs.String("status", "", "open, in_progress, done or all (default: open and in_progress)")
 	section := fs.String("section", "", "section slug or id, or all (default: main Backlog)")
+	sortBy := fs.String("sort", "", "view sort order: priority, newest, oldest, updated or title (default: priority)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return fmt.Errorf("%w: backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]", errUsage)
+		return fmt.Errorf("%w: backlog [list] [--status open|in_progress|done|all] [--section SLUG|all] [--sort priority|newest|oldest|updated|title]", errUsage)
 	}
 	q := url.Values{}
 	q.Set("status", *status)
 	if strings.TrimSpace(*section) != "" {
 		q.Set("section", strings.TrimSpace(*section))
+	}
+	if strings.TrimSpace(*sortBy) != "" {
+		q.Set("sort", strings.TrimSpace(*sortBy))
 	}
 	var items []store.Item
 	if ok, err := a.call("GET", "/backlog?"+q.Encode(), nil, &items, false); !ok {
