@@ -285,6 +285,65 @@ func TestEndToEnd(t *testing.T) {
 		t.Errorf("show --json = %+v, %v", shown, err)
 	}
 
+	// Ideas (#917): proposed and discussed apart from the backlog, then
+	// moved there with their context.
+	if out := e.ok(agent, "idea"); !strings.Contains(out, "No ideas yet") {
+		t.Errorf("idea ls (none) = %q", out)
+	}
+	if out := e.ok(agent, "idea", "add", "Dark", "mode", "--body", "Users keep **asking**."); !strings.Contains(out, "Idea 1  Dark mode") || !strings.Contains(out, "[open]") {
+		t.Errorf("idea add = %q", out)
+	}
+	// A comment on the agent's idea wakes its `wait --mentions`.
+	go func() {
+		time.Sleep(300 * time.Millisecond)
+		var out, errOut bytes.Buffer
+		Run([]string{"--server", e.url, "--workspace", ws.ID, "--token", tokenOf(t, human), "idea", "comment", "1", "Start", "with", "the", "sidebar"}, &out, &errOut)
+		done <- errOut.String()
+	}()
+	out = e.ok(agent, "wait", "--mentions", "--timeout", "10")
+	if errOut := <-done; errOut != "" {
+		t.Fatalf("idea comment: %s", errOut)
+	}
+	if !strings.Contains(out, `commented on idea 1 "Dark mode"`) || !strings.Contains(out, "unison idea comment 1") {
+		t.Errorf("wait = %q, want the idea comment", out)
+	}
+	if out := e.ok(human, "idea", "ls"); !strings.Contains(out, "idea 1    Dark mode") || !strings.Contains(out, "(1 comment)") {
+		t.Errorf("idea ls = %q", out)
+	}
+	if out := e.ok(agent, "idea", "show", "1"); !strings.Contains(out, "Users keep **asking**.") || !strings.Contains(out, "🧑 Alex: Start with the sidebar") {
+		t.Errorf("idea show = %q", out)
+	}
+	if backlog := e.ok(human, "backlog"); strings.Contains(backlog, "Dark mode") {
+		t.Errorf("an idea is in the backlog before it was moved:\n%s", backlog)
+	}
+	out = e.ok(human, "idea", "promote", "1", "--position", "1")
+	m := regexp.MustCompile(`Moved idea 1 to the backlog as #(\d+)`).FindStringSubmatch(out)
+	if m == nil || !strings.Contains(out, "Start with the sidebar") {
+		t.Fatalf("idea promote = %q", out)
+	}
+	// The new item wakes the agent like any other added item.
+	if out := e.ok(agent, "wait", "--mentions", "--timeout", "10"); !strings.Contains(out, "added #"+m[1]+` "Dark mode"`) {
+		t.Errorf("wait after promote = %q, want the new item", out)
+	}
+	if out := e.ok(agent, "backlog"); !strings.Contains(out, "1.   #"+m[1]) || !strings.Contains(out, "Dark mode") {
+		t.Errorf("backlog after promote = %q, want the idea on top", out)
+	}
+	if out := e.ok(agent, "backlog", "show", m[1]); !strings.Contains(out, "Users keep **asking**.") || !strings.Contains(out, "unison idea show 1") {
+		t.Errorf("promoted item = %q, want the idea's body and a reference to it", out)
+	}
+	if out := e.ok(agent, "idea", "show", "1"); !strings.Contains(out, "[moved to backlog #"+m[1]+"]") {
+		t.Errorf("promoted idea = %q", out)
+	}
+	if _, errOut, code := e.run(agent, "idea", "promote", "1"); code == 0 || !strings.Contains(errOut, "already moved") {
+		t.Errorf("promote twice: exit %d, stderr %q", code, errOut)
+	}
+	if out := e.ok(agent, "idea"); !strings.Contains(out, "No ideas yet") {
+		t.Errorf("open ideas after promote = %q", out)
+	}
+	if out := e.ok(agent, "idea", "--status", "all"); !strings.Contains(out, "Dark mode") {
+		t.Errorf("idea ls --status all = %q", out)
+	}
+
 	// Repositories: a workspace can have several.
 	if out := e.ok(human, "workspace", "repo", "add", "https://github.com/digitalex/unison-web"); !strings.Contains(out, "2   https://github.com/digitalex/unison-web") {
 		t.Errorf("repo add = %q", out)
@@ -371,7 +430,7 @@ func TestEndToEnd(t *testing.T) {
 	if out := e.ok(human, "schedule", "run", "1"); !strings.Contains(out, "to the top of the backlog") {
 		t.Errorf("schedule run = %q", out)
 	}
-	if out := e.ok(agent, "wait", "--mentions", "--timeout", "10"); !strings.Contains(out, `🔁 Recurring task added #4 "Dependency updates"`) {
+	if out := e.ok(agent, "wait", "--mentions", "--timeout", "10"); !strings.Contains(out, `🔁 Recurring task added #5 "Dependency updates"`) {
 		t.Errorf("wait after schedule run = %q", out)
 	}
 	if out := e.ok(human, "schedule", "run", "1"); !strings.Contains(out, "is still open, so no new item was added") {

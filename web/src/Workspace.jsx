@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FileText, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FileText, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Lightbulb, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, PageUnloadingError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import { markSeen } from "./activity.js";
@@ -14,6 +14,7 @@ import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
 import { ago, useStableParticipants } from "./backlogFormat.js";
+import Ideas from "./Ideas.jsx";
 import Recurring from "./Recurring.jsx";
 import Todos, { isTodoActive, withTodo } from "./Todos.jsx";
 import { repoName } from "./repos.js";
@@ -91,6 +92,8 @@ function collectionFor({ type, data }) {
   if (type.startsWith("schedule.")) return ["schedules"];
   if (type.startsWith("todo.")) return ["todos", "me"];
   if (type.startsWith("artifact.")) return ["artifacts"];
+  // Moving an idea to the backlog also records backlog.added for the item.
+  if (type.startsWith("idea.")) return ["ideas"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
@@ -133,7 +136,7 @@ function isGateError(e) {
 
 // Workspace is a workspace's page. A sidebar (a tab bar at the bottom on
 // phones) switches between its screens, and the current one fills the main
-// pane: view is "backlog", "recurring", "chat" or "settings". They all share
+// pane: view is "backlog", "recurring", "ideas", "chat" or "settings". They all share
 // the data and live updates.
 // The title the page came with (index.html): what Home shows, and what a
 // tab goes back to on leaving a workspace.
@@ -186,6 +189,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   const [artifacts, setArtifacts] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
   const [schedules, setSchedules] = useState([]);
+  const [ideas, setIdeas] = useState([]);
   const [members, setMembers] = useState({ members: [] });
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
@@ -288,6 +292,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
         setTodosLoaded(true);
       }),
     artifacts: () => call("GET", "/artifacts").then(setArtifacts),
+    // Open and promoted ideas: the board shows both.
+    ideas: () => call("GET", "/ideas?status=all").then(setIdeas),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
@@ -552,6 +558,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     actions: me?.open_actions || 0,
     todos: openTodos,
     artifacts: artifacts.length,
+    ideas: ideas.filter((d) => d.status === "open").length,
   };
   const emptyAgents = participantsLoaded && !sidebarParticipants.some(KINDS.agents);
   // The screen header's controls on phones: Invite and the account menu.
@@ -694,6 +701,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
               head={headExtras}
               error={errorBar}
             />
+          ) : view === "ideas" ? (
+            <Ideas ideas={ideas} setIdeas={setIdeas} participants={stableParticipants} me={me} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : view === "recurring" ? (
             <Recurring schedules={schedules} setSchedules={setSchedules} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : view === "todos" ? (
@@ -924,6 +933,7 @@ const SCREENS = [
   { id: "chat", label: "Chat", Icon: MessageCircle, key: "3" },
   { id: "todos", label: "TODOs", Icon: CheckSquare, key: "4" },
   { id: "artifacts", label: "Artifacts", Icon: FileText, key: "5" },
+  { id: "ideas", label: "Ideas", Icon: Lightbulb, key: "6" },
 ];
 
 // The count beside a screen's name: the open backlog as a number; for chat,

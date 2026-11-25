@@ -86,9 +86,18 @@ func (f *Filter) Concerns(e store.Event) bool {
 		// except GitHub's setup ping.
 		var d store.DeliveryEvent
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
+	case e.Type == "idea.commented":
+		// Ideas are discussion, not work: --mentions wakes only for
+		// @mentions and comments on ideas Me added.
+		var ce store.IdeaCommentEvent
+		if json.Unmarshal(e.Data, &ce) != nil || ce.Comment == nil {
+			return false
+		}
+		mine := ce.Idea != nil && ce.Idea.CreatedBy == f.Me.ID
+		return !f.MentionsOnly || Mentions(ce.Comment.Body, f.Me.Name) || mine
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
 		strings.HasPrefix(e.Type, "link."), strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."),
-		strings.HasPrefix(e.Type, "artifact."), strings.HasPrefix(e.Type, "section."):
+		strings.HasPrefix(e.Type, "artifact."), strings.HasPrefix(e.Type, "section."), strings.HasPrefix(e.Type, "idea."):
 		return !f.MentionsOnly
 	}
 	return false

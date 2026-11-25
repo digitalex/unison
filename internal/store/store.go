@@ -603,6 +603,8 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM images WHERE workspace_id = ?`,
 		`DELETE FROM artifacts WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
+		`DELETE FROM idea_comments WHERE workspace_id = ?`,
+		`DELETE FROM ideas WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,
 		`DELETE FROM item_prs WHERE workspace_id = ?`,
 		`DELETE FROM reactions WHERE workspace_id = ?`,

@@ -1944,12 +1944,29 @@ button.group-head {
   }
 }
 
-/* Schedule rows have no hover actions: keep their next run showing on wide screens. */
+/* Schedule and idea rows have no hover actions: keep their meta showing on wide screens. */
 @media (min-width: 641px) {
   .item.recurring .row:hover .meta,
-  .item.recurring .row:focus-within .meta {
+  .item.recurring .row:focus-within .meta,
+  .item.idea .row:hover .meta,
+  .item.idea .row:focus-within .meta {
     display: inline;
   }
+}
+
+/* Ideas (Ideas.jsx): a moved idea links to the backlog item it became. */
+.idea-item-chip {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 2px;
+  text-decoration: none;
+  font-variant-numeric: tabular-nums;
+}
+
+.idea-item-chip svg.lucide {
+  width: 12px;
+  height: 12px;
 }
 
 .schedule-when {

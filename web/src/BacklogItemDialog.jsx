@@ -660,7 +660,9 @@ function CommentComposer({ onSend }) {
 
 // Comments lists and edits an item's comments. Adding and deleting update
 // the list at once (#156); live updates keep other people's changes in sync.
-function Comments({ item, path, participants, me, call, run }) {
+// An idea's discussion (#917) uses it too: item is then the idea, path its
+// API path, and title names the section.
+export function Comments({ item, path, participants, me, call, run, title = "Comments" }) {
   const [comments, setComments] = useState(null);
   const [pending, setPending] = useState([]);
   const [removing, setRemoving] = useState([]);
@@ -720,7 +722,7 @@ function Comments({ item, path, participants, me, call, run }) {
 
   return (
     <section className="detail-section">
-      <h3>Comments</h3>
+      <h3>{title}</h3>
       {comments !== null && shown.length === 0 && <p className="muted">No comments yet.</p>}
       {shown.map((c) => (
         <CommentRow
