@@ -62,7 +62,7 @@ export default function App() {
       />
     );
   }
-  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|ideas|chat|todos|artifacts))?/);
+  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|ideas|feedback|chat|todos|artifacts))?/);
   if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live
   // stream and dialogs start fresh for the new one.

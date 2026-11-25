@@ -84,11 +84,13 @@ Workspaces & identity:
                                      --create-canvas makes a new isocan canvas
                                      with the isocan CLI and attaches it)
   workspace set [--name N] [--repo URL] [--canvas URL] [--product URL]
-                [--github-token T]   (--repo: the first repo; --product: where the
+                [--github-token T] [--feedback|--no-feedback]
+                                     (--repo: the first repo; --product: where the
                                      product you build is deployed, "" removes
                                      it; --github-token: a PAT with PR read
                                      access to the repos, for "reviews"; ""
-                                     removes it; never shown again)
+                                     removes it; never shown again; --feedback
+                                     enables built-in Send feedback & triage)
   workspace delete [id] --confirm <name>
                                      delete workspace and all data (owner only;
                                      needs login; never from an agent session)
@@ -179,7 +181,7 @@ Images (screenshots to show inline in chat, items and comments):
   image upload <file> [--name N]     upload a PNG, JPEG, GIF or WebP (up to 5 MiB);
                                      prints ![name](url) to paste into Markdown
   image save <id-or-url> <dest>      download one (12, #12, its /api/… path or
-                                     full URL); dest - writes to stdout
+                                      full URL); dest - writes to stdout
 
 Artifacts (design docs, HTML prototypes, reports and screenshots at /w/{ws}/artifacts/{file}):
   artifact [ls] [--item ID]          list workspace artifacts (newest updated first)
@@ -269,6 +271,21 @@ numbered on their own: idea 3 is not backlog item #3):
   idea promote <id> [--position N]   move to backlog: adds an item with the
                                      idea's title, body and discussion, and
                                      marks the idea moved to it
+
+Feedback (optional in-app bug reports & suggestions with screenshots; triage
+and promote to backlog):
+  feedback [ls] [--status open|promoted|dismissed|all]
+  feedback show <id>
+  feedback add <title> [--body B] [--type bug|suggestion]
+               [--severity low|medium|high|critical] [--image FILE_OR_URL] [--page URL]
+  feedback edit <id> [--title T] [--body B] [--type bug|suggestion]
+                [--severity low|medium|high|critical] [--image FILE_OR_URL|none] [--page URL|none]
+  feedback promote <id> [--position N]
+                                     move feedback report to the backlog
+  feedback dismiss <id>              dismiss an open report
+  feedback reopen <id>               reopen a dismissed report
+  feedback rm <id>                   delete a feedback report
+  feedback enable | disable          turn Send feedback & triage on or off
 
 Recurring tasks (a run comes due at 00:00 server time, or hourly at the top of
 every hour, and is added to the top of the backlog):
@@ -448,6 +465,8 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		return a.backlog(rest)
 	case "idea", "ideas":
 		return a.idea(rest)
+	case "feedback":
+		return a.feedback(rest)
 	case "webhook", "webhooks":
 		return a.webhook(rest)
 	case "schedule", "schedules":
@@ -804,6 +823,9 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 		token = "set"
 	}
 	a.printf("GitHub     token %s\n", token)
+	if ws.FeedbackEnabled {
+		a.printf("Feedback   enabled\n")
+	}
 }
 
 // reviews lists the open pull requests in the workspace's GitHub
@@ -1107,13 +1129,26 @@ func (a *app) workspaceCreate(args []string) error {
 func (a *app) workspaceSet(args []string) error {
 	fs := flag.NewFlagSet("workspace set", flag.ContinueOnError)
 	var patch store.WorkspacePatch
+	var enableFeedback, disableFeedback bool
 	fs.Func("name", "workspace name", func(v string) error { patch.Name = &v; return nil })
 	fs.Func("repo", "repository URL", func(v string) error { patch.RepoURL = &v; return nil })
 	fs.Func("canvas", "isocan canvas URL", func(v string) error { patch.CanvasURL = &v; return nil })
 	fs.Func("product", "URL of the deployed product (\"\" removes it)", func(v string) error { patch.ProductURL = &v; return nil })
 	fs.Func("github-token", "GitHub token for Pending review (\"\" removes it)", func(v string) error { patch.GitHubToken = &v; return nil })
+	fs.BoolVar(&enableFeedback, "feedback", false, "enable Send feedback & triage")
+	fs.BoolVar(&disableFeedback, "no-feedback", false, "disable Send feedback & triage")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err
+	}
+	if enableFeedback && disableFeedback {
+		return fmt.Errorf("%w: --feedback and --no-feedback cannot be used together", errUsage)
+	}
+	if enableFeedback {
+		t := true
+		patch.FeedbackEnabled = &t
+	} else if disableFeedback {
+		f := false
+		patch.FeedbackEnabled = &f
 	}
 	var ws store.Workspace
 	if ok, err := a.call("PATCH", "", patch, &ws, true); !ok {
@@ -3143,6 +3178,8 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			who, num, ce.Item.Title, num, ce.Comment.Body)
 	case strings.HasPrefix(e.Type, "idea."):
 		return describeIdeaEvent(people, who, e)
+	case strings.HasPrefix(e.Type, "feedback."):
+		return describeFeedbackEvent(who, e)
 	case strings.HasPrefix(e.Type, "pr."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)

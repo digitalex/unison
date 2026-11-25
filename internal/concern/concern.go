@@ -97,7 +97,8 @@ func (f *Filter) Concerns(e store.Event) bool {
 		return !f.MentionsOnly || Mentions(ce.Comment.Body, f.Me.Name) || mine
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
 		strings.HasPrefix(e.Type, "link."), strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."),
-		strings.HasPrefix(e.Type, "artifact."), strings.HasPrefix(e.Type, "section."), strings.HasPrefix(e.Type, "idea."):
+		strings.HasPrefix(e.Type, "artifact."), strings.HasPrefix(e.Type, "section."), strings.HasPrefix(e.Type, "idea."),
+		strings.HasPrefix(e.Type, "feedback."):
 		return !f.MentionsOnly
 	}
 	return false
