@@ -225,8 +225,7 @@ Sections (optional custom sections alongside Backlog, e.g. Triage, Decisions):
 Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also resolve):
   backlog [list] [--status open|in_progress|paused|done|all] [--section SLUG|all]
                  [--sort priority|newest|oldest|updated|title]
-  backlog show <id>                  the item, its comments and the chat
-                                     messages about it
+  backlog show <id>                  the item, its PR links and unified thread
   backlog add <title> [--body B] [--position N] [--to NAME] [--section SLUG|none]
               [--choice TEXT]... [--close-on-answer|--no-close-on-answer]
   backlog edit <id> [--title T] [--body B] [--section SLUG|none]
@@ -253,8 +252,9 @@ Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also re
   backlog needs <id> [<need-id>...]  list or link prerequisite items (blocks
                                      claim until done)
   backlog needs <id> --remove <id>   remove a prerequisite item
-  backlog comments <id>              an item's comments
-  backlog comment <id> <text>        comment on an item (@Name mentions)
+  backlog comments <id>              an item's unified thread (chat + legacy comments)
+  backlog comment <id> <text> [--action]
+                                     comment on an item (posts into its chat thread)
   backlog comment <id> --delete CID  delete one of your comments
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
@@ -2237,7 +2237,7 @@ func (a *app) printItemDetail(it *store.Item) error {
 	return nil
 }
 
-// backlogShow prints an item with its PR links and comments.
+// backlogShow prints an item with its PR links and unified thread.
 func (a *app) backlogShow(args []string) error {
 	if len(args) != 1 {
 		return fmt.Errorf("%w: backlog show <id>", errUsage)
@@ -2269,41 +2269,13 @@ func (a *app) backlogShow(args []string) error {
 	num := itemNum(&it)
 	if it.CommentCount > 0 {
 		a.printf("\n")
-		if err := a.printComments(num); err != nil {
-			return err
-		}
-	}
-	if it.MessageCount > 0 {
-		a.printf("\n")
-		return a.printItemMessages(num)
-	}
-	return nil
-}
-
-// printItemMessages lists the chat messages about an item, one line each.
-func (a *app) printItemMessages(id int64) error {
-	var list []store.Message
-	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d/messages", id), nil, &list, false); err != nil {
-		return err
-	}
-	people, err := a.participants()
-	if err != nil {
-		return err
-	}
-	a.printf("Chat about #%d:\n", id)
-	for _, m := range list {
-		when := time.UnixMilli(m.CreatedAt).Format("Jan 2 15:04")
-		first, _, more := strings.Cut(m.Body, "\n")
-		if more {
-			first += " …"
-		}
-		a.printf("[#%d %s] %s: %s\n", m.ID, when, label(people, m.AuthorID), first)
+		return a.printComments(num)
 	}
 	return nil
 }
 
 func (a *app) printComments(id int64) error {
-	var list []store.Comment
+	var list []store.Message
 	if _, err := a.call("GET", fmt.Sprintf("/backlog/%d/comments", id), nil, &list, false); err != nil {
 		return err
 	}
@@ -2313,10 +2285,16 @@ func (a *app) printComments(id int64) error {
 	}
 	if len(list) == 0 {
 		a.printf("No comments on #%d yet.\n", id)
+		return nil
 	}
-	for _, c := range list {
-		when := time.UnixMilli(c.CreatedAt).Format("Jan 2 15:04")
-		a.printf("[comment %d, %s] %s: %s\n", c.ID, when, label(people, c.AuthorID), strings.ReplaceAll(c.Body, "\n", "\n      "))
+	for _, m := range list {
+		when := time.UnixMilli(m.CreatedAt).Format("Jan 2 15:04")
+		body := strings.ReplaceAll(m.Body, "\n", "\n      ")
+		if m.Legacy {
+			a.printf("[comment %d, %s] %s: %s\n", m.ID, when, label(people, m.AuthorID), body)
+		} else {
+			a.printf("[#%d %s] %s%s: %s%s\n", m.ID, when, label(people, m.AuthorID), actionMarker(people, m), body, reactionSummary(m))
+		}
 	}
 	return nil
 }
@@ -2339,12 +2317,13 @@ func (a *app) backlogComments(args []string) error {
 func (a *app) backlogComment(args []string) error {
 	fs := flag.NewFlagSet("backlog comment", flag.ContinueOnError)
 	del := fs.String("delete", "", "comment id to delete (your own)")
+	action := fs.Bool("action", false, "ask the @mentioned people to act")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	if len(pos) == 0 || (*del == "" && len(pos) < 2) {
-		return fmt.Errorf("%w: backlog comment <id> <text> | backlog comment <id> --delete <comment-id>", errUsage)
+	if len(pos) == 0 || (*del == "" && len(pos) < 2) || (*del != "" && *action) {
+		return fmt.Errorf("%w: backlog comment <id> <text> [--action] | backlog comment <id> --delete <comment-id>", errUsage)
 	}
 	id, err := parseID(pos[0])
 	if err != nil {
@@ -2362,15 +2341,23 @@ func (a *app) backlogComment(args []string) error {
 		a.printf("Deleted comment %d on #%d.\n", cid, id)
 		return nil
 	}
-	var c store.Comment
-	if ok, err := a.call("POST", fmt.Sprintf("/backlog/%d/comments", id), map[string]string{"body": strings.Join(pos[1:], " ")}, &c, true); !ok {
+	req := map[string]any{"body": strings.Join(pos[1:], " ")}
+	if *action {
+		req["action_required"] = true
+	}
+	var m store.Message
+	if ok, err := a.call("POST", fmt.Sprintf("/backlog/%d/comments", id), req, &m, true); !ok {
 		return err
 	}
 	shown := id
-	if c.ItemNumber > 0 {
-		shown = c.ItemNumber
+	if n := msgItemNum(m); n > 0 {
+		shown = n
 	}
-	a.printf("Commented on #%d (comment %d).\n", shown, c.ID)
+	if m.ParentID != nil {
+		a.printf("Commented on #%d (message #%d in thread #%d).\n", shown, m.ID, *m.ParentID)
+	} else {
+		a.printf("Commented on #%d (message #%d).\n", shown, m.ID)
+	}
 	return nil
 }
 
@@ -3120,13 +3107,24 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var m store.Message
 		json.Unmarshal(e.Data, &m)
 		where := ""
-		if m.ParentID != nil {
+		switch {
+		case m.ParentID != nil && m.Item != nil:
+			num := msgItemNum(m)
+			where = fmt.Sprintf(" (reply in thread #%d about item #%d %q — answer with `unison backlog comment %d <text>` or --reply-to %d)", *m.ParentID, num, m.Item.Title, num, *m.ParentID)
+		case m.ParentID != nil:
 			where = fmt.Sprintf(" (reply in thread #%d — answer with --reply-to %d)", *m.ParentID, *m.ParentID)
-		}
-		if m.Item != nil {
-			where += fmt.Sprintf(" (about item #%d %q)", msgItemNum(m), m.Item.Title)
+		case m.Item != nil:
+			num := msgItemNum(m)
+			where = fmt.Sprintf(" (about item #%d %q — answer with `unison backlog comment %d <text>`)", num, m.Item.Title, num)
 		}
 		return fmt.Sprintf("💬 [#%d] %s%s%s: %s", m.ID, who, actionMarker(people, m), where, m.Body)
+	case e.Type == "message.deleted":
+		var m store.Message
+		json.Unmarshal(e.Data, &m)
+		if m.Item != nil {
+			return fmt.Sprintf("💬 %s deleted message #%d on #%d %q", who, m.ID, msgItemNum(m), m.Item.Title)
+		}
+		return fmt.Sprintf("💬 %s deleted message #%d", who, m.ID)
 	case strings.HasPrefix(e.Type, "backlog."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)

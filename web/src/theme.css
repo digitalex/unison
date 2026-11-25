@@ -3562,8 +3562,110 @@ html.reordering * {
   color: var(--text-secondary);
 }
 
+.item-thread-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-s);
+}
+
+.item-thread-open-chat {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--size-xs);
+  color: var(--text-muted);
+  text-decoration: none;
+}
+
+.item-thread-open-chat:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.item-thread-open-chat .lucide {
+  width: 14px;
+  height: 14px;
+}
+
+.item-thread-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
 .comment {
   padding: 2px 0;
+}
+
+.thread-entry {
+  position: relative;
+  padding: 6px 8px;
+  margin: 0 -8px;
+  border-radius: var(--radius-s);
+}
+
+.thread-entry:hover {
+  background: var(--surface-hover);
+}
+
+.thread-entry.needs-me {
+  background: var(--accent-soft);
+}
+
+.thread-entry:hover > .msg-actions,
+.thread-entry:focus-within > .msg-actions,
+.thread-entry.msg-actions-open > .msg-actions {
+  display: inline-flex;
+}
+
+.thread-entry:active:not(:has(.msg-actions:active)) > .msg-actions {
+  display: none;
+}
+
+.thread-entry > .msg-actions {
+  top: 4px;
+  right: 6px;
+}
+
+.thread-entry > .msg-actions .msg-action:not(.msg-emoji) {
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.thread-entry > .msg-actions .msg-action:not(.msg-emoji):hover,
+.thread-entry > .msg-actions .msg-action:not(.msg-emoji):focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  color: var(--danger, var(--text));
+}
+
+.thread-entry > .msg-actions .msg-action:not(.msg-emoji) .lucide {
+  width: 12px;
+  height: 12px;
+}
+
+@media (pointer: coarse) {
+  .thread-entry:not(.msg-actions-open):hover > .msg-actions {
+    display: none;
+  }
+
+  .thread-entry.msg-actions-open > .msg-actions {
+    display: inline-flex;
+  }
+
+  .thread-entry > .msg-actions .msg-action:not(.msg-emoji) {
+    width: 34px;
+    height: 34px;
+  }
 }
 
 /* A comment on its way to the server (#156). */
@@ -3573,6 +3675,7 @@ html.reordering * {
 
 .comment-head {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 6px;
 }
@@ -3586,6 +3689,25 @@ html.reordering * {
   font-size: var(--size-xxs);
 }
 
+.thread-entry-id {
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+  text-decoration: none;
+}
+
+.thread-entry-id:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+.item-thread-legacy {
+  padding: 0 5px;
+  border-radius: var(--radius-s);
+  background: var(--panel-head);
+  color: var(--text-muted);
+  font-size: var(--size-xxs);
+}
+
 .comment-delete.button {
   width: 22px;
   height: 22px;
@@ -3595,6 +3717,24 @@ html.reordering * {
   color: var(--text-secondary);
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+.item-thread-composer {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xs);
+}
+
+.item-thread-composer-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-xs);
+}
+
+.item-thread-hint {
+  font-size: var(--size-xxs);
 }
 
 /* ---- Repositories (settings) ---- */

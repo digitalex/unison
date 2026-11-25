@@ -149,10 +149,11 @@ func TestPerWorkspaceItemNumberingAndLegacyLookup(t *testing.T) {
 
 	// Operations by BOTH per-workspace number (#3) and legacy global ID (prom.Item.ID) work:
 	// 1. Comments
-	if c, _, err := s.AddComment(ctx, alexB, 3, "Comment via #3"); err != nil || c.ItemID != b3.ID || c.ItemNumber != 3 {
-		t.Fatalf("AddComment by number: c=%+v err=%v", c, err)
+	c3, _, err := s.AddComment(ctx, alexB, 3, "Comment via #3")
+	if err != nil || c3.ItemID == nil || *c3.ItemID != b3.ID || c3.ItemNumber != 3 {
+		t.Fatalf("AddComment by number: c=%+v err=%v", c3, err)
 	}
-	if c, _, err := s.AddComment(ctx, alexB, prom.Item.ID, "Comment via legacy ID"); err != nil || c.ItemID != prom.Item.ID || c.ItemNumber != 6 {
+	if c, _, err := s.AddComment(ctx, alexB, prom.Item.ID, "Comment via legacy ID"); err != nil || c.ItemID == nil || *c.ItemID != prom.Item.ID || c.ItemNumber != 6 {
 		t.Fatalf("AddComment by legacy ID: c=%+v err=%v", c, err)
 	}
 	if comments, err := s.ListComments(ctx, wsB.ID, 6); err != nil || len(comments) != 1 {
@@ -170,7 +171,7 @@ func TestPerWorkspaceItemNumberingAndLegacyLookup(t *testing.T) {
 	if err != nil || msg2.ItemID == nil || *msg2.ItemID != prom.Item.ID || msg2.Item == nil || msg2.Item.Number != 6 {
 		t.Fatalf("Post with legacy item ID = %+v, %v", msg2, err)
 	}
-	if itemMsgs, err := s.ItemMessages(ctx, wsB.ID, 3); err != nil || len(itemMsgs) != 1 || itemMsgs[0].ID != msg1.ID {
+	if itemMsgs, err := s.ItemMessages(ctx, wsB.ID, 3); err != nil || len(itemMsgs) != 2 || itemMsgs[0].ID != c3.ID || itemMsgs[1].ID != msg1.ID {
 		t.Fatalf("ItemMessages(#3) = %+v, %v", itemMsgs, err)
 	}
 

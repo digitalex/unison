@@ -109,7 +109,7 @@ func TestPerWorkspaceItemNumberingAPI(t *testing.T) {
 	if stCode != http.StatusCreated || msgByLegacy["item"].(map[string]any)["number"] != 1.0 {
 		t.Fatalf("POST /messages legacy item_id = %d %v", stCode, msgByLegacy)
 	}
-	if stCode, msgs := callList(t, apiB+"/backlog/3/messages", tokB); stCode != http.StatusOK || len(msgs) != 1 {
+	if stCode, msgs := callList(t, apiB+"/backlog/3/messages", tokB); stCode != http.StatusOK || len(msgs) != 2 {
 		t.Fatalf("GET /backlog/3/messages = %d %v", stCode, msgs)
 	}
 

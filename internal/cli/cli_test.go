@@ -234,7 +234,7 @@ func TestEndToEnd(t *testing.T) {
 	if errOut := <-done; errOut != "" {
 		t.Fatalf("backlog comment: %s", errOut)
 	}
-	if !strings.Contains(out, `commented on #1 "Second"`) || !strings.Contains(out, "still needed?") {
+	if !strings.Contains(out, `about item #1 "Second"`) || !strings.Contains(out, "still needed?") {
 		t.Errorf("wait = %q, want the comment", out)
 	}
 
@@ -252,16 +252,20 @@ func TestEndToEnd(t *testing.T) {
 	if !strings.Contains(out, `added #3 "Third"`) || !strings.Contains(out, "unison backlog start 3") {
 		t.Errorf("wait = %q, want the new item", out)
 	}
-	if out := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex"); !strings.Contains(out, "Commented on #1 (comment 2)") {
-		t.Errorf("comment = %q", out)
+	// A second comment appends to the item's chat thread.
+	commentOut := e.ok(agent, "backlog", "comment", "1", "Yes,", "@Alex")
+	if !strings.Contains(commentOut, "Commented on #1 (message #4 in thread #3)") {
+		t.Errorf("comment = %q", commentOut)
 	}
-	if out := e.ok(human, "backlog", "comments", "1"); !strings.Contains(out, "🧑 Alex: Is this still needed?") || !strings.Contains(out, "🦊 Ada: Yes, @Alex") {
+	// Reactions work on item comments because they are chat messages.
+	e.ok(human, "chat", "react", "4", "+1")
+	if out := e.ok(human, "backlog", "comments", "1"); !strings.Contains(out, "🧑 Alex: Is this still needed?") || !strings.Contains(out, "🦊 Ada: Yes, @Alex") || !strings.Contains(out, "👍 1") {
 		t.Errorf("comments = %q", out)
 	}
-	if _, errOut, code := e.run(human, "backlog", "comment", "1", "--delete", "2"); code == 0 || !strings.Contains(errOut, "only the author") {
+	if _, errOut, code := e.run(human, "backlog", "comment", "1", "--delete", "4"); code == 0 || !strings.Contains(errOut, "only the author") {
 		t.Errorf("deleting another's comment: exit %d, stderr %q", code, errOut)
 	}
-	e.ok(agent, "backlog", "comment", "1", "--delete", "2")
+	e.ok(agent, "backlog", "comment", "1", "--delete", "4")
 	e.ok(agent, "backlog", "pr", "1", "https://github.com/acme/auth/pull/9")
 	out = e.ok(agent, "backlog", "pr", "1", "https://github.com/digitalex/unison/pull/12")
 	if !strings.Contains(out, "acme/auth/pull/9") || !strings.Contains(out, "unison/pull/12") {

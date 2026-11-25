@@ -245,7 +245,7 @@ func TestPushTriggers(t *testing.T) {
 
 	c := e.post(fmt.Sprintf("/backlog/%d/comments", id(item["id"])), e.bobTok, `{"body":"@Ada @Bob ok"}`)
 	expect("comment mention, not the author", adaBoth, push.Notification{Title: "Bob mentioned you", Body: "@Ada @Bob ok",
-		WorkspaceID: e.ws, ItemID: id(item["id"]), CommentID: id(c["id"]), Kind: "comment_mention"})
+		WorkspaceID: e.ws, MessageID: id(c["id"]), ItemID: id(item["id"]), Kind: "mention"})
 
 	e.post("/messages", e.adaTok, `{"body":"note to self @Ada"}`)
 	expect("own mention", nil, push.Notification{})

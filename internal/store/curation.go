@@ -1,16 +1,19 @@
 package store
 
 import (
+	"cmp"
 	"context"
 	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
 	"regexp"
+	"slices"
 	"strings"
 )
 
-// Comment is a comment on a backlog item.
+// Comment is a comment on a backlog item (legacy item_comments row; new
+// comments are stored as chat messages linked to the item, #916).
 type Comment struct {
 	ID          int64  `json:"id"`
 	ItemID      int64  `json:"item_id"`
@@ -38,8 +41,9 @@ type CommentEvent struct {
 	Item    *Item    `json:"item"`
 }
 
-// attachExtras fills in the Needs, ReadyAt, PRs, comment counts and message
-// counts of items, all from wsID.
+// attachExtras fills in the Needs, ReadyAt, PRs, unified thread/comment counts
+// and message counts of items, all from wsID. CommentCount includes both chat
+// messages linked to the item and any legacy item_comments rows (#916).
 func attachExtras(t *tx, wsID string, items []*Item) error {
 	if len(items) == 0 {
 		return nil
@@ -138,7 +142,10 @@ func attachExtras(t *tx, wsID string, items []*Item) error {
 	if err := countPerItem(t, `item_comments WHERE `+filter, args, func(it *Item, n int) { it.CommentCount = n }, byID); err != nil {
 		return err
 	}
-	return countPerItem(t, `messages WHERE item_id IS NOT NULL AND `+filter, args, func(it *Item, n int) { it.MessageCount = n }, byID)
+	return countPerItem(t, `messages WHERE item_id IS NOT NULL AND `+filter, args, func(it *Item, n int) {
+		it.MessageCount = n
+		it.CommentCount += n
+	}, byID)
 }
 
 // countPerItem counts the rows of `from` (a table and WHERE clause) per
@@ -162,7 +169,7 @@ func countPerItem(t *tx, from string, args []any, set func(*Item, int), byID map
 	return rows.Err()
 }
 
-// ---- Comments ----
+// ---- Comments (unified with item chat threads, #916) ----
 
 const commentCols = `id, item_id, workspace_id, author_id, body, created_at`
 
@@ -177,70 +184,176 @@ func scanComment(row interface{ Scan(...any) error }) (*Comment, error) {
 	return &c, nil
 }
 
-// ListComments returns an item's comments, oldest first.
-func (s *Store) ListComments(ctx context.Context, wsID string, itemID int64) ([]Comment, error) {
-	var out []Comment
-	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		it, err := getItem(t, wsID, itemID)
+// ListComments returns an item's unified thread, oldest first: any historical
+// legacy rows from item_comments (marked Legacy: true) merged chronologically
+// with the chat messages tied to the item (with reactions and actions).
+func (s *Store) ListComments(ctx context.Context, wsID string, itemID int64) ([]Message, error) {
+	t, err := s.db.beginRead(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer t.Rollback()
+	it, err := getItem(t, wsID, itemID)
+	if err != nil {
+		return nil, err
+	}
+	about := &MessageItem{ID: it.ID, Number: it.DisplayNumber(), Title: it.Title, Status: it.Status, AssigneeID: it.AssigneeID}
+	legacyRows, err := t.Query(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? ORDER BY created_at, id`, wsID, it.ID)
+	if err != nil {
+		return nil, err
+	}
+	var legacy []Message
+	for legacyRows.Next() {
+		c, err := scanComment(legacyRows)
 		if err != nil {
-			return err
+			legacyRows.Close()
+			return nil, err
 		}
-		rows, err := t.Query(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? ORDER BY id`, wsID, it.ID)
-		if err != nil {
-			return err
+		idCopy := it.ID
+		legacy = append(legacy, Message{
+			ID:          c.ID,
+			WorkspaceID: c.WorkspaceID,
+			AuthorID:    c.AuthorID,
+			Body:        c.Body,
+			CreatedAt:   c.CreatedAt,
+			ItemID:      &idCopy,
+			ItemNumber:  it.DisplayNumber(),
+			Item:        about,
+			Legacy:      true,
+		})
+	}
+	legacyRows.Close()
+	if err := legacyRows.Err(); err != nil {
+		return nil, err
+	}
+
+	msgRows, err := t.Query(selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? ORDER BY m.created_at, m.id`, wsID, it.ID)
+	msgs, err := scanMessages(msgRows, err)
+	if err != nil {
+		return nil, err
+	}
+	if err := attachDetails(t.Query, wsID, msgs); err != nil {
+		return nil, err
+	}
+
+	out := make([]Message, 0, len(legacy)+len(msgs))
+	out = append(out, legacy...)
+	out = append(out, msgs...)
+	slices.SortStableFunc(out, func(a, b Message) int {
+		if c := cmp.Compare(a.CreatedAt, b.CreatedAt); c != 0 {
+			return c
 		}
-		defer rows.Close()
-		out = []Comment{}
-		for rows.Next() {
-			c, err := scanComment(rows)
-			if err != nil {
-				return err
+		if a.Legacy != b.Legacy {
+			if a.Legacy {
+				return -1
 			}
-			c.ItemNumber = it.DisplayNumber()
-			out = append(out, *c)
+			return 1
 		}
-		return rows.Err()
+		return cmp.Compare(a.ID, b.ID)
 	})
-	return out, err
+	return out, nil
 }
 
-// AddComment adds a comment to a backlog item and records comment.added.
-func (s *Store) AddComment(ctx context.Context, actor *Participant, itemID int64, body string) (*Comment, []Event, error) {
+// AddComment posts a comment on a backlog item into its unified chat thread
+// (creating a root message if none exists yet, or replying in the existing
+// thread) and records message.created (#916).
+func (s *Store) AddComment(ctx context.Context, actor *Participant, itemID int64, body string) (*Message, []Event, error) {
+	return s.PostItemComment(ctx, actor, itemID, body, false)
+}
+
+// PostItemComment posts a comment on a backlog item into its unified chat
+// thread, optionally asking the @mentioned participants to act (#916).
+func (s *Store) PostItemComment(ctx context.Context, actor *Participant, itemID int64, body string, actionRequired bool) (*Message, []Event, error) {
 	body = strings.TrimSpace(body)
 	if body == "" {
 		return nil, nil, fmt.Errorf("%w: comment body is required", ErrInvalid)
 	}
-	var c *Comment
+	var m *Message
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
 		it, err := getItem(t, actor.WorkspaceID, itemID)
 		if err != nil {
 			return err
 		}
-		c = &Comment{ItemID: it.ID, ItemNumber: it.DisplayNumber(), WorkspaceID: actor.WorkspaceID, AuthorID: actor.ID, Body: body, CreatedAt: log.now}
-		id, err := t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
-			c.ItemID, c.WorkspaceID, c.AuthorID, c.Body, c.CreatedAt)
+		var rootID int64
+		var parentID *int64
+		err = t.QueryRow(`SELECT id FROM messages WHERE workspace_id = ? AND item_id = ? AND parent_id IS NULL ORDER BY id ASC LIMIT 1`,
+			actor.WorkspaceID, it.ID).Scan(&rootID)
+		if err == nil {
+			parentID = &rootID
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		idCopy := it.ID
+		itemNum := it.DisplayNumber()
+		about := &MessageItem{ID: it.ID, Number: itemNum, Title: it.Title, Status: it.Status, AssigneeID: it.AssigneeID}
+		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at, item_id) VALUES (?, ?, ?, ?, ?, ?)`, "id",
+			actor.WorkspaceID, actor.ID, parentID, body, log.now, idCopy)
 		if err != nil {
 			return err
 		}
-		c.ID = id
-		it, err = getItemByID(t, actor.WorkspaceID, it.ID)
-		if err != nil {
-			return err
+		m = &Message{
+			ID:          id,
+			WorkspaceID: actor.WorkspaceID,
+			AuthorID:    actor.ID,
+			ParentID:    parentID,
+			Body:        body,
+			CreatedAt:   log.now,
+			ItemID:      &idCopy,
+			ItemNumber:  itemNum,
+			Item:        about,
 		}
-		return log.add(actor.WorkspaceID, "comment.added", actor.ID, CommentEvent{Comment: c, Item: it})
+		if actionRequired {
+			if err := addActions(t, m); err != nil {
+				return err
+			}
+		}
+		if parentID != nil {
+			if err := markDoneIfAsked(t, actor, *parentID, log.now); err != nil {
+				return err
+			}
+		}
+		return log.add(actor.WorkspaceID, "message.created", actor.ID, m)
 	})
 	if err != nil {
 		return nil, nil, err
 	}
-	return c, evs, nil
+	return m, evs, nil
 }
 
-// DeleteComment deletes a comment. Only its author may delete it.
+// DeleteComment deletes an item's comment (either a chat message tied to the
+// item or a legacy item_comments row). Only its author may delete it.
 func (s *Store) DeleteComment(ctx context.Context, actor *Participant, itemID, commentID int64) ([]Event, error) {
+	return s.deleteComment(ctx, actor, itemID, commentID, false)
+}
+
+// DeleteLegacyComment deletes a historical row from item_comments directly,
+// disambiguating when an item has both a legacy comment and a chat message
+// sharing the same numeric ID.
+func (s *Store) DeleteLegacyComment(ctx context.Context, actor *Participant, itemID, commentID int64) ([]Event, error) {
+	return s.deleteComment(ctx, actor, itemID, commentID, true)
+}
+
+func (s *Store) deleteComment(ctx context.Context, actor *Participant, itemID, commentID int64, legacyOnly bool) ([]Event, error) {
 	return s.tx(ctx, func(t *tx, log *eventLog) error {
 		realItemID, err := ResolveItemID(t, actor.WorkspaceID, itemID)
 		if err != nil {
 			return fmt.Errorf("comment %d on #%d: %w", commentID, itemID, ErrNotFound)
+		}
+		if !legacyOnly {
+			m, err := scanMessage(t.QueryRow(selectMessages+` WHERE m.workspace_id = ? AND m.item_id = ? AND m.id = ?`,
+				actor.WorkspaceID, realItemID, commentID))
+			if err == nil {
+				if m.AuthorID != actor.ID {
+					return fmt.Errorf("%w: only the author can delete a comment", ErrForbidden)
+				}
+				if err := deleteItemMessage(t, log, actor, m); err != nil {
+					return err
+				}
+				return log.add(actor.WorkspaceID, "message.deleted", actor.ID, m)
+			}
+			if !errors.Is(err, ErrNotFound) {
+				return err
+			}
 		}
 		c, err := scanComment(t.QueryRow(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? AND id = ?`,
 			actor.WorkspaceID, realItemID, commentID))
@@ -263,6 +376,63 @@ func (s *Store) DeleteComment(ctx context.Context, actor *Participant, itemID, c
 		c.ItemNumber = it.DisplayNumber()
 		return log.add(actor.WorkspaceID, "comment.deleted", actor.ID, CommentEvent{Comment: c, Item: it})
 	})
+}
+
+// deleteItemMessage removes a chat message tied to an item, promoting its
+// earliest reply to thread root (and reparenting any other replies) if it was
+// a thread root with replies.
+func deleteItemMessage(t *tx, log *eventLog, actor *Participant, m *Message) error {
+	if m.ParentID == nil {
+		rows, err := t.Query(`SELECT id FROM messages WHERE workspace_id = ? AND parent_id = ? ORDER BY id ASC`, actor.WorkspaceID, m.ID)
+		if err != nil {
+			return err
+		}
+		var replyIDs []int64
+		for rows.Next() {
+			var rid int64
+			if err := rows.Scan(&rid); err != nil {
+				rows.Close()
+				return err
+			}
+			replyIDs = append(replyIDs, rid)
+		}
+		rows.Close()
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		if len(replyIDs) > 0 {
+			newRoot := replyIDs[0]
+			if _, err := t.Exec(`UPDATE messages SET parent_id = NULL WHERE id = ?`, newRoot); err != nil {
+				return err
+			}
+			if len(replyIDs) > 1 {
+				if _, err := t.Exec(`UPDATE messages SET parent_id = ? WHERE workspace_id = ? AND parent_id = ?`, newRoot, actor.WorkspaceID, m.ID); err != nil {
+					return err
+				}
+			}
+			updatedRows, err := t.Query(selectMessages+` WHERE m.workspace_id = ? AND (m.id = ? OR m.parent_id = ?) ORDER BY m.id ASC`, actor.WorkspaceID, newRoot, newRoot)
+			updated, err := scanMessages(updatedRows, err)
+			if err != nil {
+				return err
+			}
+			if err := attachDetails(t.Query, actor.WorkspaceID, updated); err != nil {
+				return err
+			}
+			for _, u := range updated {
+				if err := log.add(actor.WorkspaceID, "message.updated", actor.ID, u); err != nil {
+					return err
+				}
+			}
+		}
+	}
+	if _, err := t.Exec(`DELETE FROM reactions WHERE message_id = ?`, m.ID); err != nil {
+		return err
+	}
+	if _, err := t.Exec(`DELETE FROM message_actions WHERE message_id = ?`, m.ID); err != nil {
+		return err
+	}
+	_, err := t.Exec(`DELETE FROM messages WHERE id = ?`, m.ID)
+	return err
 }
 
 // ---- PR links ----

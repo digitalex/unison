@@ -1098,13 +1098,14 @@ func (s *Server) listItemMessages(w http.ResponseWriter, r *http.Request) {
 func (s *Server) addComment(w http.ResponseWriter, r *http.Request) {
 	id, ok := pathID(w, r)
 	var req struct {
-		Body string `json:"body"`
+		Body           string `json:"body"`
+		ActionRequired bool   `json:"action_required"`
 	}
 	if !ok || !decode(w, r, &req) {
 		return
 	}
-	c, evs, err := s.store.AddComment(r.Context(), actor(r), id, req.Body)
-	s.respond(w, http.StatusCreated, c, evs, err)
+	m, evs, err := s.store.PostItemComment(r.Context(), actor(r), id, req.Body, req.ActionRequired)
+	s.respond(w, http.StatusCreated, m, evs, err)
 }
 
 func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
@@ -1116,7 +1117,13 @@ func (s *Server) deleteComment(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	evs, err := s.store.DeleteComment(r.Context(), actor(r), id, cid)
+	var evs []store.Event
+	var err error
+	if legacy, _ := strconv.ParseBool(r.URL.Query().Get("legacy")); legacy {
+		evs, err = s.store.DeleteLegacyComment(r.Context(), actor(r), id, cid)
+	} else {
+		evs, err = s.store.DeleteComment(r.Context(), actor(r), id, cid)
+	}
 	s.respond(w, http.StatusOK, map[string]any{"deleted": cid}, evs, err)
 }
 

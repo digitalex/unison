@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { GitPullRequest, GripVertical, MessageSquare, MessagesSquare, Plus } from "lucide-react";
+import { GitPullRequest, GripVertical, MessageSquare, Plus } from "lucide-react";
 import { blockerLabel, blockerTitle, blockersOf, groupOf, itemNum, meta, name, prLabel } from "./backlogFormat.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
@@ -244,15 +244,9 @@ const KanbanCard = memo(function KanbanCard({
             </a>
           ))}
           {item.comment_count > 0 && (
-            <span className="comment-count" title={`${item.comment_count} comment${item.comment_count === 1 ? "" : "s"}`}>
+            <span className="comment-count" title={`${item.comment_count} message${item.comment_count === 1 ? "" : "s"}`}>
               <MessageSquare aria-hidden="true" />
               {item.comment_count}
-            </span>
-          )}
-          {item.message_count > 0 && (
-            <span className="comment-count" title={`${item.message_count} chat message${item.message_count === 1 ? "" : "s"}`}>
-              <MessagesSquare aria-hidden="true" />
-              {item.message_count}
             </span>
           )}
         </span>

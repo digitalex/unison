@@ -118,6 +118,9 @@ func (f *Filter) MessageConcerns(m store.Message) bool {
 	if m.ParentID != nil && f.AuthorOf != nil && f.AuthorOf(*m.ParentID) == f.Me.ID {
 		return true
 	}
+	if m.Item != nil && m.Item.AssigneeID != nil && *m.Item.AssigneeID == f.Me.ID {
+		return true
+	}
 	return slices.Contains(m.ActionFor, f.Me.ID) && !slices.Contains(m.DoneBy, f.Me.ID)
 }
 
