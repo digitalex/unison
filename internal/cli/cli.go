@@ -186,6 +186,19 @@ Actions (chat messages sent with --action that ask you to act):
   done <message-id> [--undo]         mark one done (replying in its thread or
                                      reacting to it does too); --undo reopens it
 
+TODOs (actionable tasks for humans, with 1d/1w snooze):
+  todo [ls] [--status active|snoozed|open|done|all] [--mine] [--all-workspaces]
+                                     active (unsnoozed open) TODOs by default;
+                                     --all-workspaces lists your TODOs across
+                                     every workspace (uses unison login)
+  todo add <title> --to <Name> [--body B] [--item ID] [--pr URL]
+                                     assign a TODO to a human in this workspace
+                                     (PR-linked TODOs auto-close when merged/closed)
+  todo done <id> [--note N]          mark done (agents MUST pass --note)
+  todo reopen <id>                   reopen a done TODO
+  todo snooze <id> (1d | 1w | off)   snooze for 24h or 7d, or unsnooze
+  todo delete <id>                   delete a TODO
+
 Backlog (#1 is the highest priority):
   backlog [list] [--status open|in_progress|done|all]
   backlog show <id>                  the item, its comments and the chat
@@ -351,6 +364,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return a.actions(rest)
 	case "done":
 		return a.done(rest)
+	case "todo", "todos":
+		return a.todo(rest)
 	case "pass":
 		return a.pass(rest)
 	case "sessions":
@@ -2831,6 +2846,27 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		var sc store.Schedule
 		json.Unmarshal(e.Data, &sc)
 		return fmt.Sprintf("🔁 %s %s recurring task %s", who, strings.TrimPrefix(e.Type, "schedule."), scheduleLine(sc))
+	case strings.HasPrefix(e.Type, "todo."):
+		var td store.Todo
+		json.Unmarshal(e.Data, &td)
+		verb := strings.TrimPrefix(e.Type, "todo.")
+		if e.ActorID == 0 && e.Type == "todo.done" {
+			line := fmt.Sprintf("☑️ TODO #%d %q auto-closed", td.ID, td.Title)
+			if td.DoneNote != "" {
+				line += " (" + td.DoneNote + ")"
+			}
+			return line
+		}
+		line := fmt.Sprintf("☑️ %s %s TODO #%d %q", who, verb, td.ID, td.Title)
+		switch e.Type {
+		case "todo.created":
+			line += " → " + label(people, td.AssigneeID)
+		case "todo.done":
+			if td.DoneNote != "" {
+				line += ": " + td.DoneNote
+			}
+		}
+		return line
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
 }

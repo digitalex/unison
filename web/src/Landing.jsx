@@ -1,4 +1,4 @@
-import { Bot, Github, ListChecks, LogIn, PenTool, Plus, Repeat, SlidersHorizontal } from "lucide-react";
+import { Bot, Check, CheckSquare, Github, ListChecks, LogIn, PenTool, Plus, Repeat, SlidersHorizontal } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AccountMenu, AppleLogo } from "./Account.jsx";
 import { api } from "./api.js";
@@ -120,6 +120,38 @@ function WorkspaceStats() {
 }
 
 function WorkspaceDock({ account, workspaces, workspacesError, showLists, navigate, onCreate }) {
+  const [myTodos, setMyTodos] = useState([]);
+  useEffect(() => {
+    if (!account.user) {
+      setMyTodos([]);
+      return;
+    }
+    let live = true;
+    const refresh = () =>
+      api("GET", "/api/me/todos?status=active").then(
+        (list) => live && setMyTodos(Array.isArray(list) ? list : []),
+        () => {},
+      );
+    refresh();
+    return () => {
+      live = false;
+    };
+  }, [account.user?.id]);
+
+  const markTodoDone = (td) => {
+    setMyTodos((list) => list.filter((x) => !(x.workspace_id === td.workspace_id && x.id === td.id)));
+    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/done`, { body: { note: "" } }).catch(() => {
+      api("GET", "/api/me/todos?status=active").then(setMyTodos, () => {});
+    });
+  };
+
+  const snoozeTodo = (td, duration) => {
+    setMyTodos((list) => list.filter((x) => !(x.workspace_id === td.workspace_id && x.id === td.id)));
+    api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/snooze`, { body: { duration } }).catch(() => {
+      api("GET", "/api/me/todos?status=active").then(setMyTodos, () => {});
+    });
+  };
+
   const sorted = workspaces ? [...workspaces].sort((a, b) => a.name.localeCompare(b.name)) : null;
   const who = account.user?.display_name || account.user?.email || "";
   return (
@@ -159,6 +191,62 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
             </li>
           ))}
         </ul>
+      )}
+      {account.user && myTodos.length > 0 && (
+        <div className="ws-dock-todos" aria-label="Your TODOs">
+          <div className="ws-dock-subhead">
+            <span className="ws-dock-subhead-title">
+              <CheckSquare aria-hidden="true" />
+              Your TODOs
+            </span>
+            <span className="chip">{myTodos.length}</span>
+          </div>
+          <ul className="ws-dock-todo-list">
+            {myTodos.map((td) => (
+              <li key={`${td.workspace_id}-${td.id}`} className="ws-dock-todo-row">
+                <a
+                  className="ws-dock-todo-link"
+                  href={`/w/${td.workspace_id}/todos`}
+                  onClick={(e) => {
+                    e.preventDefault();
+                    navigate(`/w/${td.workspace_id}/todos`);
+                  }}
+                >
+                  <span className="ws-dock-todo-ws">{td.workspace_name}</span>
+                  <span className="ws-dock-todo-title">{td.title}</span>
+                </a>
+                <div className="ws-dock-todo-actions">
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    title="Mark done"
+                    aria-label={`Mark "${td.title}" done`}
+                    onClick={() => markTodoDone(td)}
+                  >
+                    <Check aria-hidden="true" />
+                    Done
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    title="Snooze for 1 day"
+                    onClick={() => snoozeTodo(td, "1d")}
+                  >
+                    1d
+                  </Button>
+                  <Button
+                    size="small"
+                    variant="ghost"
+                    title="Snooze for 1 week"
+                    onClick={() => snoozeTodo(td, "1w")}
+                  >
+                    1w
+                  </Button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
       )}
       {showLists && (
         <div className="ws-dock-foot">

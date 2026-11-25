@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, ChevronDown, Compass, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, PageUnloadingError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import { markSeen } from "./activity.js";
@@ -14,6 +14,7 @@ import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./Pend
 import { agentStatus } from "./agents.js";
 import { ago, useStableParticipants } from "./backlogFormat.js";
 import Recurring from "./Recurring.jsx";
+import Todos, { isTodoActive, withTodo } from "./Todos.jsx";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
 import { UrlBox } from "./settings/Webhooks.jsx";
@@ -80,6 +81,7 @@ function collectionFor({ type, data }) {
   }
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("schedule.")) return ["schedules"];
+  if (type.startsWith("todo.")) return ["todos", "me"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
@@ -168,6 +170,8 @@ export default function Workspace({ id, view, navigate, account }) {
   const [activity, setActivity] = useState([]);
   const [hasMoreActivity, setHasMoreActivity] = useState(false);
   const [backlog, setBacklog] = useState([]);
+  const [todos, setTodos] = useState([]);
+  const [todosLoaded, setTodosLoaded] = useState(false);
   const [webhooks, setWebhooks] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [members, setMembers] = useState({ members: [] });
@@ -257,6 +261,11 @@ export default function Workspace({ id, view, navigate, account }) {
     queued: () => call("GET", "/backlog").then((queued) => setBacklog((list) => withQueued(list, queued))),
     webhooks: () => call("GET", "/webhooks").then(setWebhooks),
     schedules: () => call("GET", "/schedules").then(setSchedules),
+    todos: () =>
+      call("GET", "/todos?status=all").then((list) => {
+        setTodos(list);
+        setTodosLoaded(true);
+      }),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
@@ -321,6 +330,7 @@ export default function Workspace({ id, view, navigate, account }) {
     if (!account.ready) return;
     setGate(null);
     setParticipantsLoaded(false);
+    setTodosLoaded(false);
     setHasMoreMessages(false);
     setHasMoreActivity(false);
     loadAll();
@@ -406,6 +416,14 @@ export default function Workspace({ id, view, navigate, account }) {
       reload("me");
     }
   };
+  const applyTodoEvent = ({ type, data }) => {
+    if (!type.startsWith("todo.") || !data?.id) return;
+    if (type === "todo.deleted") {
+      setTodos((list) => list.filter((td) => td.id !== data.id));
+      return;
+    }
+    setTodos((list) => withTodo(list, data));
+  };
   useEffect(() => {
     if (!account.ready || gate) return;
     const src = new EventSource(`/api/workspaces/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -442,6 +460,7 @@ export default function Workspace({ id, view, navigate, account }) {
       notify(event);
       applyMessageEvent(event);
       applyItemEvent(event);
+      applyTodoEvent(event);
       collectionFor(event).forEach(reload);
       // Renamed, or a new emoji or status, from here or anywhere else (#303).
       if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
@@ -457,7 +476,14 @@ export default function Workspace({ id, view, navigate, account }) {
   if (gate) return <GatePage gate={gate} account={account} workspaceId={id} onJoined={onJoined} />;
   if (!workspace) return <main className="page">{error ? <p role="alert">Error: {error}</p> : <p>Loading…</p>}</main>;
 
-  const counts = { backlog: backlog.filter((it) => it.status !== "done").length, recurring: schedules.length, chat: unread, actions: me?.open_actions || 0 };
+  const openTodos = todosLoaded && me ? todos.filter((t) => t.assignee_id === me.id && isTodoActive(t, now)).length : me?.open_todos || 0;
+  const counts = {
+    backlog: backlog.filter((it) => it.status !== "done").length,
+    recurring: schedules.length,
+    chat: unread,
+    actions: me?.open_actions || 0,
+    todos: openTodos,
+  };
   const emptyAgents = participantsLoaded && !sidebarParticipants.some(KINDS.agents);
   // The screen header's controls on phones: Invite and the account menu.
   const headExtras = (
@@ -598,8 +624,35 @@ export default function Workspace({ id, view, navigate, account }) {
             />
           ) : view === "recurring" ? (
             <Recurring schedules={schedules} setSchedules={setSchedules} call={call} onError={setError} head={headExtras} error={errorBar} />
+          ) : view === "todos" ? (
+            <Todos
+              todos={todos}
+              setTodos={setTodos}
+              items={backlog}
+              participants={stableParticipants}
+              me={me}
+              workspace={workspace}
+              now={now}
+              call={call}
+              onReloadMe={() => reload("me")}
+              onError={setError}
+              head={headExtras}
+              error={errorBar}
+            />
           ) : (
-            <Backlog items={backlog} participants={stableParticipants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
+            <Backlog
+              items={backlog}
+              todos={todos}
+              setTodos={setTodos}
+              onReloadMe={() => reload("me")}
+              participants={stableParticipants}
+              me={me}
+              workspace={workspace}
+              call={call}
+              onError={setError}
+              head={headExtras}
+              error={errorBar}
+            />
           )}
         </main>
       )}
@@ -730,16 +783,25 @@ const SCREENS = [
   { id: "backlog", label: "Backlog", Icon: ListTodo, key: "1" },
   { id: "recurring", label: "Recurring", Icon: Repeat, key: "2" },
   { id: "chat", label: "Chat", Icon: MessageCircle, key: "3" },
+  { id: "todos", label: "TODOs", Icon: CheckSquare, key: "4" },
 ];
 
 // The count beside a screen's name: the open backlog as a number; for chat,
-// the messages that need you (strong), else new messages as a dot.
+// the messages that need you (strong), else new messages as a dot; for TODOs,
+// active non-snoozed TODOs assigned to you (strong).
 function ScreenCount({ screen, counts }) {
   if (screen === "chat") {
     const { actions, chat } = counts;
     if (actions) return <span className="nav-count nav-count-strong" aria-label={`${actions} need${actions === 1 ? "s" : ""} you`}>{actions}</span>;
     if (chat) return <span className="nav-unread" aria-label={`${chat} new message${chat === 1 ? "" : "s"}`} />;
     return null;
+  }
+  if (screen === "todos") {
+    return counts.todos ? (
+      <span className="nav-count nav-count-strong" aria-label={`${counts.todos} active TODO${counts.todos === 1 ? "" : "s"}`}>
+        {counts.todos}
+      </span>
+    ) : null;
   }
   return counts[screen] ? <span className="nav-count">{counts[screen]}</span> : null;
 }

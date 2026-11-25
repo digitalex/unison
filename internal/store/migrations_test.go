@@ -171,3 +171,46 @@ func TestAssignWorkspaceOwners(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestTodosTableMigration(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+	p, _, _, _ := s.Join(ctx, ws.ID, "Ada", "")
+	s.Close()
+
+	// Simulate an older database before the todos table existed (#915).
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE todos`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		if !tableExists(t, s, "todos") {
+			t.Fatalf("boot %d: todos table was not created", boot)
+		}
+		if boot == 1 {
+			if _, _, err := s.CreateTodo(ctx, p, TodoInput{Title: "Check deploy", AssigneeID: p.ID}); err != nil {
+				t.Fatalf("CreateTodo after migration: %v", err)
+			}
+		} else {
+			list, err := s.ListTodos(ctx, ws.ID, TodoFilterActive, 0)
+			if err != nil || len(list) != 1 || list[0].Title != "Check deploy" {
+				t.Fatalf("boot %d ListTodos = %+v, %v", boot, list, err)
+			}
+		}
+		s.Close()
+	}
+}

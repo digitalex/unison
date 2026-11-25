@@ -18,7 +18,7 @@ const EMPTY_REPOS = [];
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
-export default function Backlog({ items, participants, me, workspace, call, onError, head, error }) {
+export default function Backlog({ items, todos = [], setTodos, onReloadMe, participants, me, workspace, call, onError, head, error }) {
   const [view, setView] = useBacklogView();
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -160,7 +160,20 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
       </div>
 
       {creating && <NewItemDialog initial={creating === true ? null : creating} participants={stableParticipants} onClose={() => setCreating(false)} onCreate={create} />}
-      {openedItem && <ItemDialog item={openedItem} participants={stableParticipants} me={me} call={call} run={run} onClose={closeItem} />}
+      {openedItem && (
+        <ItemDialog
+          item={openedItem}
+          items={items}
+          todos={todos}
+          setTodos={setTodos}
+          onReloadMe={onReloadMe}
+          participants={stableParticipants}
+          me={me}
+          call={call}
+          run={run}
+          onClose={closeItem}
+        />
+      )}
     </section>
   );
 }

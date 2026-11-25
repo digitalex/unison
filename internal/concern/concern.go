@@ -62,6 +62,12 @@ func (f *Filter) Concerns(e store.Event) bool {
 			return it.AssigneeID == nil || *it.AssigneeID == f.Me.ID
 		}
 		return (e.Type == "backlog.assigned" || e.Type == "backlog.started") && it.AssigneeID != nil && *it.AssigneeID == f.Me.ID
+	case strings.HasPrefix(e.Type, "todo."):
+		if !f.MentionsOnly {
+			return true
+		}
+		var td store.Todo
+		return e.Type == "todo.created" && json.Unmarshal(e.Data, &td) == nil && td.AssigneeID == f.Me.ID
 	case e.Type == "webhook.received":
 		// Webhooks are instructions for agents: they wake even --mentions,
 		// except GitHub's setup ping.

@@ -34,7 +34,8 @@ const SHORTCUTS = [
   { keys: ["1"], label: "Go to Backlog" },
   { keys: ["2"], label: "Go to Recurring" },
   { keys: ["3"], label: "Go to Chat" },
-  { keys: ["c"], label: "New item (Backlog) or recurring task (Recurring)" },
+  { keys: ["4"], label: "Go to TODOs" },
+  { keys: ["c"], label: "New item (Backlog), recurring task (Recurring), or TODO (TODOs)" },
   { keys: ["?"], label: "Show or close keyboard shortcuts" },
   { keys: ["Esc"], label: "Close open dialog or thread" },
 ];

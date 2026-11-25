@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/digitalex/unison/internal/store"
 )
 
 // Pending review (#127): the open pull requests in a workspace's GitHub
@@ -116,7 +118,74 @@ func (s *Server) listReviews(w http.ResponseWriter, r *http.Request) {
 	}
 	out := fetchPendingReviews(r.Context(), token, slugs)
 	s.reviews.put(ws, key, out)
-	s.respond(w, http.StatusOK, out, nil, nil)
+	evs := s.autoCloseReviewedPRTodos(r.Context(), ws, token, slugs, out)
+	s.respond(w, http.StatusOK, out, evs, nil)
+}
+
+// autoCloseReviewedPRTodos checks open PR-linked TODOs in ws whose repository
+// was just refreshed and closes any whose GitHub pull request is now closed.
+func (s *Server) autoCloseReviewedPRTodos(ctx context.Context, ws, token string, slugs []string, out PendingReviews) []store.Event {
+	urls, err := s.store.OpenTodoPRURLs(ctx, ws)
+	if err != nil || len(urls) == 0 {
+		return nil
+	}
+	failed := map[string]bool{}
+	for _, e := range out.Errors {
+		failed[strings.ToLower(e.Repo)] = true
+	}
+	canonicalSlug := map[string]string{}
+	for _, slug := range slugs {
+		if !failed[strings.ToLower(slug)] {
+			canonicalSlug[strings.ToLower(slug)] = slug
+		}
+	}
+	knownOpen := map[string]bool{}
+	for _, p := range out.Pulls {
+		if norm, err := store.NormalizePRURL(p.URL); err == nil && norm != "" {
+			knownOpen[strings.ToLower(norm)] = true
+		}
+	}
+	var allEvs []store.Event
+	for _, rawURL := range urls {
+		norm, err := store.NormalizePRURL(rawURL)
+		if err != nil || norm == "" || knownOpen[strings.ToLower(norm)] {
+			continue
+		}
+		slug, prNum := parseGitHubPR(norm)
+		actualSlug, ok := canonicalSlug[strings.ToLower(slug)]
+		if !ok || prNum <= 0 {
+			continue
+		}
+		var pr struct {
+			State  string `json:"state"`
+			Merged bool   `json:"merged"`
+		}
+		if githubJSON(ctx, token, fmt.Sprintf("/repos/%s/pulls/%d", actualSlug, prNum), &pr) != nil || pr.State != "closed" {
+			continue
+		}
+		note := "Auto-closed: PR closed"
+		if pr.Merged {
+			note = "Auto-closed: PR merged"
+		}
+		if evs, err := s.store.AutoClosePRTodos(ctx, ws, norm, note); err == nil {
+			allEvs = append(allEvs, evs...)
+		}
+	}
+	return allEvs
+}
+
+func parseGitHubPR(raw string) (slug string, number int64) {
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || !strings.EqualFold(u.Host, "github.com") {
+		return "", 0
+	}
+	parts := strings.Split(strings.Trim(u.Path, "/"), "/")
+	if len(parts) < 4 || parts[2] != "pull" {
+		return "", 0
+	}
+	var n int64
+	fmt.Sscanf(parts[3], "%d", &n)
+	return parts[0] + "/" + parts[1], n
 }
 
 // githubSlug is "owner/name" for a GitHub repository URL, "" for others.

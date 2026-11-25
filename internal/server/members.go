@@ -48,6 +48,8 @@ type meView struct {
 	User *meUser `json:"user,omitempty"`
 	// OpenActions counts the messages that ask you to act (GET …/actions).
 	OpenActions int `json:"open_actions"`
+	// OpenTodos counts active (open, non-snoozed) TODOs assigned to you.
+	OpenTodos int `json:"open_todos"`
 }
 
 type meUser struct {
@@ -59,6 +61,10 @@ func (s *Server) respondMe(w http.ResponseWriter, r *http.Request, p *store.Part
 	view := meView{Participant: p}
 	var err error
 	if view.OpenActions, err = s.store.CountOpenActions(r.Context(), p); err != nil {
+		storeError(w, err)
+		return
+	}
+	if view.OpenTodos, err = s.store.CountOpenTodos(r.Context(), p); err != nil {
 		storeError(w, err)
 		return
 	}

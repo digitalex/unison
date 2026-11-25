@@ -79,6 +79,17 @@ func (s *Server) receiveHook(w http.ResponseWriter, r *http.Request) {
 		storeError(w, err)
 		return
 	}
+	if in.Source == "github" {
+		if prURL, merged := closedPullRequestWebhook(in.Event, body); prURL != "" {
+			note := "Auto-closed: PR closed"
+			if merged {
+				note = "Auto-closed: PR merged"
+			}
+			if todoEvs, err := s.store.AutoClosePRTodos(r.Context(), h.WorkspaceID, prURL, note); err == nil {
+				evs = append(evs, todoEvs...)
+			}
+		}
+	}
 	s.published(evs)
 	writeJSON(w, http.StatusAccepted, map[string]any{"delivery": d.ID})
 }
@@ -133,10 +144,15 @@ type githubPayload struct {
 	Zen    string `json:"zen"`
 
 	PullRequest *struct {
-		Number int    `json:"number"`
-		Title  string `json:"title"`
-		Merged bool   `json:"merged"`
+		Number  int    `json:"number"`
+		Title   string `json:"title"`
+		Merged  bool   `json:"merged"`
+		HTMLURL string `json:"html_url"`
 	} `json:"pull_request"`
+	Repository *struct {
+		FullName string `json:"full_name"`
+		HTMLURL  string `json:"html_url"`
+	} `json:"repository"`
 	Issue *struct {
 		Number int    `json:"number"`
 		Title  string `json:"title"`
@@ -241,6 +257,34 @@ func githubSummary(event string, body []byte) string {
 		add("by " + p.Sender.Login)
 	}
 	return strings.Join(parts, " ")
+}
+
+// closedPullRequestWebhook extracts the pull request URL and merged flag when
+// a GitHub pull_request webhook payload reports action == "closed".
+func closedPullRequestWebhook(event string, body []byte) (string, bool) {
+	if event != "pull_request" {
+		return "", false
+	}
+	var p githubPayload
+	if json.Unmarshal(body, &p) != nil || p.Action != "closed" || p.PullRequest == nil {
+		return "", false
+	}
+	if u := strings.TrimSpace(p.PullRequest.HTMLURL); u != "" {
+		return u, p.PullRequest.Merged
+	}
+	num := p.PullRequest.Number
+	if num == 0 {
+		num = p.Number
+	}
+	if num > 0 && p.Repository != nil {
+		if slug := strings.TrimSpace(p.Repository.FullName); slug != "" {
+			return fmt.Sprintf("https://github.com/%s/pull/%d", slug, num), p.PullRequest.Merged
+		}
+		if repoURL := strings.TrimRight(strings.TrimSpace(p.Repository.HTMLURL), "/"); repoURL != "" {
+			return fmt.Sprintf("%s/pull/%d", repoURL, num), p.PullRequest.Merged
+		}
+	}
+	return "", false
 }
 
 // ---- Webhook API ----
