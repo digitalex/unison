@@ -74,6 +74,9 @@ type Workspace struct {
 	// HasGitHubToken says whether a GitHub token is set (#127). The token
 	// itself is never serialized: read it with GitHubToken.
 	HasGitHubToken bool `json:"has_github_token"`
+	// FeedbackEnabled turns on the workspace's built-in Send feedback dialog
+	// and Feedback triage view (#281).
+	FeedbackEnabled bool `json:"feedback_enabled"`
 	// ActivitySeq is the seq of the workspace's latest collaboration event
 	// by someone other than the caller (#300, see CollaborationTypes); 0
 	// if there is none. Filled in for workspace lists only.
@@ -346,12 +349,12 @@ func (l *eventLog) add(ws, typ string, actor int64, data any) error {
 
 // workspaceCols are read by scanWorkspace; the last says whether a GitHub
 // token is set without reading it.
-const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END`
+const workspaceCols = `id, name, repo_url, canvas_url, COALESCE(product_url, ''), created_at, COALESCE(owner_user_id, 0), CASE WHEN COALESCE(github_token, '') = '' THEN 0 ELSE 1 END, feedback_enabled`
 
 func scanWorkspace(row interface{ Scan(...any) error }) (*Workspace, error) {
 	var w Workspace
 	var hasToken int64
-	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken); err != nil {
+	if err := row.Scan(&w.ID, &w.Name, &w.RepoURL, &w.CanvasURL, &w.ProductURL, &w.CreatedAt, &w.OwnerID, &hasToken, &w.FeedbackEnabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -505,6 +508,7 @@ var CollaborationTypes = []string{
 	"schedule.added", "schedule.updated", "schedule.removed",
 	"todo.created", "todo.done", "todo.reopened",
 	"artifact.created", "artifact.updated",
+	"feedback.created", "feedback.promoted",
 	"participant.joined", "participant.revoked", "member.removed",
 }
 
@@ -576,6 +580,8 @@ type WorkspacePatch struct {
 	// GitHubToken sets the token the server reads pull requests with (#127);
 	// "" removes it.
 	GitHubToken *string `json:"github_token"`
+	// FeedbackEnabled turns built-in Send feedback and triage on or off (#281).
+	FeedbackEnabled *bool `json:"feedback_enabled"`
 }
 
 // UpdateWorkspace applies a patch to a workspace.
@@ -615,6 +621,11 @@ func (s *Store) UpdateWorkspace(ctx context.Context, id string, actor int64, p W
 				token = v
 			}
 			if _, err := t.Exec(`UPDATE workspaces SET github_token = ? WHERE id = ?`, token, id); err != nil {
+				return err
+			}
+		}
+		if p.FeedbackEnabled != nil {
+			if _, err := t.Exec(`UPDATE workspaces SET feedback_enabled = ? WHERE id = ?`, *p.FeedbackEnabled, id); err != nil {
 				return err
 			}
 		}
@@ -666,6 +677,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM images WHERE workspace_id = ?`,
 		`DELETE FROM artifacts WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
+		`DELETE FROM feedback_reports WHERE workspace_id = ?`,
 		`DELETE FROM idea_comments WHERE workspace_id = ?`,
 		`DELETE FROM ideas WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,

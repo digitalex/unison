@@ -2,6 +2,7 @@ import { useEffect, useRef } from "react";
 import ScreenHead from "../ui/ScreenHead.jsx";
 import Agents from "./Agents.jsx";
 import DangerZone from "./DangerZone.jsx";
+import FeedbackSettings from "./FeedbackSettings.jsx";
 import General from "./General.jsx";
 import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
@@ -15,6 +16,7 @@ const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name, its isocan design canvas and where its product is deployed." },
   { id: "notifications", title: "Notifications", description: "Desktop notifications in this browser, and which workspace events trigger them." },
   { id: "sections", title: "Sections", description: "Optional custom sections alongside Backlog (e.g. Triage, Decisions, Research), with optional Actionable notifications for human assignees." },
+  { id: "feedback", title: "Feedback", description: "Optional in-app Send feedback dialog (with screenshot capture and crop) and a Feedback triage view in the sidebar." },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. The owner can remove members and delete the workspace; anyone else can leave." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite an agent button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
@@ -71,6 +73,7 @@ export default function SettingsPage({ workspace, sections: customSections = [],
     general: <General workspace={workspace} call={call} onError={onError} />,
     notifications: <Notifications />,
     sections: <Sections sections={customSections} call={call} onError={onError} />,
+    feedback: <FeedbackSettings workspace={workspace} call={call} onError={onError} />,
     members: (
       <Members members={members} invites={invites} account={account} ownerId={workspace.owner_id} call={call} onError={onError} navigate={navigate} />
     ),

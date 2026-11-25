@@ -1,11 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FileText, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Lightbulb, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FileText, Flag, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Lightbulb, Link2, ListTodo, MessageCircle, MessageSquarePlus, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, PageUnloadingError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import { markSeen } from "./activity.js";
 import Artifacts, { withArtifact } from "./Artifacts.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
+import Feedback, { withFeedback } from "./Feedback.jsx";
+import FeedbackDialog from "./FeedbackDialog.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
 import { LinkDialog } from "./Links.jsx";
 import MeDialog from "./MeDialog.jsx";
@@ -105,8 +107,9 @@ function collectionFor({ type, data }) {
   if (type.startsWith("schedule.")) return ["schedules"];
   if (type.startsWith("todo.")) return ["todos", "me"];
   if (type.startsWith("artifact.")) return ["artifacts"];
-  // Moving an idea to the backlog also records backlog.added for the item.
+  // Moving an idea or feedback report to the backlog also records backlog.added for the item.
   if (type.startsWith("idea.")) return ["ideas"];
+  if (type.startsWith("feedback.")) return ["feedback"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
@@ -215,6 +218,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   const [webhooks, setWebhooks] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [ideas, setIdeas] = useState([]);
+  const [feedback, setFeedback] = useState([]);
+  const [feedbackDialogOpen, setFeedbackDialogOpen] = useState(false);
   const [members, setMembers] = useState({ members: [] });
   const [invites, setInvites] = useState([]);
   const [live, setLive] = useState(false);
@@ -236,6 +241,10 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   const loadedOnce = useRef(false);
   const webVersion = useRef(null);
   const joined = Boolean(me);
+  const visibleScreens = useMemo(
+    () => (workspace?.feedback_enabled ? [...SCREENS, FEEDBACK_SCREEN] : SCREENS),
+    [Boolean(workspace?.feedback_enabled)],
+  );
 
   useEffect(() => {
     const onKey = (e) => {
@@ -252,7 +261,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
         return;
       }
       if (!joined || e.shiftKey || shouldIgnoreShortcut(e)) return;
-      const screen = SCREENS.find((s) => s.key === e.key);
+      const screen = visibleScreens.find((s) => s.key === e.key);
       if (screen) {
         e.preventDefault();
         screens.show(screen.id);
@@ -260,7 +269,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [joined, shortcutsOpen]);
+  }, [joined, shortcutsOpen, visibleScreens]);
   const notify = useNotifier(me, participants, view, {
     workspaceId: id,
     sectionSlug,
@@ -324,6 +333,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     artifacts: () => call("GET", "/artifacts").then(setArtifacts),
     // Open and promoted ideas: the board shows both.
     ideas: () => call("GET", "/ideas?status=all").then(setIdeas),
+    feedback: () => call("GET", "/feedback?status=all").then(setFeedback),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
@@ -502,6 +512,14 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     }
     setSections((list) => withSection(list, data));
   };
+  const applyFeedbackEvent = ({ type, data }) => {
+    if (!type.startsWith("feedback.") || !data?.id) return;
+    if (type === "feedback.deleted") {
+      setFeedback((list) => list.filter((f) => f.id !== data.id));
+      return;
+    }
+    setFeedback((list) => withFeedback(list, data));
+  };
   useEffect(() => {
     if (!account.ready || gate) return;
     const src = new EventSource(`/api/workspaces/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -541,6 +559,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
       applyTodoEvent(event);
       applyArtifactEvent(event);
       applySectionEvent(event);
+      applyFeedbackEvent(event);
       collectionFor(event).forEach(reload);
       // Renamed, or a new emoji or status, from here or anywhere else (#303).
       if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
@@ -592,11 +611,22 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     todos: openTodos,
     artifacts: artifacts.length,
     ideas: ideas.filter((d) => d.status === "open").length,
+    feedback: feedback.filter((f) => f.status === "open").length,
   };
+  const openSendFeedback = workspace.feedback_enabled ? () => setFeedbackDialogOpen(true) : null;
   const emptyAgents = participantsLoaded && !sidebarParticipants.some(KINDS.agents);
   // The screen header's controls on phones: Invite and the account menu.
   const headExtras = (
-    <HeadExtras workspace={workspace} call={call} account={account} members={members} settingsLink={screens.link("settings")} onOpenShortcuts={() => setShortcutsOpen(true)} onStartTour={() => setTourOpen(true)} />
+    <HeadExtras
+      workspace={workspace}
+      call={call}
+      account={account}
+      members={members}
+      settingsLink={screens.link("settings")}
+      onOpenShortcuts={() => setShortcutsOpen(true)}
+      onStartTour={() => setTourOpen(true)}
+      onSendFeedback={openSendFeedback}
+    />
   );
   const errorBar = sessionExpired ? (
     <p role="alert" className="error-bar">
@@ -636,6 +666,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
     >
       <Sidebar
         workspace={workspace}
+        screensList={visibleScreens}
         sections={sections}
         sectionCounts={sectionCounts}
         view={view}
@@ -646,6 +677,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
         account={account}
         onOpenShortcuts={() => setShortcutsOpen(true)}
         onStartTour={() => setTourOpen(true)}
+        onSendFeedback={openSendFeedback}
         navigate={navigate}
         participants={participantsLoaded ? sidebarParticipants : null}
         reviews={reviews}
@@ -691,6 +723,15 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
           onClose={() => setEditingMe(false)}
         />
       )}
+      {feedbackDialogOpen && joined && (
+        <FeedbackDialog
+          workspaceId={id}
+          token={token}
+          call={call}
+          onClose={() => setFeedbackDialogOpen(false)}
+          onSubmitted={(created) => setFeedback((list) => withFeedback(list, created))}
+        />
+      )}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
       {joined && workspace && tourOpen && <Tour workspace={workspace} onClose={() => setTourOpen(false)} />}
       {view === "settings" && joined ? (
@@ -703,7 +744,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
             participants={participants}
             webhooks={webhooks}
             account={account}
-        onOpenShortcuts={() => setShortcutsOpen(true)}
+            onOpenShortcuts={() => setShortcutsOpen(true)}
             call={call}
             error={errorBar}
             onError={setError}
@@ -741,6 +782,17 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
             />
           ) : view === "ideas" ? (
             <Ideas ideas={ideas} setIdeas={setIdeas} participants={stableParticipants} me={me} call={call} onError={setError} head={headExtras} error={errorBar} />
+          ) : view === "feedback" ? (
+            <Feedback
+              feedback={feedback}
+              setFeedback={setFeedback}
+              participants={stableParticipants}
+              call={call}
+              onError={setError}
+              head={headExtras}
+              error={errorBar}
+              onOpenSendFeedback={() => setFeedbackDialogOpen(true)}
+            />
           ) : view === "recurring" ? (
             <Recurring schedules={schedules} setSchedules={setSchedules} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : view === "todos" ? (
@@ -835,7 +887,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
           )}
         </main>
       )}
-      {joined && <TabBar view={view} counts={counts} screens={screens} />}
+      {joined && <TabBar view={view} screensList={visibleScreens} counts={counts} screens={screens} />}
     </div>
     </MentionProvider>
     </ImageUpload.Provider>
@@ -1095,6 +1147,8 @@ const SCREENS = [
   { id: "ideas", label: "Ideas", Icon: Lightbulb, key: "6" },
 ];
 
+const FEEDBACK_SCREEN = { id: "feedback", label: "Feedback", Icon: Flag, key: "7" };
+
 // The count beside a screen's name: the open backlog as a number; for chat,
 // the messages that need you (strong), else new messages as a dot; for TODOs,
 // active non-snoozed TODOs assigned to you (strong).
@@ -1155,7 +1209,7 @@ function SectionHeading({ title, count, open, onToggle, ariaControls }) {
 // here (humans and agents, each with Invite), pull requests pending review (with a GitHub
 // token, #127), links out (product, canvas, repositories, custom links #299),
 // then settings and your account at the bottom.
-function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, navigate, participants, people, reviews, call, resizer = null }) {
+function Sidebar({ workspace, screensList = SCREENS, sections = [], sectionCounts = {}, view, joined, live, counts, screens, account, onOpenShortcuts, onStartTour, onSendFeedback, navigate, participants, people, reviews, call, resizer = null }) {
   const repos = workspace.repos || [];
   const links = workspace.links || [];
   const [editingLink, setEditingLink] = useState(null); // A link, or "new".
@@ -1202,7 +1256,7 @@ function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, l
       <div className="sidebar-content">
         {joined && (
           <ul className="nav-list" aria-label="Screens">
-            {SCREENS.flatMap(({ id, label, Icon, key }) => {
+            {screensList.flatMap(({ id, label, Icon, key }) => {
               const mainItem = (
                 <li key={id}>
                   <a className="nav-link" data-tour={id} aria-keyshortcuts={key} title={`${label} (${key})`} {...screens.link(id)}>
@@ -1325,6 +1379,12 @@ function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, l
         <span className="spacer" />
       </div>
       <div className="sidebar-foot">
+        {joined && onSendFeedback && (
+          <button type="button" className="nav-link" aria-haspopup="dialog" onClick={onSendFeedback} title="Report a bug or suggestion with a screenshot">
+            <MessageSquarePlus aria-hidden="true" />
+            Send feedback
+          </button>
+        )}
         {joined && (
           <a className="nav-link" data-tour={workspace.canvas_url ? undefined : "canvas"} {...screens.link("settings")} title="Workspace settings">
             <Settings aria-hidden="true" />
@@ -1332,7 +1392,7 @@ function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, l
           </a>
         )}
         <div className="sidebar-foot-row">
-          {account.user && <AccountMenu account={account} showName menuExtra={(close) => <AccountMenuExtra close={close} onOpenShortcuts={onOpenShortcuts} onStartTour={onStartTour} />} />}
+          {account.user && <AccountMenu account={account} showName menuExtra={(close) => <AccountMenuExtra close={close} onOpenShortcuts={onOpenShortcuts} onStartTour={onStartTour} onSendFeedback={onSendFeedback} />} />}
           <ThemeSwitch />
         </div>
       </div>
@@ -1342,10 +1402,10 @@ function Sidebar({ workspace, sections = [], sectionCounts = {}, view, joined, l
 }
 
 // TabBar: the screens as tabs at the bottom, on phones.
-function TabBar({ view, counts, screens }) {
+function TabBar({ view, screensList = SCREENS, counts, screens }) {
   return (
     <nav className="tabbar" aria-label="Screens">
-      {SCREENS.map(({ id, label, Icon, key }) => (
+      {screensList.map(({ id, label, Icon, key }) => (
         <a key={id} className="tab" data-tour={id} aria-keyshortcuts={key} title={`${label} (${key})`} {...screens.link(id)}>
           <span className="tab-icon">
             <Icon aria-hidden="true" />
@@ -1360,10 +1420,23 @@ function TabBar({ view, counts, screens }) {
 
 // AccountMenuExtra is what the account menu adds in a workspace. The theme
 // isn't here: the sidebar (and the header on phones) has the switch (#131).
-function AccountMenuExtra({ close, onOpenShortcuts, onStartTour }) {
+function AccountMenuExtra({ close, onOpenShortcuts, onStartTour, onSendFeedback }) {
   return (
     <>
       {notifySupported && <NotifyRow />}
+      {onSendFeedback && (
+        <button
+          type="button"
+          className="button button-secondary"
+          onClick={() => {
+            close?.();
+            onSendFeedback();
+          }}
+        >
+          <MessageSquarePlus aria-hidden="true" />
+          Send feedback
+        </button>
+      )}
       <button
         type="button"
         className="button button-secondary"
@@ -1422,7 +1495,7 @@ function InviteButton({ kind, workspace, account, members, call, className, call
 
 // HeadExtras: on phones (no sidebar), Invite and the account menu at the
 // right of each screen's header; the menu also holds settings.
-function HeadExtras({ workspace, call, account, members, settingsLink, onOpenShortcuts, onStartTour }) {
+function HeadExtras({ workspace, call, account, members, settingsLink, onOpenShortcuts, onStartTour, onSendFeedback }) {
   return (
     <>
       <span className="head-account">
@@ -1434,7 +1507,7 @@ function HeadExtras({ workspace, call, account, members, settingsLink, onOpenSho
             account={account}
             menuExtra={(close) => (
               <>
-                <AccountMenuExtra close={close} onOpenShortcuts={onOpenShortcuts} onStartTour={onStartTour} />
+                <AccountMenuExtra close={close} onOpenShortcuts={onOpenShortcuts} onStartTour={onStartTour} onSendFeedback={onSendFeedback} />
                 <a className="button button-secondary" data-tour={workspace.canvas_url ? undefined : "canvas"} href={settingsLink.href} onClick={(e) => {
                     close();
                     settingsLink.onClick(e);
