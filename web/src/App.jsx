@@ -28,7 +28,24 @@ export default function App() {
     window.history.pushState(null, "", to);
     setPath(window.location.pathname);
   };
-  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat|todos))?/);
+  const artifactMatch = path.match(/^\/w\/([^/]+)\/artifacts\/([^/]+)\/?$/);
+  if (artifactMatch) {
+    let artifactFile = artifactMatch[2];
+    try {
+      artifactFile = decodeURIComponent(artifactFile);
+    } catch {}
+    return (
+      <Workspace
+        key={artifactMatch[1]}
+        id={artifactMatch[1]}
+        view="artifacts"
+        artifactFile={artifactFile}
+        navigate={navigate}
+        account={account}
+      />
+    );
+  }
+  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat|todos|artifacts))?/);
   if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live
   // stream and dialogs start fresh for the new one.

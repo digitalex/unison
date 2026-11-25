@@ -181,6 +181,18 @@ Images (screenshots to show inline in chat, items and comments):
   image save <id-or-url> <dest>      download one (12, #12, its /api/… path or
                                      full URL); dest - writes to stdout
 
+Artifacts (design docs, HTML prototypes, reports and screenshots at /w/{ws}/artifacts/{file}):
+  artifact [ls] [--item ID]          list workspace artifacts (newest updated first)
+  artifact add <path> [--name FILE] [--title T] [--item ID]
+                                     upload a file (or - for stdin with --name, up to
+                                     10 MiB); prints /w/{ws}/artifacts/{name}
+  artifact save <file-or-url> <dest> download one (<name>, /w/{ws}/artifacts/<name>,
+                                     /api/… path or full URL); dest - writes to stdout
+  artifact update <name> [<path>] [--title T] [--item ID]
+                                     replace content in-place (PUT) and/or update
+                                     title/item metadata (PATCH), keeping permalink
+  artifact delete <name>             delete an artifact (or rm)
+
 Actions (chat messages sent with --action that ask you to act):
   actions                            what asks you and isn't done yet
   done <message-id> [--undo]         mark one done (replying in its thread or
@@ -273,6 +285,7 @@ Environment: UNISON_SERVER, UNISON_WORKSPACE, UNISON_TOKEN, UNISON_CONFIG,
 `
 
 type app struct {
+	in               io.Reader
 	out              io.Writer
 	errOut           io.Writer // progress and warnings; never the result
 	cfg              *Config
@@ -288,7 +301,11 @@ type app struct {
 // Run executes the unison command with args (excluding the program name)
 // and returns the process exit code.
 func Run(args []string, stdout, stderr io.Writer) int {
-	err := run(args, stdout, stderr)
+	return runWithIO(args, os.Stdin, stdout, stderr)
+}
+
+func runWithIO(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	err := run(args, stdin, stdout, stderr)
 	if err == nil {
 		return 0
 	}
@@ -311,8 +328,8 @@ func Run(args []string, stdout, stderr io.Writer) int {
 	return 1
 }
 
-func run(args []string, stdout, stderr io.Writer) error {
-	a := &app{out: stdout, errOut: stderr}
+func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
+	a := &app{in: stdin, out: stdout, errOut: stderr}
 	var configPath string
 	args, err := extractGlobals(args, map[string]*string{
 		"server": &a.server, "workspace": &a.ws, "token": &a.token, "config": &configPath,
@@ -390,6 +407,8 @@ func run(args []string, stdout, stderr io.Writer) error {
 		return a.activity(rest)
 	case "image", "images":
 		return a.image(rest)
+	case "artifact", "artifacts":
+		return a.artifact(rest)
 	case "backlog":
 		return a.backlog(rest)
 	case "webhook", "webhooks":
@@ -2867,6 +2886,18 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			}
 		}
 		return line
+	case strings.HasPrefix(e.Type, "artifact."):
+		var art store.Artifact
+		json.Unmarshal(e.Data, &art)
+		switch e.Type {
+		case "artifact.created":
+			return fmt.Sprintf("📄 %s uploaded artifact %s — %s", who, art.Name, art.URL)
+		case "artifact.updated":
+			return fmt.Sprintf("📄 %s updated artifact %s (v%d) — %s", who, art.Name, art.Version, art.URL)
+		case "artifact.deleted":
+			return fmt.Sprintf("📄 %s deleted artifact %s", who, art.Name)
+		}
+		return fmt.Sprintf("📄 %s %s artifact %s", who, strings.TrimPrefix(e.Type, "artifact."), art.Name)
 	}
 	return fmt.Sprintf("%s by %s", e.Type, who)
 }

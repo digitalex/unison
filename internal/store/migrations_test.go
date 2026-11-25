@@ -214,3 +214,46 @@ func TestTodosTableMigration(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestArtifactsTableMigration(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws, _, _ := s.CreateWorkspace(ctx, "W", "", "")
+	p, _, _, _ := s.Join(ctx, ws.ID, "Ada", "")
+	s.Close()
+
+	// Simulate an older database before the artifacts table existed (#918).
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := raw.Exec(`DROP TABLE artifacts`); err != nil {
+		t.Fatal(err)
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		if !tableExists(t, s, "artifacts") {
+			t.Fatalf("boot %d: artifacts table was not created", boot)
+		}
+		if boot == 1 {
+			if _, _, err := s.AddArtifact(ctx, p, ArtifactInput{Name: "design.md", Data: []byte("# Design")}); err != nil {
+				t.Fatalf("AddArtifact after migration: %v", err)
+			}
+		} else {
+			list, err := s.ListArtifacts(ctx, ws.ID, 0)
+			if err != nil || len(list) != 1 || list[0].Name != "design.md" {
+				t.Fatalf("boot %d ListArtifacts = %+v, %v", boot, list, err)
+			}
+		}
+		s.Close()
+	}
+}

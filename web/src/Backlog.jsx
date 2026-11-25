@@ -18,7 +18,7 @@ const EMPTY_REPOS = [];
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
 // here, Invite), error the workspace's error bar.
-export default function Backlog({ items, todos = [], setTodos, onReloadMe, participants, me, workspace, call, onError, head, error }) {
+export default function Backlog({ items, todos = [], setTodos, artifacts = [], setArtifacts, token = "", onReloadMe, participants, me, workspace, call, onError, head, error }) {
   const [view, setView] = useBacklogView();
   const [showDone, setShowDone] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -166,6 +166,10 @@ export default function Backlog({ items, todos = [], setTodos, onReloadMe, parti
           items={items}
           todos={todos}
           setTodos={setTodos}
+          artifacts={artifacts}
+          setArtifacts={setArtifacts}
+          workspace={workspace}
+          token={token}
           onReloadMe={onReloadMe}
           participants={stableParticipants}
           me={me}

@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
+import { ArrowUpRight, Bot, CheckSquare, ChevronDown, Compass, FileText, FolderGit2, Globe, Keyboard, KeyRound, LayoutGrid, Link2, ListTodo, MessageCircle, Pencil, Plus, RefreshCw, Repeat, Settings, UserPlus } from "lucide-react";
 import { ApiError, PageUnloadingError, getToken, setToken, workspaceApi } from "./api.js";
 import { AccountMenu } from "./Account.jsx";
 import { markSeen } from "./activity.js";
+import Artifacts, { withArtifact } from "./Artifacts.jsx";
 import Backlog from "./Backlog.jsx";
 import Chat from "./Chat.jsx";
 import { GatePage, JoinForm } from "./Gate.jsx";
@@ -82,6 +83,7 @@ function collectionFor({ type, data }) {
   if (type.startsWith("webhook.")) return ["webhooks"];
   if (type.startsWith("schedule.")) return ["schedules"];
   if (type.startsWith("todo.")) return ["todos", "me"];
+  if (type.startsWith("artifact.")) return ["artifacts"];
   if (type.startsWith("invite.")) return ["invites"];
   // Members list each member's participants (names, emoji, links).
   if (type === "participant.joined") return ["participants", "members", "activity"];
@@ -150,7 +152,7 @@ function useTabTitle(name) {
 // Workspaces are private: signed in, the session cookie is the credential
 // (the server finds your participant); signed out, this browser's
 // participant token, if any. Whoever the server refuses sees GatePage.
-export default function Workspace({ id, view, navigate, account }) {
+export default function Workspace({ id, view, artifactFile = null, navigate, account }) {
   const token = account.user ? "" : getToken(id);
   const call = useMemo(() => workspaceApi(id, token), [id, token]);
   const uploader = useMemo(() => imageUploader(id, token), [id, token]);
@@ -172,6 +174,7 @@ export default function Workspace({ id, view, navigate, account }) {
   const [backlog, setBacklog] = useState([]);
   const [todos, setTodos] = useState([]);
   const [todosLoaded, setTodosLoaded] = useState(false);
+  const [artifacts, setArtifacts] = useState([]);
   const [webhooks, setWebhooks] = useState([]);
   const [schedules, setSchedules] = useState([]);
   const [members, setMembers] = useState({ members: [] });
@@ -266,6 +269,7 @@ export default function Workspace({ id, view, navigate, account }) {
         setTodos(list);
         setTodosLoaded(true);
       }),
+    artifacts: () => call("GET", "/artifacts").then(setArtifacts),
     members: () => call("GET", "/members").then(setMembers),
     invites: () => call("GET", "/invites").then(setInvites),
     // "join_first": a member (or, with privacy off, a visitor) who hasn't joined.
@@ -424,6 +428,14 @@ export default function Workspace({ id, view, navigate, account }) {
     }
     setTodos((list) => withTodo(list, data));
   };
+  const applyArtifactEvent = ({ type, data }) => {
+    if (!type.startsWith("artifact.") || !data?.name) return;
+    if (type === "artifact.deleted") {
+      setArtifacts((list) => list.filter((a) => a.id !== data.id && a.name.toLowerCase() !== data.name.toLowerCase()));
+      return;
+    }
+    setArtifacts((list) => withArtifact(list, data));
+  };
   useEffect(() => {
     if (!account.ready || gate) return;
     const src = new EventSource(`/api/workspaces/${id}/stream${token ? `?token=${encodeURIComponent(token)}` : ""}`);
@@ -461,6 +473,7 @@ export default function Workspace({ id, view, navigate, account }) {
       applyMessageEvent(event);
       applyItemEvent(event);
       applyTodoEvent(event);
+      applyArtifactEvent(event);
       collectionFor(event).forEach(reload);
       // Renamed, or a new emoji or status, from here or anywhere else (#303).
       if (event.type === "participant.updated" && event.data?.id === meNow.current?.id) reload("me");
@@ -483,6 +496,7 @@ export default function Workspace({ id, view, navigate, account }) {
     chat: unread,
     actions: me?.open_actions || 0,
     todos: openTodos,
+    artifacts: artifacts.length,
   };
   const emptyAgents = participantsLoaded && !sidebarParticipants.some(KINDS.agents);
   // The screen header's controls on phones: Invite and the account menu.
@@ -639,11 +653,29 @@ export default function Workspace({ id, view, navigate, account }) {
               head={headExtras}
               error={errorBar}
             />
+          ) : view === "artifacts" ? (
+            <Artifacts
+              artifacts={artifacts}
+              setArtifacts={setArtifacts}
+              artifactFile={artifactFile}
+              items={backlog}
+              participants={stableParticipants}
+              workspace={workspace}
+              token={token}
+              call={call}
+              onError={setError}
+              head={headExtras}
+              error={errorBar}
+              navigate={navigate}
+            />
           ) : (
             <Backlog
               items={backlog}
               todos={todos}
               setTodos={setTodos}
+              artifacts={artifacts}
+              setArtifacts={setArtifacts}
+              token={token}
               onReloadMe={() => reload("me")}
               participants={stableParticipants}
               me={me}
@@ -672,7 +704,8 @@ function useScreens(id, view, navigate) {
   const current = useRef(view);
   current.current = view;
   const show = (screen, rest = "") => {
-    if (current.current !== screen || rest) navigate(path(screen) + rest);
+    const target = path(screen) + rest;
+    if (current.current !== screen || rest || window.location.pathname !== path(screen)) navigate(target);
   };
   useEffect(() => {
     const onOpenItem = (e) => {
@@ -784,6 +817,7 @@ const SCREENS = [
   { id: "recurring", label: "Recurring", Icon: Repeat, key: "2" },
   { id: "chat", label: "Chat", Icon: MessageCircle, key: "3" },
   { id: "todos", label: "TODOs", Icon: CheckSquare, key: "4" },
+  { id: "artifacts", label: "Artifacts", Icon: FileText, key: "5" },
 ];
 
 // The count beside a screen's name: the open backlog as a number; for chat,

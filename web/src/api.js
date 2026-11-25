@@ -94,6 +94,73 @@ export async function uploadImage(ws, token, file) {
   return data;
 }
 
+// uploadArtifact uploads a file to POST …/artifacts (#918) and returns its metadata.
+export async function uploadArtifact(ws, token, file, { name, title, item_id } = {}) {
+  const headers = { "Content-Type": "application/octet-stream", "X-Unison-CSRF": "1" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const params = new URLSearchParams();
+  params.set("name", (name || file.name || "artifact").trim());
+  if (title && title.trim()) params.set("title", title.trim());
+  if (item_id && Number(item_id) > 0) params.set("item_id", String(Number(item_id)));
+  const resp = await fetch(`/api/workspaces/${ws}/artifacts?${params.toString()}`, {
+    method: "POST",
+    headers,
+    redirect: "manual",
+    body: file,
+  });
+  if (resp.type === "opaqueredirect" || (resp.status >= 300 && resp.status < 400)) {
+    throw new ApiError(401, "Your session expired. Reload the page to sign in again.", "session_expired");
+  }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new ApiError(resp.status, data.error || resp.statusText, data.code);
+  return data;
+}
+
+// replaceArtifact replaces an existing artifact's bytes in-place via PUT …/artifacts/{file} (#918).
+export async function replaceArtifact(ws, token, artifactName, file, { title, item_id } = {}) {
+  const headers = { "Content-Type": "application/octet-stream", "X-Unison-CSRF": "1" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const params = new URLSearchParams();
+  if (title !== undefined) params.set("title", title);
+  if (item_id !== undefined) params.set("item_id", String(Number(item_id) || 0));
+  const qs = params.toString();
+  const suffix = `/api/workspaces/${ws}/artifacts/${encodeURIComponent(artifactName)}${qs ? `?${qs}` : ""}`;
+  const resp = await fetch(suffix, {
+    method: "PUT",
+    headers,
+    redirect: "manual",
+    body: file,
+  });
+  if (resp.type === "opaqueredirect" || (resp.status >= 300 && resp.status < 400)) {
+    throw new ApiError(401, "Your session expired. Reload the page to sign in again.", "session_expired");
+  }
+  const data = await resp.json().catch(() => ({}));
+  if (!resp.ok) throw new ApiError(resp.status, data.error || resp.statusText, data.code);
+  return data;
+}
+
+// fetchArtifactBytes fetches raw artifact bytes with cache: "no-cache" so ETag
+// revalidation always runs and live SSE updates show immediately (#918).
+export async function fetchArtifactBytes(ws, token, artifactName, { signal } = {}) {
+  const headers = {};
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const resp = await fetch(`/api/workspaces/${ws}/artifacts/${encodeURIComponent(artifactName)}`, {
+    method: "GET",
+    headers,
+    cache: "no-cache",
+    redirect: "manual",
+    signal,
+  });
+  if (resp.type === "opaqueredirect" || (resp.status >= 300 && resp.status < 400)) {
+    throw new ApiError(401, "Your session expired. Reload the page to sign in again.", "session_expired");
+  }
+  if (!resp.ok) {
+    const data = await resp.json().catch(() => ({}));
+    throw new ApiError(resp.status, data.error || resp.statusText, data.code);
+  }
+  return resp;
+}
+
 // Returns a function that calls the API for one workspace: with a
 // participant token, or (token "") with the session cookie.
 export function workspaceApi(ws, token) {
