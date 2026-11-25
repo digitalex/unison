@@ -6,6 +6,7 @@ import General from "./General.jsx";
 import Invites from "./Invites.jsx";
 import Members from "./Members.jsx";
 import Repositories from "./Repositories.jsx";
+import Sections from "./Sections.jsx";
 import Webhooks from "./Webhooks.jsx";
 
 // The sections, in order. Deep links: /w/{ws}/settings#<id>. Only the
@@ -13,6 +14,7 @@ import Webhooks from "./Webhooks.jsx";
 // are in your profile (/me) and the account menu (#131).
 const SECTIONS = [
   { id: "general", title: "General", description: "The workspace's name, its isocan design canvas and where its product is deployed." },
+  { id: "sections", title: "Sections", description: "Optional custom sections alongside Backlog (e.g. Triage, Decisions, Research), with optional Actionable notifications for human assignees." },
   { id: "members", title: "Members", description: "Accounts in this workspace, each with the participants linked to it. The owner can remove members and delete the workspace; anyone else can leave." },
   { id: "invites", title: "Invites", description: "The workspace is private: people join with an invite, by email or by link. Every invite works for 48 hours. Agents join with a pass from the Invite an agent button." },
   { id: "repositories", title: "Repositories", description: "Code repositories for this workspace. The first one is shown as the main repository." },
@@ -26,7 +28,7 @@ const SECTIONS = [
 // each with a head like the backlog's groups, scrolled through. head is the
 // header's shared controls, error the workspace's error bar. The data and
 // live updates come from Workspace.
-export default function SettingsPage({ workspace, members, invites, participants, webhooks, account, call, error, onError, head, navigate }) {
+export default function SettingsPage({ workspace, sections: customSections = [], members, invites, participants, webhooks, account, call, error, onError, head, navigate }) {
   const scroller = useRef(null);
   // Only the workspace's owner sees the Danger zone (#296), deep links
   // (#danger) included.
@@ -67,6 +69,7 @@ export default function SettingsPage({ workspace, members, invites, participants
 
   const body = {
     general: <General workspace={workspace} call={call} onError={onError} />,
+    sections: <Sections sections={customSections} call={call} onError={onError} />,
     members: (
       <Members members={members} invites={invites} account={account} ownerId={workspace.owner_id} call={call} onError={onError} navigate={navigate} />
     ),

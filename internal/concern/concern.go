@@ -56,12 +56,25 @@ func (f *Filter) Concerns(e store.Event) bool {
 		if json.Unmarshal(e.Data, &it) != nil {
 			return false
 		}
-		if e.Type == "backlog.added" {
-			// An unassigned item is work to pick up (#90); an item added for
-			// someone else wakes only that assignee (#146).
-			return it.AssigneeID == nil || *it.AssigneeID == f.Me.ID
+		switch e.Type {
+		case "backlog.added":
+			if it.AssigneeID != nil {
+				return *it.AssigneeID == f.Me.ID
+			}
+			// An unassigned main-Backlog item is work to pick up (#90); custom
+			// section items are parked until assigned (#919).
+			return it.SectionID == nil
+		case "backlog.assigned", "backlog.started":
+			return it.AssigneeID != nil && *it.AssigneeID == f.Me.ID
+		case "backlog.updated", "backlog.reopened":
+			// Moving or reopening an item into a notify section while assigned
+			// to a human wakes that human (#919).
+			return it.SectionNotify && it.Status != store.StatusDone &&
+				it.AssigneeID != nil && *it.AssigneeID == f.Me.ID && f.Me.Sponsor == nil
+		case "backlog.answered":
+			return it.CreatedBy == f.Me.ID || (it.AssigneeID != nil && *it.AssigneeID == f.Me.ID)
 		}
-		return (e.Type == "backlog.assigned" || e.Type == "backlog.started") && it.AssigneeID != nil && *it.AssigneeID == f.Me.ID
+		return false
 	case strings.HasPrefix(e.Type, "todo."):
 		if !f.MentionsOnly {
 			return true
@@ -75,7 +88,7 @@ func (f *Filter) Concerns(e store.Event) bool {
 		return json.Unmarshal(e.Data, &d) == nil && d.Event != "ping"
 	case e.Type == "participant.joined", e.Type == "workspace.updated", strings.HasPrefix(e.Type, "repo."),
 		strings.HasPrefix(e.Type, "link."), strings.HasPrefix(e.Type, "webhook."), strings.HasPrefix(e.Type, "schedule."),
-		strings.HasPrefix(e.Type, "artifact."):
+		strings.HasPrefix(e.Type, "artifact."), strings.HasPrefix(e.Type, "section."):
 		return !f.MentionsOnly
 	}
 	return false

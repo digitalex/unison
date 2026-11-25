@@ -182,6 +182,18 @@ type Item struct {
 	CloseNote      string `json:"close_note,omitempty"`
 	// ScheduleID is the schedule this item is a run of (#112), if any.
 	ScheduleID *int64 `json:"schedule_id,omitempty"`
+	// SectionID places the item in a custom section (#919); nil means the main Backlog.
+	SectionID     *int64 `json:"section_id,omitempty"`
+	SectionSlug   string `json:"section_slug,omitempty"`
+	SectionName   string `json:"section_name,omitempty"`
+	SectionIcon   string `json:"section_icon,omitempty"`
+	SectionNotify bool   `json:"section_notify,omitempty"`
+	// Choices and structured decision tracking (#919).
+	Choices        []string `json:"choices,omitempty"`
+	CloseOnAnswer  bool     `json:"close_on_answer,omitempty"`
+	AnsweredChoice string   `json:"answered_choice,omitempty"`
+	AnsweredByID   *int64   `json:"answered_by_id,omitempty"`
+	AnsweredAt     *int64   `json:"answered_at,omitempty"`
 	// PRs are the pull requests linked to the item (several are allowed);
 	// CommentCount is how many comments it has, MessageCount how many chat
 	// messages are about it.
@@ -424,7 +436,7 @@ var CollaborationTypes = []string{
 	"message.created",
 	"backlog.added", "backlog.updated", "backlog.moved", "backlog.deleted",
 	"backlog.assigned", "backlog.unassigned", "backlog.started", "backlog.stopped", "backlog.released",
-	"backlog.closed", "backlog.reopened",
+	"backlog.closed", "backlog.reopened", "backlog.answered",
 	"comment.added",
 	"pr.linked", "pr.unlinked",
 	"schedule.added", "schedule.updated", "schedule.removed",
@@ -599,6 +611,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM messages WHERE workspace_id = ?`,
 		`DELETE FROM todos WHERE workspace_id = ?`,
 		`DELETE FROM items WHERE workspace_id = ?`,
+		`DELETE FROM sections WHERE workspace_id = ?`,
 		`DELETE FROM agent_passes WHERE workspace_id = ?`,
 		`DELETE FROM workspace_invites WHERE workspace_id = ?`,
 		`DELETE FROM memberships WHERE workspace_id = ?`,
