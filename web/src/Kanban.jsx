@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { GitPullRequest, GripVertical, MessageSquare, MessagesSquare, Plus } from "lucide-react";
-import { meta, name, prLabel } from "./backlogFormat.js";
+import { itemNum, meta, name, prLabel } from "./backlogFormat.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 
@@ -165,6 +165,7 @@ const KanbanCard = memo(function KanbanCard({
   hintId,
   onOpen,
 }) {
+  const num = itemNum(item);
   const queued = item.status !== "done";
   const canClaim = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
   const classes = ["item", "kcard", item.status];
@@ -173,7 +174,7 @@ const KanbanCard = memo(function KanbanCard({
   const open = (e) => {
     // Focus the title so closing the dialog returns focus to this card.
     e.currentTarget.querySelector(".kcard-title").focus();
-    onOpen(item.id);
+    onOpen(num);
   };
   return (
     <article
@@ -190,7 +191,7 @@ const KanbanCard = memo(function KanbanCard({
             type="button"
             className="kcard-grip"
             data-grip={item.id}
-            aria-label={`Reorder #${item.id} ${item.title}`}
+            aria-label={`Reorder #${num} ${item.title}`}
             aria-describedby={hintId}
             aria-pressed={lifted}
             onPointerDown={(e) => {
@@ -203,7 +204,7 @@ const KanbanCard = memo(function KanbanCard({
             <GripVertical aria-hidden="true" />
           </button>
         )}
-        <span className="item-id">#{item.id}</span>
+        <span className="item-id">#{num}</span>
         <RecurringMarker item={item} />
         <span className="meta">{meta(item)}</span>
       </div>
@@ -239,7 +240,7 @@ const KanbanCard = memo(function KanbanCard({
         </span>
         {canClaim && (
           <span className="kcard-actions" onClick={(e) => e.stopPropagation()}>
-            <Button size="small" title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${item.id}/start`)}>
+            <Button size="small" title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
               Claim
             </Button>
           </span>

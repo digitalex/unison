@@ -146,10 +146,12 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
 
   const sameEntry = (a, b) => (a.kind || "") === (b.kind || "") && a.workspace_id === b.workspace_id && a.id === b.id;
 
+  const todoItemNum = (td) => td.item_number || td.item?.number || td.item_id || 0;
+
   const markTodoDone = (td) => {
     setMyTodos((list) => list.filter((x) => !sameEntry(x, td)));
     if (td.kind === "section_item") {
-      api("POST", `/api/workspaces/${td.workspace_id}/backlog/${td.id}/close`, { body: { note: "" } }).catch(refreshTodos);
+      api("POST", `/api/workspaces/${td.workspace_id}/backlog/${todoItemNum(td) || td.id}/close`, { body: { note: "" } }).catch(refreshTodos);
       return;
     }
     api("POST", `/api/workspaces/${td.workspace_id}/todos/${td.id}/done`, { body: { note: "" } }).catch(refreshTodos);
@@ -161,7 +163,7 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
     } else {
       setMyTodos((list) => list.map((x) => (sameEntry(x, td) ? { ...x, answered_choice: choice } : x)));
     }
-    api("POST", `/api/workspaces/${td.workspace_id}/backlog/${td.id}/answer`, { body: { choice } }).catch(refreshTodos);
+    api("POST", `/api/workspaces/${td.workspace_id}/backlog/${todoItemNum(td) || td.id}/answer`, { body: { choice } }).catch(refreshTodos);
   };
 
   const snoozeTodo = (td, duration) => {
@@ -221,8 +223,9 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
           <ul className="ws-dock-todo-list">
             {myTodos.map((td) => {
               const isSectionItem = td.kind === "section_item";
+              const linkedNum = todoItemNum(td);
               const targetHref = isSectionItem
-                ? `/w/${td.workspace_id}/s/${td.section_slug}?item=${td.id}`
+                ? `/w/${td.workspace_id}/s/${td.section_slug}?item=${linkedNum || td.id}`
                 : `/w/${td.workspace_id}/todos`;
               return (
                 <li key={`${td.kind || "todo"}-${td.workspace_id}-${td.id}`} className="ws-dock-todo-row">
@@ -237,6 +240,7 @@ function WorkspaceDock({ account, workspaces, workspacesError, showLists, naviga
                     <span className="ws-dock-todo-ws">
                       {td.workspace_name}
                       {isSectionItem && td.section_name ? ` · ${td.section_name}` : ""}
+                      {linkedNum ? ` · #${linkedNum}` : ""}
                     </span>
                     <span className="ws-dock-todo-title">{td.title}</span>
                   </a>

@@ -14,6 +14,7 @@ import (
 type Comment struct {
 	ID          int64  `json:"id"`
 	ItemID      int64  `json:"item_id"`
+	ItemNumber  int64  `json:"item_number,omitempty"`
 	WorkspaceID string `json:"workspace_id"`
 	AuthorID    int64  `json:"author_id"`
 	Body        string `json:"body"`
@@ -123,10 +124,11 @@ func scanComment(row interface{ Scan(...any) error }) (*Comment, error) {
 func (s *Store) ListComments(ctx context.Context, wsID string, itemID int64) ([]Comment, error) {
 	var out []Comment
 	_, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := getItem(t, wsID, itemID); err != nil {
+		it, err := getItem(t, wsID, itemID)
+		if err != nil {
 			return err
 		}
-		rows, err := t.Query(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? ORDER BY id`, wsID, itemID)
+		rows, err := t.Query(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? ORDER BY id`, wsID, it.ID)
 		if err != nil {
 			return err
 		}
@@ -137,6 +139,7 @@ func (s *Store) ListComments(ctx context.Context, wsID string, itemID int64) ([]
 			if err != nil {
 				return err
 			}
+			c.ItemNumber = it.DisplayNumber()
 			out = append(out, *c)
 		}
 		return rows.Err()
@@ -152,17 +155,18 @@ func (s *Store) AddComment(ctx context.Context, actor *Participant, itemID int64
 	}
 	var c *Comment
 	evs, err := s.tx(ctx, func(t *tx, log *eventLog) error {
-		if _, err := getItem(t, actor.WorkspaceID, itemID); err != nil {
+		it, err := getItem(t, actor.WorkspaceID, itemID)
+		if err != nil {
 			return err
 		}
-		c = &Comment{ItemID: itemID, WorkspaceID: actor.WorkspaceID, AuthorID: actor.ID, Body: body, CreatedAt: log.now}
+		c = &Comment{ItemID: it.ID, ItemNumber: it.DisplayNumber(), WorkspaceID: actor.WorkspaceID, AuthorID: actor.ID, Body: body, CreatedAt: log.now}
 		id, err := t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
 			c.ItemID, c.WorkspaceID, c.AuthorID, c.Body, c.CreatedAt)
 		if err != nil {
 			return err
 		}
 		c.ID = id
-		it, err := getItem(t, actor.WorkspaceID, itemID)
+		it, err = getItemByID(t, actor.WorkspaceID, it.ID)
 		if err != nil {
 			return err
 		}
@@ -177,8 +181,12 @@ func (s *Store) AddComment(ctx context.Context, actor *Participant, itemID int64
 // DeleteComment deletes a comment. Only its author may delete it.
 func (s *Store) DeleteComment(ctx context.Context, actor *Participant, itemID, commentID int64) ([]Event, error) {
 	return s.tx(ctx, func(t *tx, log *eventLog) error {
+		realItemID, err := ResolveItemID(t, actor.WorkspaceID, itemID)
+		if err != nil {
+			return fmt.Errorf("comment %d on #%d: %w", commentID, itemID, ErrNotFound)
+		}
 		c, err := scanComment(t.QueryRow(`SELECT `+commentCols+` FROM item_comments WHERE workspace_id = ? AND item_id = ? AND id = ?`,
-			actor.WorkspaceID, itemID, commentID))
+			actor.WorkspaceID, realItemID, commentID))
 		if errors.Is(err, ErrNotFound) {
 			return fmt.Errorf("comment %d on #%d: %w", commentID, itemID, ErrNotFound)
 		}
@@ -191,10 +199,11 @@ func (s *Store) DeleteComment(ctx context.Context, actor *Participant, itemID, c
 		if _, err := t.Exec(`DELETE FROM item_comments WHERE id = ?`, c.ID); err != nil {
 			return err
 		}
-		it, err := getItem(t, actor.WorkspaceID, itemID)
+		it, err := getItemByID(t, actor.WorkspaceID, realItemID)
 		if err != nil {
 			return err
 		}
+		c.ItemNumber = it.DisplayNumber()
 		return log.add(actor.WorkspaceID, "comment.deleted", actor.ID, CommentEvent{Comment: c, Item: it})
 	})
 }
@@ -224,7 +233,7 @@ func (s *Store) LinkPR(ctx context.Context, actor *Participant, itemID int64, ra
 		_, err := t.Exec(`INSERT INTO item_prs (item_id, workspace_id, url, added_by, created_at) VALUES (?, ?, ?, ?, ?)`,
 			it.ID, it.WorkspaceID, u, actor.ID, log.now)
 		if isUniqueViolation(err) {
-			return fmt.Errorf("%w: %s is already linked to #%d", ErrConflict, u, it.ID)
+			return fmt.Errorf("%w: %s is already linked to #%d", ErrConflict, u, it.DisplayNumber())
 		}
 		return err
 	})
@@ -239,7 +248,7 @@ func (s *Store) UnlinkPR(ctx context.Context, actor *Participant, itemID int64, 
 			return err
 		}
 		if n, _ := res.RowsAffected(); n == 0 {
-			return fmt.Errorf("%s is not linked to #%d: %w", u, it.ID, ErrNotFound)
+			return fmt.Errorf("%s is not linked to #%d: %w", u, it.DisplayNumber(), ErrNotFound)
 		}
 		return nil
 	})
@@ -258,7 +267,7 @@ func linkPRsInNote(t *tx, log *eventLog, actor *Participant, it *Item, note stri
 		if err != nil {
 			return err
 		}
-		linked, err := getItem(t, it.WorkspaceID, it.ID)
+		linked, err := getItemByID(t, it.WorkspaceID, it.ID)
 		if err != nil {
 			return err
 		}

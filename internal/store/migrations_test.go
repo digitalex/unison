@@ -376,3 +376,143 @@ func TestSectionsAndItemsColumnsMigration(t *testing.T) {
 		s.Close()
 	}
 }
+
+func TestItemNumbersBackfillMigration(t *testing.T) {
+	dsn := storetest.DSN(t)
+	ctx := context.Background()
+	s, err := Open(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws1, _, _ := s.CreateWorkspace(ctx, "Alpha", "", "")
+	ws2, _, _ := s.CreateWorkspace(ctx, "Beta", "", "")
+	p1, _, _, _ := s.Join(ctx, ws1.ID, "Ada", "")
+	p2, _, _, _ := s.Join(ctx, ws2.ID, "Bob", "")
+
+	a1, _, _ := s.AddItem(ctx, p1, "Alpha one", "", 0)
+	a2, _, _ := s.AddItem(ctx, p1, "Alpha two", "", 0)
+	b1, _, _ := s.AddItem(ctx, p2, "Beta one", "", 0)
+	a3, _, _ := s.AddItem(ctx, p1, "Alpha three", "", 0)
+	b2, _, _ := s.AddItem(ctx, p2, "Beta two", "", 0)
+	s.Close()
+
+	// Simulate a pre-#920 database: workspaces without next_item_num and items
+	// without number or items_ws_number.
+	raw, err := openRaw(dsn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw.pg {
+		for _, q := range []string{
+			`DROP INDEX IF EXISTS items_ws_number`,
+			`ALTER TABLE items DROP COLUMN IF EXISTS number`,
+			`ALTER TABLE workspaces DROP COLUMN IF EXISTS next_item_num`,
+		} {
+			if _, err := raw.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	} else {
+		for _, q := range []string{
+			`PRAGMA foreign_keys = OFF`,
+			`DROP INDEX IF EXISTS items_ws_number`,
+			`DROP INDEX IF EXISTS items_section`,
+			`DROP INDEX IF EXISTS items_schedule`,
+			`DROP INDEX IF EXISTS items_ws`,
+			`CREATE TABLE workspaces_pre920 (
+				id TEXT PRIMARY KEY,
+				name TEXT NOT NULL,
+				repo_url TEXT NOT NULL DEFAULT '',
+				canvas_url TEXT NOT NULL DEFAULT '',
+				created_at INTEGER NOT NULL,
+				github_token TEXT,
+				owner_user_id INTEGER REFERENCES users(id),
+				product_url TEXT
+			)`,
+			`INSERT INTO workspaces_pre920 (id, name, repo_url, canvas_url, created_at, github_token, owner_user_id, product_url)
+				SELECT id, name, repo_url, canvas_url, created_at, github_token, owner_user_id, product_url FROM workspaces`,
+			`DROP TABLE workspaces`,
+			`ALTER TABLE workspaces_pre920 RENAME TO workspaces`,
+			`CREATE TABLE items_pre920 (
+				id INTEGER PRIMARY KEY AUTOINCREMENT,
+				workspace_id TEXT NOT NULL REFERENCES workspaces(id),
+				section_id INTEGER REFERENCES sections(id) ON DELETE SET NULL,
+				title TEXT NOT NULL,
+				body TEXT NOT NULL DEFAULT '',
+				status TEXT NOT NULL,
+				position INTEGER NOT NULL,
+				assignee_id INTEGER REFERENCES participants(id),
+				lease_expires_at INTEGER,
+				created_by INTEGER NOT NULL REFERENCES participants(id),
+				created_at INTEGER NOT NULL,
+				updated_at INTEGER NOT NULL,
+				closed_at INTEGER,
+				close_note TEXT NOT NULL DEFAULT '',
+				schedule_id INTEGER,
+				choices_json TEXT NOT NULL DEFAULT '[]',
+				close_on_answer INTEGER NOT NULL DEFAULT 0,
+				answered_choice TEXT NOT NULL DEFAULT '',
+				answered_by_id INTEGER REFERENCES participants(id) ON DELETE SET NULL,
+				answered_at INTEGER
+			)`,
+			`INSERT INTO items_pre920 (id, workspace_id, section_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id, choices_json, close_on_answer, answered_choice, answered_by_id, answered_at)
+				SELECT id, workspace_id, section_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id, choices_json, close_on_answer, answered_choice, answered_by_id, answered_at FROM items`,
+			`DROP TABLE items`,
+			`ALTER TABLE items_pre920 RENAME TO items`,
+			`CREATE INDEX items_ws ON items(workspace_id, status, position)`,
+			`PRAGMA foreign_keys = ON`,
+		} {
+			if _, err := raw.Exec(q); err != nil {
+				t.Fatalf("%s: %v", q, err)
+			}
+		}
+	}
+	raw.Close()
+
+	for boot := 1; boot <= 2; boot++ {
+		s, err := Open(dsn)
+		if err != nil {
+			t.Fatalf("boot %d: %v", boot, err)
+		}
+		checkByNum := func(wsID string, wantNum, wantGlobalID int64) {
+			t.Helper()
+			got, _, err := s.GetItem(ctx, wsID, wantNum)
+			if err != nil {
+				t.Fatalf("boot %d GetItem(%s, #%d): %v", boot, wsID, wantNum, err)
+			}
+			if got.ID != wantGlobalID || got.Number != wantNum {
+				t.Fatalf("boot %d item #%d: got ID=%d Number=%d, want ID=%d Number=%d", boot, wantNum, got.ID, got.Number, wantGlobalID, wantNum)
+			}
+		}
+		checkByNum(ws1.ID, 1, a1.ID)
+		checkByNum(ws1.ID, 2, a2.ID)
+		checkByNum(ws1.ID, 3, a3.ID)
+		checkByNum(ws2.ID, 1, b1.ID)
+		if boot == 1 {
+			// On boot 1, legacy global IDs (4 for a3, 3 for b1, 5 for b2) also resolve directly.
+			if got, _, err := s.GetItem(ctx, ws1.ID, a3.ID); err != nil || got.Number != 3 {
+				t.Fatalf("boot 1 legacy lookup a3.ID=%d: got %+v, %v", a3.ID, got, err)
+			}
+			if got, _, err := s.GetItem(ctx, ws2.ID, b2.ID); err != nil || got.Number != 2 {
+				t.Fatalf("boot 1 legacy lookup b2.ID=%d: got %+v, %v", b2.ID, got, err)
+			}
+			if _, err := s.DeleteItem(ctx, p2, 2); err != nil {
+				t.Fatalf("DeleteItem #2 in ws2: %v", err)
+			}
+			b3, _, err := s.AddItem(ctx, p2, "Beta three", "", 0)
+			if err != nil || b3.Number != 3 {
+				t.Fatalf("AddItem after deleting #2 in ws2 = %+v, %v (want Number=3)", b3, err)
+			}
+			a4, _, err := s.AddItem(ctx, p1, "Alpha four", "", 0)
+			if err != nil || a4.Number != 4 {
+				t.Fatalf("AddItem in ws1 after migration = %+v, %v (want Number=4)", a4, err)
+			}
+		} else {
+			b4, _, err := s.AddItem(ctx, p2, "Beta four", "", 0)
+			if err != nil || b4.Number != 4 {
+				t.Fatalf("boot 2 AddItem in ws2 = %+v, %v (want Number=4)", b4, err)
+			}
+		}
+		s.Close()
+	}
+}

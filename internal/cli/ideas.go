@@ -79,9 +79,19 @@ func ideaLine(people map[int64]store.Participant, d *store.Idea) string {
 	return line
 }
 
+func promotedItemNum(d *store.Idea) int64 {
+	if d.PromotedItemNumber != nil && *d.PromotedItemNumber > 0 {
+		return *d.PromotedItemNumber
+	}
+	if d.PromotedItemID != nil {
+		return *d.PromotedItemID
+	}
+	return 0
+}
+
 func ideaState(d *store.Idea) string {
 	if d.Status == store.IdeaPromoted && d.PromotedItemID != nil {
-		return fmt.Sprintf("[moved to backlog #%d]", *d.PromotedItemID)
+		return fmt.Sprintf("[moved to backlog #%d]", promotedItemNum(d))
 	}
 	return "[open]"
 }
@@ -102,7 +112,7 @@ func (a *app) printIdeaDetail(d *store.Idea) error {
 	a.printf("State     %s\n", ideaState(d))
 	a.printf("Created   by %s, %s\n", label(people, d.CreatedBy), ago(d.CreatedAt))
 	if d.PromotedBy != nil && d.PromotedAt != nil {
-		a.printf("Moved     by %s, %s (unison backlog show %d)\n", label(people, *d.PromotedBy), ago(*d.PromotedAt), *d.PromotedItemID)
+		a.printf("Moved     by %s, %s (unison backlog show %d)\n", label(people, *d.PromotedBy), ago(*d.PromotedAt), promotedItemNum(d))
 	}
 	if d.CommentCount > 0 {
 		a.printf("Comments  %d\n", d.CommentCount)
@@ -245,7 +255,7 @@ func (a *app) ideaPromote(args []string) error {
 	if ok, err := a.call("POST", fmt.Sprintf("/ideas/%d/promote", id), map[string]int{"position": *position}, &out, true); !ok {
 		return err
 	}
-	a.printf("Moved idea %d to the backlog as #%d.\n\n", id, out.Item.ID)
+	a.printf("Moved idea %d to the backlog as #%d.\n\n", id, itemNum(out.Item))
 	return a.printItemDetail(out.Item)
 }
 
@@ -270,7 +280,7 @@ func describeIdeaEvent(people map[int64]store.Participant, who string, e store.E
 		return fmt.Sprintf("💡 %s added idea %d %q (discuss with `unison idea comment %d <text>`)", who, d.ID, d.Title, d.ID)
 	case "idea.promoted":
 		if d.PromotedItemID != nil {
-			return fmt.Sprintf("💡 %s moved idea %d %q to the backlog as #%d", who, d.ID, d.Title, *d.PromotedItemID)
+			return fmt.Sprintf("💡 %s moved idea %d %q to the backlog as #%d", who, d.ID, d.Title, promotedItemNum(&d))
 		}
 	}
 	return fmt.Sprintf("💡 %s %s idea %d %q", who, strings.TrimPrefix(e.Type, "idea."), d.ID, d.Title)

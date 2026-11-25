@@ -11,7 +11,7 @@ import (
 	"strings"
 )
 
-const itemCols = `id, workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id,
+const itemCols = `id, COALESCE(number, id), workspace_id, title, body, status, position, assignee_id, lease_expires_at, created_by, created_at, updated_at, closed_at, close_note, schedule_id,
 	section_id, choices_json, close_on_answer, answered_choice, answered_by_id, answered_at,
 	COALESCE((SELECT slug FROM sections s WHERE s.id = items.section_id), ''),
 	COALESCE((SELECT name FROM sections s WHERE s.id = items.section_id), ''),
@@ -24,7 +24,7 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	var choicesJSON, secSlug, secName, secIcon string
 	var secNotify sql.NullBool
 	if err := row.Scan(
-		&it.ID, &it.WorkspaceID, &it.Title, &it.Body, &it.Status, &it.Position, &assignee, &lease,
+		&it.ID, &it.Number, &it.WorkspaceID, &it.Title, &it.Body, &it.Status, &it.Position, &assignee, &lease,
 		&it.CreatedBy, &it.CreatedAt, &it.UpdatedAt, &closed, &it.CloseNote, &schedule,
 		&sectionID, &choicesJSON, &it.CloseOnAnswer, &it.AnsweredChoice, &answeredBy, &answeredAt,
 		&secSlug, &secName, &secIcon, &secNotify,
@@ -69,7 +69,42 @@ func scanItem(row interface{ Scan(...any) error }) (*Item, error) {
 	return &it, nil
 }
 
-func getItem(t *tx, wsID string, id int64) (*Item, error) {
+// ResolveItemID resolves a per-workspace item number (preferred) or legacy
+// global item ID within wsID to the database primary key items.id (#920).
+func ResolveItemID(t *tx, wsID string, ref int64) (int64, error) {
+	if ref <= 0 {
+		return 0, fmt.Errorf("backlog item #%d: %w", ref, ErrNotFound)
+	}
+	var id int64
+	err := t.QueryRow(`SELECT id FROM items WHERE workspace_id = ? AND number = ?`, wsID, ref).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return 0, err
+	}
+	err = t.QueryRow(`SELECT id FROM items WHERE workspace_id = ? AND id = ?`, wsID, ref).Scan(&id)
+	if err == nil {
+		return id, nil
+	}
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("backlog item #%d: %w", ref, ErrNotFound)
+	}
+	return 0, err
+}
+
+// ResolveItemID resolves a per-workspace item number (preferred) or legacy
+// global item ID within wsID to the database primary key items.id (#920).
+func (s *Store) ResolveItemID(ctx context.Context, wsID string, ref int64) (int64, error) {
+	t, err := s.db.beginRead(ctx)
+	if err != nil {
+		return 0, err
+	}
+	defer t.Rollback()
+	return ResolveItemID(t, wsID, ref)
+}
+
+func getItemByID(t *tx, wsID string, id int64) (*Item, error) {
 	it, err := scanItem(t.QueryRow(`SELECT `+itemCols+` FROM items WHERE workspace_id = ? AND id = ?`, wsID, id))
 	if errors.Is(err, ErrNotFound) {
 		return nil, fmt.Errorf("backlog item #%d: %w", id, ErrNotFound)
@@ -78,6 +113,14 @@ func getItem(t *tx, wsID string, id int64) (*Item, error) {
 		return nil, err
 	}
 	return it, attachExtras(t, wsID, []*Item{it})
+}
+
+func getItem(t *tx, wsID string, ref int64) (*Item, error) {
+	id, err := ResolveItemID(t, wsID, ref)
+	if err != nil {
+		return nil, err
+	}
+	return getItemByID(t, wsID, id)
 }
 
 func equalInt64Ptr(a, b *int64) bool {
@@ -435,17 +478,45 @@ func addItem(t *tx, log *eventLog, actor *Participant, title, body string, posit
 	return addItemFull(t, log, actor, title, body, position, assignee, scheduleID, nil, "[]", false)
 }
 
+func nextItemNumber(t *tx, wsID string) (int64, error) {
+	var num int64
+	if err := t.QueryRow(`SELECT next_item_num FROM workspaces WHERE id = ?`, wsID).Scan(&num); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return 0, ErrNotFound
+		}
+		return 0, err
+	}
+	var maxExisting int64
+	if err := t.QueryRow(`SELECT COALESCE(MAX(number), 0) FROM items WHERE workspace_id = ?`, wsID).Scan(&maxExisting); err != nil {
+		return 0, err
+	}
+	if num <= maxExisting {
+		num = maxExisting + 1
+	}
+	if num < 1 {
+		num = 1
+	}
+	if _, err := t.Exec(`UPDATE workspaces SET next_item_num = ? WHERE id = ?`, num+1, wsID); err != nil {
+		return 0, err
+	}
+	return num, nil
+}
+
 func addItemFull(t *tx, log *eventLog, actor *Participant, title, body string, position int, assignee *int64, scheduleID *int64, sectionID *int64, choicesJSON string, closeOnAnswer bool) (*Item, error) {
-	id, err := t.insert(`INSERT INTO items (workspace_id, title, body, status, position, assignee_id, created_by, created_at, updated_at, schedule_id, section_id, choices_json, close_on_answer)
-		VALUES (?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
-		actor.WorkspaceID, title, strings.TrimSpace(body), StatusOpen, assignee, actor.ID, log.now, log.now, scheduleID, sectionID, choicesJSON, closeOnAnswer)
+	num, err := nextItemNumber(t, actor.WorkspaceID)
+	if err != nil {
+		return nil, err
+	}
+	id, err := t.insert(`INSERT INTO items (workspace_id, number, title, body, status, position, assignee_id, created_by, created_at, updated_at, schedule_id, section_id, choices_json, close_on_answer)
+		VALUES (?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, ?)`, "id",
+		actor.WorkspaceID, num, title, strings.TrimSpace(body), StatusOpen, assignee, actor.ID, log.now, log.now, scheduleID, sectionID, choicesJSON, closeOnAnswer)
 	if err != nil {
 		return nil, err
 	}
 	if err := insertAt(t, actor.WorkspaceID, sectionID, id, position); err != nil {
 		return nil, err
 	}
-	it, err := getItem(t, actor.WorkspaceID, id)
+	it, err := getItemByID(t, actor.WorkspaceID, id)
 	if err != nil {
 		return nil, err
 	}
@@ -570,10 +641,10 @@ func (s *Store) AnswerItem(ctx context.Context, actor *Participant, id int64, ch
 			return err
 		}
 		if it.Status == StatusDone {
-			return fmt.Errorf("%w: item #%d is already done; reopen it first", ErrConflict, it.ID)
+			return fmt.Errorf("%w: item #%d is already done; reopen it first", ErrConflict, it.DisplayNumber())
 		}
 		if len(it.Choices) == 0 {
-			return fmt.Errorf("%w: item #%d has no choices", ErrInvalid, it.ID)
+			return fmt.Errorf("%w: item #%d has no choices", ErrInvalid, it.DisplayNumber())
 		}
 		matched, ok := matchItemChoice(it.Choices, choice)
 		if !ok {
@@ -592,8 +663,8 @@ func (s *Store) AnswerItem(ctx context.Context, actor *Participant, id int64, ch
 		if err != nil {
 			return err
 		}
-		c := &Comment{ID: cid, ItemID: it.ID, WorkspaceID: it.WorkspaceID, AuthorID: actor.ID, Body: note, CreatedAt: now}
-		updated, err := getItem(t, actor.WorkspaceID, it.ID)
+		c := &Comment{ID: cid, ItemID: it.ID, ItemNumber: it.DisplayNumber(), WorkspaceID: it.WorkspaceID, AuthorID: actor.ID, Body: note, CreatedAt: now}
+		updated, err := getItemByID(t, actor.WorkspaceID, it.ID)
 		if err != nil {
 			return err
 		}
@@ -616,7 +687,7 @@ func (s *Store) AnswerItem(ctx context.Context, actor *Participant, id int64, ch
 			if err := renumber(t, ids); err != nil {
 				return err
 			}
-			updated, err = getItem(t, actor.WorkspaceID, updated.ID)
+			updated, err = getItemByID(t, actor.WorkspaceID, updated.ID)
 			if err != nil {
 				return err
 			}
@@ -658,7 +729,7 @@ func (s *Store) MoveItem(ctx context.Context, actor *Participant, id int64, posi
 	return s.mutateItem(ctx, actor, id, "backlog.moved", func(t *tx, log *eventLog, it *Item) error {
 		now := log.now
 		if it.Status == StatusDone {
-			return fmt.Errorf("%w: item #%d is done; reopen it first", ErrConflict, it.ID)
+			return fmt.Errorf("%w: item #%d is done; reopen it first", ErrConflict, it.DisplayNumber())
 		}
 		if _, err := t.Exec(`UPDATE items SET updated_at = ? WHERE id = ?`, now, it.ID); err != nil {
 			return err
@@ -687,7 +758,7 @@ func (s *Store) AssignItem(ctx context.Context, actor *Participant, id, assignee
 	}
 	return s.mutateItemAs(ctx, actor, id, func(t *tx, log *eventLog, it *Item) (string, error) {
 		if it.Status == StatusDone {
-			return "", fmt.Errorf("%w: item #%d is done", ErrConflict, it.ID)
+			return "", fmt.Errorf("%w: item #%d is done", ErrConflict, it.DisplayNumber())
 		}
 		if assigneeID == 0 {
 			_, err := t.Exec(`UPDATE items SET assignee_id = NULL, updated_at = ? WHERE id = ?`, log.now, it.ID)
@@ -720,12 +791,12 @@ func startItem(t *tx, it *Item, actorID, now int64) error {
 	}
 	switch {
 	case it.Status == StatusDone:
-		return fmt.Errorf("%w: item #%d is done", ErrConflict, it.ID)
+		return fmt.Errorf("%w: item #%d is done", ErrConflict, it.DisplayNumber())
 	case it.AssigneeID != nil && *it.AssigneeID != actorID:
 		if it.Status == StatusInProgress {
-			return fmt.Errorf("%w: item #%d is already in progress by participant %d", ErrConflict, it.ID, *it.AssigneeID)
+			return fmt.Errorf("%w: item #%d is already in progress by participant %d", ErrConflict, it.DisplayNumber(), *it.AssigneeID)
 		}
-		return fmt.Errorf("%w: item #%d is assigned to participant %d", ErrConflict, it.ID, *it.AssigneeID)
+		return fmt.Errorf("%w: item #%d is assigned to participant %d", ErrConflict, it.DisplayNumber(), *it.AssigneeID)
 	}
 	lease := now + LeaseDuration.Milliseconds()
 	res, err := t.Exec(`UPDATE items SET status = ?, assignee_id = ?, lease_expires_at = ?, updated_at = ?
@@ -735,7 +806,7 @@ func startItem(t *tx, it *Item, actorID, now int64) error {
 		return err
 	}
 	if n, _ := res.RowsAffected(); n != 1 {
-		return fmt.Errorf("%w: item #%d was claimed concurrently", ErrConflict, it.ID)
+		return fmt.Errorf("%w: item #%d was claimed concurrently", ErrConflict, it.DisplayNumber())
 	}
 	it.Status, it.AssigneeID, it.LeaseExpiresAt = StatusInProgress, &actorID, &lease
 	return nil
@@ -781,7 +852,7 @@ func (s *Store) ClaimNext(ctx context.Context, actor *Participant) (*Item, []Eve
 func (s *Store) StopItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
 	return s.mutateItem(ctx, actor, id, "backlog.stopped", func(t *tx, log *eventLog, it *Item) error {
 		if it.Status != StatusInProgress {
-			return fmt.Errorf("%w: item #%d is %s, not in progress", ErrConflict, it.ID, it.Status)
+			return fmt.Errorf("%w: item #%d is %s, not in progress", ErrConflict, it.DisplayNumber(), it.Status)
 		}
 		it.Status, it.LeaseExpiresAt = StatusOpen, nil
 		_, err := t.Exec(`UPDATE items SET status = ?, lease_expires_at = NULL, updated_at = ? WHERE id = ?`, StatusOpen, log.now, it.ID)
@@ -793,7 +864,7 @@ func (s *Store) StopItem(ctx context.Context, actor *Participant, id int64) (*It
 func (s *Store) ReleaseItem(ctx context.Context, actor *Participant, id int64) (*Item, []Event, error) {
 	return s.mutateItem(ctx, actor, id, "backlog.released", func(t *tx, log *eventLog, it *Item) error {
 		if it.Status == StatusDone || (it.Status == StatusOpen && it.AssigneeID == nil) {
-			return fmt.Errorf("%w: item #%d is %s, not assigned or in progress", ErrConflict, it.ID, it.Status)
+			return fmt.Errorf("%w: item #%d is %s, not assigned or in progress", ErrConflict, it.DisplayNumber(), it.Status)
 		}
 		it.Status, it.AssigneeID, it.LeaseExpiresAt = StatusOpen, nil, nil
 		_, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, lease_expires_at = NULL, updated_at = ? WHERE id = ?`, StatusOpen, log.now, it.ID)
@@ -806,7 +877,7 @@ func (s *Store) CloseItem(ctx context.Context, actor *Participant, id int64, not
 	return s.mutateItem(ctx, actor, id, "backlog.closed", func(t *tx, log *eventLog, it *Item) error {
 		now := log.now
 		if it.Status == StatusDone {
-			return fmt.Errorf("%w: item #%d is already done", ErrConflict, it.ID)
+			return fmt.Errorf("%w: item #%d is already done", ErrConflict, it.DisplayNumber())
 		}
 		it.Status, it.LeaseExpiresAt, it.ClosedAt, it.CloseNote = StatusDone, nil, &now, strings.TrimSpace(note)
 		if _, err := t.Exec(`UPDATE items SET status = ?, position = 0, lease_expires_at = NULL, closed_at = ?, close_note = ?, updated_at = ? WHERE id = ?`,
@@ -829,7 +900,7 @@ func (s *Store) ReopenItem(ctx context.Context, actor *Participant, id int64) (*
 	return s.mutateItem(ctx, actor, id, "backlog.reopened", func(t *tx, log *eventLog, it *Item) error {
 		now := log.now
 		if it.Status != StatusDone {
-			return fmt.Errorf("%w: item #%d is not done", ErrConflict, it.ID)
+			return fmt.Errorf("%w: item #%d is not done", ErrConflict, it.DisplayNumber())
 		}
 		if _, err := t.Exec(`UPDATE items SET status = ?, assignee_id = NULL, closed_at = NULL, close_note = '', answered_choice = '', answered_by_id = NULL, answered_at = NULL, updated_at = ? WHERE id = ?`,
 			StatusOpen, now, it.ID); err != nil {
@@ -847,20 +918,20 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 			return err
 		}
 		for _, table := range []string{"item_comments", "item_prs"} {
-			if _, err := t.Exec(`DELETE FROM `+table+` WHERE item_id = ?`, id); err != nil {
+			if _, err := t.Exec(`DELETE FROM `+table+` WHERE item_id = ?`, it.ID); err != nil {
 				return err
 			}
 		}
-		if err := unlinkMessages(t, log, actor, id); err != nil {
+		if err := unlinkMessages(t, log, actor, it.ID); err != nil {
 			return err
 		}
-		if err := unlinkTodos(t, log, actor, id); err != nil {
+		if err := unlinkTodos(t, log, actor, it.ID); err != nil {
 			return err
 		}
-		if err := unlinkArtifacts(t, log, actor, id); err != nil {
+		if err := unlinkArtifacts(t, log, actor, it.ID); err != nil {
 			return err
 		}
-		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
+		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, it.ID); err != nil {
 			return err
 		}
 		ids, err := queuedIDs(t, actor.WorkspaceID, it.SectionID)
@@ -913,11 +984,12 @@ func (s *Store) mutateItemAs(ctx context.Context, actor *Participant, id int64, 
 		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
 			return err
 		}
+		realID := it.ID
 		eventType, err := fn(t, log, it)
 		if err != nil {
 			return err
 		}
-		if it, err = getItem(t, actor.WorkspaceID, id); err != nil {
+		if it, err = getItemByID(t, actor.WorkspaceID, realID); err != nil {
 			return err
 		}
 		return log.add(actor.WorkspaceID, eventType, actor.ID, it)

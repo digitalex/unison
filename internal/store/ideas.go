@@ -30,12 +30,13 @@ type Idea struct {
 	CreatedBy   int64  `json:"created_by"`
 	CreatedAt   int64  `json:"created_at"`
 	UpdatedAt   int64  `json:"updated_at"`
-	// PromotedItemID is the backlog item the idea was moved to, with who
-	// moved it and when; nil while the idea is open.
-	PromotedItemID *int64 `json:"promoted_item_id,omitempty"`
-	PromotedBy     *int64 `json:"promoted_by,omitempty"`
-	PromotedAt     *int64 `json:"promoted_at,omitempty"`
-	CommentCount   int    `json:"comment_count"`
+	// PromotedItemID is the backlog item the idea was moved to, with its
+	// per-workspace number, who moved it and when; nil while the idea is open.
+	PromotedItemID     *int64 `json:"promoted_item_id,omitempty"`
+	PromotedItemNumber *int64 `json:"promoted_item_number,omitempty"`
+	PromotedBy         *int64 `json:"promoted_by,omitempty"`
+	PromotedAt         *int64 `json:"promoted_at,omitempty"`
+	CommentCount       int    `json:"comment_count"`
 }
 
 // IdeaComment is a comment in an idea's discussion.
@@ -62,14 +63,16 @@ type IdeaPromotion struct {
 	Item *Item `json:"item"`
 }
 
-const ideaCols = `id, workspace_id, title, body, status, created_by, created_at, updated_at, promoted_item_id, promoted_by, promoted_at,
+const ideaCols = `id, workspace_id, title, body, status, created_by, created_at, updated_at, promoted_item_id,
+	CASE WHEN promoted_item_id IS NOT NULL THEN COALESCE((SELECT i.number FROM items i WHERE i.id = ideas.promoted_item_id), promoted_item_id) END,
+	promoted_by, promoted_at,
 	(SELECT COUNT(*) FROM idea_comments c WHERE c.idea_id = ideas.id)`
 
 func scanIdea(row interface{ Scan(...any) error }) (*Idea, error) {
 	var d Idea
-	var item, by, at sql.NullInt64
+	var item, itemNum, by, at sql.NullInt64
 	if err := row.Scan(&d.ID, &d.WorkspaceID, &d.Title, &d.Body, &d.Status, &d.CreatedBy, &d.CreatedAt, &d.UpdatedAt,
-		&item, &by, &at, &d.CommentCount); err != nil {
+		&item, &itemNum, &by, &at, &d.CommentCount); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -77,6 +80,9 @@ func scanIdea(row interface{ Scan(...any) error }) (*Idea, error) {
 	}
 	if item.Valid {
 		d.PromotedItemID = &item.Int64
+	}
+	if itemNum.Valid {
+		d.PromotedItemNumber = &itemNum.Int64
 	}
 	if by.Valid {
 		d.PromotedBy = &by.Int64
@@ -247,7 +253,11 @@ func (s *Store) PromoteIdea(ctx context.Context, actor *Participant, id int64, p
 			return err
 		}
 		if d.Status == IdeaPromoted {
-			return fmt.Errorf("%w: idea %d was already moved to the backlog as #%d", ErrConflict, d.ID, *d.PromotedItemID)
+			num := *d.PromotedItemID
+			if d.PromotedItemNumber != nil && *d.PromotedItemNumber > 0 {
+				num = *d.PromotedItemNumber
+			}
+			return fmt.Errorf("%w: idea %d was already moved to the backlog as #%d", ErrConflict, d.ID, num)
 		}
 		comments, err := listIdeaComments(t, actor.WorkspaceID, d.ID)
 		if err != nil {

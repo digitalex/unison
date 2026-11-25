@@ -83,14 +83,14 @@ func describeCommentActivity(who string, e store.Event) string {
 	if ce.Item == nil {
 		return fmt.Sprintf("💬 %s commented", who)
 	}
-	return fmt.Sprintf("💬 %s commented on #%d %q", who, ce.Item.ID, ce.Item.Title)
+	return fmt.Sprintf("💬 %s commented on #%d %q", who, itemNum(ce.Item), ce.Item.Title)
 }
 
 func describeBacklogActivity(people map[int64]store.Participant, who string, e store.Event) string {
 	var it store.Item
 	json.Unmarshal(e.Data, &it)
 	verb := strings.TrimPrefix(e.Type, "backlog.")
-	line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, it.ID, it.Title)
+	line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, itemNum(&it), it.Title)
 	switch e.Type {
 	case "backlog.added":
 		if it.AssigneeID != nil {

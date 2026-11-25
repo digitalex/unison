@@ -1,6 +1,6 @@
 import { useCallback, useMemo, useRef, useState } from "react";
 import { Check, Clock, GitPullRequest, Plus, RotateCcw, Trash2 } from "lucide-react";
-import { ago, name as participantLabel, prLabel, submitOnModEnter } from "./backlogFormat.js";
+import { ago, itemNum, name as participantLabel, prLabel, submitOnModEnter } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { MentionTextarea } from "./mentions.jsx";
 import { itemLink } from "./nav.js";
@@ -292,6 +292,7 @@ export default function Todos({ todos, setTodos, items, sections = [], participa
 
 function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReloadMe }) {
   const { item, section } = entry;
+  const num = itemNum(item);
   const [busyChoice, setBusyChoice] = useState(null);
   const isDone = item.status === "done";
   const assignee = participantLabel(participants, item.assignee_id);
@@ -299,14 +300,14 @@ function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReload
 
   const toggleClose = async () => {
     const updated = isDone
-      ? await run("POST", `/backlog/${item.id}/reopen`)
-      : await run("POST", `/backlog/${item.id}/close`, { note: "" });
+      ? await run("POST", `/backlog/${num}/reopen`)
+      : await run("POST", `/backlog/${num}/close`, { note: "" });
     if (updated) onReloadMe?.();
   };
 
   const answerChoice = async (choice) => {
     setBusyChoice(choice);
-    const updated = await run("POST", `/backlog/${item.id}/answer`, { choice });
+    const updated = await run("POST", `/backlog/${num}/answer`, { choice });
     setBusyChoice(null);
     if (updated) onReloadMe?.();
   };
@@ -318,13 +319,13 @@ function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReload
           <Checkbox
             checked={isDone}
             onChange={toggleClose}
-            aria-label={isDone ? `Reopen item #${item.id}: ${item.title}` : `Close item #${item.id}: ${item.title}`}
+            aria-label={isDone ? `Reopen item #${num}: ${item.title}` : `Close item #${num}: ${item.title}`}
           />
         </div>
         <div className="todo-content">
           <div className="todo-head-row">
-            <span className="item-id">#{item.id}</span>
-            <a className="todo-title todo-item-link" {...itemLink(item.id)}>
+            <span className="item-id">#{num}</span>
+            <a className="todo-title todo-item-link" {...itemLink(num)}>
               {item.title}
             </a>
             <span className="chip section-chip">
@@ -345,7 +346,7 @@ function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReload
             </div>
           )}
           {item.choices?.length > 0 && (
-            <div className="todo-choices-bar" role="group" aria-label={`Decision choices for #${item.id}`}>
+            <div className="todo-choices-bar" role="group" aria-label={`Decision choices for #${num}`}>
               {item.choices.map((choice) => {
                 const selected = item.answered_choice === choice;
                 return (
@@ -381,7 +382,7 @@ function NotifyItemRow({ entry, participants, repos, showAssignee, run, onReload
           </div>
         </div>
         <div className="todo-actions">
-          <a className="button button-ghost" {...itemLink(item.id)}>
+          <a className="button button-ghost" {...itemLink(num)}>
             Open
           </a>
           <Button size="small" variant="ghost" onClick={toggleClose}>
@@ -397,6 +398,7 @@ function TodoRow({ todo, items, participants, repos, now, showAssignee, onToggle
   const isDone = todo.status === "done";
   const snoozed = isTodoSnoozed(todo, now);
   const linkedItem = todo.item_id ? items.find((it) => it.id === todo.item_id) || todo.item : null;
+  const linkedNum = todo.item_number || itemNum(linkedItem) || todo.item_id;
   const assignee = personDisplay(todo.assignee_emoji, todo.assignee_name, todo.assignee_id, participants);
   const creator = todo.creator_id ? personDisplay(todo.creator_emoji, todo.creator_name, todo.creator_id, participants) : "";
   const doneBy = todo.done_by_id ? personDisplay(todo.done_by_emoji, todo.done_by_name, todo.done_by_id, participants) : "";
@@ -417,8 +419,8 @@ function TodoRow({ todo, items, participants, repos, now, showAssignee, onToggle
             <span className="todo-title">{todo.title}</span>
             {showAssignee && <span className="chip">{assignee}</span>}
             {todo.item_id && (
-              <a className="chip todo-link-chip" {...itemLink(todo.item_id)} title={linkedItem?.title ? `#${todo.item_id}: ${linkedItem.title}` : `Item #${todo.item_id}`}>
-                #{todo.item_id}
+              <a className="chip todo-link-chip" {...itemLink(linkedNum)} title={linkedItem?.title ? `#${linkedNum}: ${linkedItem.title}` : `Item #${linkedNum}`}>
+                #{linkedNum}
                 {linkedItem?.title ? ` · ${linkedItem.title}` : ""}
               </a>
             )}
@@ -501,21 +503,27 @@ export function NewTodoDialog({ initial, humans = [], items = [], me, onClose, o
     return humans[0]?.id || 0;
   }, [initial?.assignee_id, me, humans]);
 
+  const initialItemNum = useMemo(() => {
+    if (!initial?.item_id) return 0;
+    const match = items.find((it) => itemNum(it) === initial.item_id) || items.find((it) => it.id === initial.item_id);
+    return match ? itemNum(match) : initial.item_id;
+  }, [items, initial?.item_id]);
+
   const [title, setTitle] = useState(initial?.title || "");
   const [assigneeId, setAssigneeId] = useState(defaultAssignee);
   const [body, setBody] = useState(initial?.body || "");
-  const [itemId, setItemId] = useState(initial?.item_id || 0);
+  const [itemId, setItemId] = useState(initialItemNum);
   const [prUrl, setPrUrl] = useState(initial?.pr_url || "");
   const [busy, setBusy] = useState(false);
 
   const selectableItems = useMemo(() => {
     const queued = items.filter((it) => it.status !== "done");
-    if (initial?.item_id && !queued.some((it) => it.id === initial.item_id)) {
-      const extra = items.find((it) => it.id === initial.item_id);
+    if (initialItemNum && !queued.some((it) => itemNum(it) === initialItemNum)) {
+      const extra = items.find((it) => itemNum(it) === initialItemNum || it.id === initial?.item_id);
       if (extra) return [extra, ...queued];
     }
     return queued;
-  }, [items, initial?.item_id]);
+  }, [items, initialItemNum, initial?.item_id]);
 
   const submit = async (e) => {
     e.preventDefault();
@@ -552,8 +560,8 @@ export function NewTodoDialog({ initial, humans = [], items = [], me, onClose, o
           <Select value={itemId} onChange={(e) => setItemId(Number(e.target.value))}>
             <option value={0}>None</option>
             {selectableItems.map((it) => (
-              <option key={it.id} value={it.id}>
-                #{it.id} — {it.title}
+              <option key={it.id} value={itemNum(it)}>
+                #{itemNum(it)} — {it.title}
               </option>
             ))}
           </Select>

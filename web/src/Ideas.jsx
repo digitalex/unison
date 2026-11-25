@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { ArrowRight, Lightbulb, MessageSquare, Pencil, Plus, Trash2 } from "lucide-react";
-import { ago, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
+import { ago, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { Comments } from "./BacklogItemDialog.jsx";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { MentionTextarea } from "./mentions.jsx";
@@ -105,7 +105,7 @@ export default function Ideas({ ideas, setIdeas, participants, me, call, onError
           </span>
         )}
         <span className="item-reporter">by {name(stableParticipants, d.created_by)}</span>
-        {d.status === "promoted" && d.promoted_item_id && <ItemChip id={d.promoted_item_id} />}
+        {d.status === "promoted" && d.promoted_item_id && <ItemChip id={d.promoted_item_number || d.promoted_item_id} />}
         <span className="meta" title={new Date(d.created_at).toLocaleString()}>
           {ago(d.created_at)}
         </span>
@@ -127,7 +127,7 @@ export default function Ideas({ ideas, setIdeas, participants, me, call, onError
         {moved && (
           <p role="status" className="error-bar notice-bar">
             <span>
-              Moved idea {moved.idea.id} to the backlog as <a {...itemLink(moved.item.id)}>#{moved.item.id}</a>.
+              Moved idea {moved.idea.id} to the backlog as <a {...itemLink(itemNum(moved.item))}>#{itemNum(moved.item)}</a>.
             </span>
             <Button variant="ghost" onClick={() => setMoved(null)}>
               dismiss
@@ -238,10 +238,11 @@ function IdeaDialog({ idea, participants, me, call, run, saved, removed, promote
   const facts = [["Status", isPromoted ? "Moved to backlog" : "Open"]];
   facts.push(["Added", `${ago(idea.created_at)} by ${name(participants, idea.created_by)}`]);
   if (isPromoted) {
+    const promotedNum = idea.promoted_item_number || idea.promoted_item_id;
     facts.push([
       "Moved",
       <>
-        to <a {...itemLink(idea.promoted_item_id)}>#{idea.promoted_item_id}</a>
+        to <a {...itemLink(promotedNum)}>#{promotedNum}</a>
         {idea.promoted_at ? ` ${ago(idea.promoted_at)}` : ""}
         {idea.promoted_by ? ` by ${name(participants, idea.promoted_by)}` : ""}
       </>,

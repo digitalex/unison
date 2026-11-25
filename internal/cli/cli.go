@@ -220,7 +220,7 @@ Sections (optional custom sections alongside Backlog, e.g. Triage, Decisions):
   section move <id-or-slug> <position>
   section delete <id-or-slug>        delete section (items move back to Backlog)
 
-Backlog (#1 is the highest priority):
+Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also resolve):
   backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]
   backlog show <id>                  the item, its comments and the chat
                                      messages about it
@@ -1025,9 +1025,9 @@ func (a *app) schedule(args []string) error {
 			return err
 		}
 		if out.Added {
-			a.printf("Added #%d %q to the top of the backlog.\n", out.Item.ID, out.Item.Title)
+			a.printf("Added #%d %q to the top of the backlog.\n", itemNum(&out.Item), out.Item.Title)
 		} else {
-			a.printf("#%d %q is still open, so no new item was added; noted the run on it.\n", out.Item.ID, out.Item.Title)
+			a.printf("#%d %q is still open, so no new item was added; noted the run on it.\n", itemNum(&out.Item), out.Item.Title)
 		}
 		return nil
 	case (sub == "remove" || sub == "rm") && len(pos) == 1:
@@ -1789,12 +1789,35 @@ func (a *app) chatReact(args []string) error {
 	return nil
 }
 
+func itemNum(it *store.Item) int64 {
+	if it == nil {
+		return 0
+	}
+	if it.Number > 0 {
+		return it.Number
+	}
+	return it.ID
+}
+
+func msgItemNum(m store.Message) int64 {
+	if m.Item != nil && m.Item.Number > 0 {
+		return m.Item.Number
+	}
+	if m.Item != nil && m.Item.ID > 0 {
+		return m.Item.ID
+	}
+	if m.ItemID != nil {
+		return *m.ItemID
+	}
+	return 0
+}
+
 // itemMarker labels a message about a backlog item: " [item #12]".
 func itemMarker(m store.Message) string {
-	if m.ItemID == nil {
+	if m.ItemID == nil && m.Item == nil {
 		return ""
 	}
-	return fmt.Sprintf(" [item #%d]", *m.ItemID)
+	return fmt.Sprintf(" [item #%d]", msgItemNum(m))
 }
 
 func (a *app) chatSend(args []string) error {
@@ -1839,7 +1862,7 @@ func (a *app) chatSend(args []string) error {
 	}
 	about := ""
 	if m.Item != nil {
-		about = fmt.Sprintf(" about #%d %q", m.Item.ID, m.Item.Title)
+		about = fmt.Sprintf(" about #%d %q", msgItemNum(m), m.Item.Title)
 	}
 	if m.ActionRequired {
 		people, err := a.participants()
@@ -1935,11 +1958,17 @@ func (a *app) backlog(args []string) error {
 		if err != nil {
 			return err
 		}
-		var out map[string]any
+		var out struct {
+			Number int64 `json:"number"`
+		}
 		if ok, err := a.call("DELETE", fmt.Sprintf("/backlog/%d", id), nil, &out, true); !ok {
 			return err
 		}
-		a.printf("Deleted #%d.\n", id)
+		shown := id
+		if out.Number > 0 {
+			shown = out.Number
+		}
+		a.printf("Deleted #%d.\n", shown)
 		return nil
 	}
 	return fmt.Errorf("%w: unknown backlog subcommand %q", errUsage, sub)
@@ -2012,7 +2041,7 @@ func itemLine(people map[int64]store.Participant, it *store.Item) string {
 	} else if len(it.Choices) > 0 {
 		extra += fmt.Sprintf("  [choices: %s]", strings.Join(it.Choices, " | "))
 	}
-	return fmt.Sprintf("%-4s #%-4d %-40s %s  by %s%s", pos, it.ID, it.Title, itemState(people, it), label(people, it.CreatedBy), extra)
+	return fmt.Sprintf("%-4s #%-4d %-40s %s  by %s%s", pos, itemNum(it), it.Title, itemState(people, it), label(people, it.CreatedBy), extra)
 }
 
 func itemState(people map[int64]store.Participant, it *store.Item) string {
@@ -2048,7 +2077,8 @@ func (a *app) printItemDetail(it *store.Item) error {
 	if err != nil {
 		return err
 	}
-	a.printf("#%d  %s\n", it.ID, it.Title)
+	num := itemNum(it)
+	a.printf("#%d  %s\n", num, it.Title)
 	if it.SectionName != "" {
 		a.printf("Section   %s (%s)\n", it.SectionName, it.SectionSlug)
 	}
@@ -2090,7 +2120,7 @@ func (a *app) printItemDetail(it *store.Item) error {
 		a.printf("%s %s\n", heading, pr.URL)
 	}
 	if it.CommentCount > 0 {
-		a.printf("Comments  %d (unison backlog comments %d)\n", it.CommentCount, it.ID)
+		a.printf("Comments  %d (unison backlog comments %d)\n", it.CommentCount, num)
 	}
 	if it.Body != "" {
 		a.printf("\n%s\n", it.Body)
@@ -2127,15 +2157,16 @@ func (a *app) backlogShow(args []string) error {
 	if err := a.printItemDetail(&it); err != nil {
 		return err
 	}
+	num := itemNum(&it)
 	if it.CommentCount > 0 {
 		a.printf("\n")
-		if err := a.printComments(id); err != nil {
+		if err := a.printComments(num); err != nil {
 			return err
 		}
 	}
 	if it.MessageCount > 0 {
 		a.printf("\n")
-		return a.printItemMessages(id)
+		return a.printItemMessages(num)
 	}
 	return nil
 }
@@ -2226,7 +2257,11 @@ func (a *app) backlogComment(args []string) error {
 	if ok, err := a.call("POST", fmt.Sprintf("/backlog/%d/comments", id), map[string]string{"body": strings.Join(pos[1:], " ")}, &c, true); !ok {
 		return err
 	}
-	a.printf("Commented on #%d (comment %d).\n", id, c.ID)
+	shown := id
+	if c.ItemNumber > 0 {
+		shown = c.ItemNumber
+	}
+	a.printf("Commented on #%d (comment %d).\n", shown, c.ID)
 	return nil
 }
 
@@ -2930,20 +2965,21 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			where = fmt.Sprintf(" (reply in thread #%d — answer with --reply-to %d)", *m.ParentID, *m.ParentID)
 		}
 		if m.Item != nil {
-			where += fmt.Sprintf(" (about item #%d %q)", m.Item.ID, m.Item.Title)
+			where += fmt.Sprintf(" (about item #%d %q)", msgItemNum(m), m.Item.Title)
 		}
 		return fmt.Sprintf("💬 [#%d] %s%s%s: %s", m.ID, who, actionMarker(people, m), where, m.Body)
 	case strings.HasPrefix(e.Type, "backlog."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)
+		num := itemNum(&it)
 		verb := strings.TrimPrefix(e.Type, "backlog.")
 		if e.Type == "backlog.lease_expired" {
-			return fmt.Sprintf("📋 the lease on #%d %q expired; it is open again", it.ID, it.Title)
+			return fmt.Sprintf("📋 the lease on #%d %q expired; it is open again", num, it.Title)
 		}
 		if e.Type == "backlog.answered" {
-			return fmt.Sprintf("📋 %s answered #%d %q → %q", who, it.ID, it.Title, it.AnsweredChoice)
+			return fmt.Sprintf("📋 %s answered #%d %q → %q", who, num, it.Title, it.AnsweredChoice)
 		}
-		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, it.ID, it.Title)
+		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, num, it.Title)
 		if it.SectionName != "" {
 			line += fmt.Sprintf(" [%s]", it.SectionName)
 		}
@@ -2952,7 +2988,7 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
 			} else if it.SectionID == nil {
-				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", it.ID)
+				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", num)
 			}
 		case "backlog.assigned":
 			if it.AssigneeID != nil {
@@ -2972,18 +3008,19 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		if ce.Comment == nil || ce.Item == nil {
 			break
 		}
+		num := itemNum(ce.Item)
 		if e.Type == "comment.deleted" {
-			return fmt.Sprintf("💬 %s deleted a comment on #%d %q", who, ce.Item.ID, ce.Item.Title)
+			return fmt.Sprintf("💬 %s deleted a comment on #%d %q", who, num, ce.Item.Title)
 		}
 		return fmt.Sprintf("💬 %s commented on #%d %q (answer with `unison backlog comment %d <text>`): %s",
-			who, ce.Item.ID, ce.Item.Title, ce.Item.ID, ce.Comment.Body)
+			who, num, ce.Item.Title, num, ce.Comment.Body)
 	case strings.HasPrefix(e.Type, "idea."):
 		return describeIdeaEvent(people, who, e)
 	case strings.HasPrefix(e.Type, "pr."):
 		var it store.Item
 		json.Unmarshal(e.Data, &it)
 		verb := map[string]string{"pr.linked": "linked a PR to", "pr.unlinked": "unlinked a PR from"}[e.Type]
-		return fmt.Sprintf("🔗 %s %s #%d %q", who, verb, it.ID, it.Title)
+		return fmt.Sprintf("🔗 %s %s #%d %q", who, verb, itemNum(&it), it.Title)
 	case e.Type == "webhook.received":
 		var d store.DeliveryEvent
 		json.Unmarshal(e.Data, &d)

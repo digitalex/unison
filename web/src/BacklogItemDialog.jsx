@@ -1,7 +1,7 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
-import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
+import { STATUS_LABELS, ago, hoursLeft, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
@@ -163,7 +163,8 @@ export function NewItemDialog({ initial, section = null, sections = [], particip
 // ItemDialog shows one item with everything you can do to it. It renders
 // whatever the live list holds, so other people's changes show up here.
 export function ItemDialog({ item, items = [], sections = [], todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onClose }) {
-  const path = `/backlog/${item.id}`;
+  const num = itemNum(item);
+  const path = `/backlog/${num}`;
   const [editing, setEditing] = useState(false);
   const stableParticipants = useStableParticipants(participants);
   return (
@@ -171,7 +172,7 @@ export function ItemDialog({ item, items = [], sections = [], todos = [], setTod
       title={
         <>
           <span className={`status ${item.status}`} title={STATUS_LABELS[item.status]} />
-          <span className="item-id">#{item.id}</span>
+          <span className="item-id">#{num}</span>
           <RecurringMarker item={item} />
           <span className="dialog-title-text">{item.title}</span>
         </>
@@ -356,7 +357,7 @@ function ItemActions({ item, path, participants, me, run, onDeleted }) {
     if (id !== (item.assignee_id || 0)) run("POST", `${path}/assign`, { assignee_id: id });
   };
   const remove = async () => {
-    if (window.confirm(`Delete #${item.id}? This can't be undone.`) && (await run("DELETE", path))) onDeleted();
+    if (window.confirm(`Delete #${itemNum(item)}? This can't be undone.`) && (await run("DELETE", path))) onDeleted();
   };
   if (closing) return <CloseForm path={path} run={run} onDone={() => setClosing(false)} />;
   return (
@@ -491,7 +492,7 @@ function ItemArtifacts({ item, items, artifacts, setArtifacts, workspaceId, toke
           workspaceId={workspaceId}
           token={token}
           items={items.length ? items : [item]}
-          initialItemId={item.id}
+          initialItemId={itemNum(item)}
           onClose={() => setUploading(false)}
           onUploaded={(created) => setArtifacts?.((list) => withArtifact(list, created))}
         />
@@ -540,7 +541,7 @@ function ItemTodos({ item, items, todos, setTodos, onReloadMe, participants, me,
       ))}
       {adding && (
         <NewTodoDialog
-          initial={{ item_id: item.id, pr_url: item.prs?.[0]?.url || "" }}
+          initial={{ item_id: itemNum(item), pr_url: item.prs?.[0]?.url || "" }}
           humans={humans}
           items={items.length ? items : [item]}
           me={me}
