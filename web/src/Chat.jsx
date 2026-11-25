@@ -29,7 +29,7 @@ import ScreenHead from "./ui/ScreenHead.jsx";
 
 // REACTIONS are the emoji anyone can put on a message (the server accepts
 // exactly these).
-const REACTIONS = [
+export const REACTIONS = [
   { emoji: "👍", label: "Thumbs up" },
   { emoji: "👎", label: "Thumbs down" },
   { emoji: "❤️", label: "Heart" },
@@ -672,7 +672,7 @@ function Message({ workspaceId, message, onDone, isNew, participants, me, flashe
 
 // ActionLine says whom a message asks to act (a check for those done) and,
 // when it asks you, lets you mark it done or undo that.
-function ActionLine({ message, participants, me, asksMe, needsMe, onDone }) {
+export function ActionLine({ message, participants, me, asksMe, needsMe, onDone }) {
   const participantOf = (id) => participants.find((p) => p.id === id);
   const done = message.done_by || [];
   return (
@@ -715,14 +715,14 @@ function ActionLine({ message, participants, me, asksMe, needsMe, onDone }) {
 
 // withDone returns message m's done_by with you (myId) marked done (on, if
 // it asks you to act) or not.
-function withDone(m, myId, on) {
+export function withDone(m, myId, on) {
   const done = (m.done_by || []).filter((id) => id !== myId);
   return on && (m.action_for || []).includes(myId) ? [...done, myId] : done;
 }
 
 // withReaction returns reactions with participant id's reaction emoji on or
 // off. A new emoji goes last, as the server orders them (first reacted first).
-function withReaction(reactions, emoji, id, on) {
+export function withReaction(reactions, emoji, id, on) {
   const has = reactions.some((r) => r.emoji === emoji && r.by.includes(id));
   if (has === on) return reactions;
   if (!on) {
@@ -736,7 +736,7 @@ function withReaction(reactions, emoji, id, on) {
 
 // Reactions are a message's reaction chips: highlighted when one is yours,
 // with who reacted in the tooltip; clicking one toggles your reaction.
-function Reactions({ reactions, participants, me, onReact }) {
+export function Reactions({ reactions, participants, me, onReact }) {
   if (reactions.length === 0) return null;
   const nameOf = (id) => (id === me?.id ? "you" : participants.find((p) => p.id === id)?.name || `participant ${id}`);
   return (

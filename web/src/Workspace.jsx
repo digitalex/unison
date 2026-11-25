@@ -474,9 +474,16 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
   };
   const applyMessageEvent = ({ type, data }) => {
     if (!type.startsWith("message.") || !data?.id) return;
-    setMessages((list) => withMessage(list, data));
-    // A message about an item changes that item's message count.
     const itemRef = data.item?.number || data.item_id;
+    if (type === "message.deleted") {
+      setMessages((list) => list.filter((x) => x.id !== data.id));
+      if (itemRef) {
+        call("GET", `/backlog/${itemRef}`).then((it) => setBacklog((list) => withItem(list, it)), refused);
+      }
+      return;
+    }
+    setMessages((list) => withMessage(list, data));
+    // A message about an item changes that item's message/comment count.
     if (type === "message.created" && itemRef) {
       call("GET", `/backlog/${itemRef}`).then((it) => setBacklog((list) => withItem(list, it)), refused);
     }
@@ -848,6 +855,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
                 sections={sections}
                 items={activeSectionItems}
                 allItems={backlog}
+                messages={messages}
+                updateMessages={setMessages}
                 todos={todos}
                 setTodos={setTodos}
                 artifacts={artifacts}
@@ -870,6 +879,8 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
               sections={sections}
               items={mainBacklogItems}
               allItems={backlog}
+              messages={messages}
+              updateMessages={setMessages}
               todos={todos}
               setTodos={setTodos}
               artifacts={artifacts}

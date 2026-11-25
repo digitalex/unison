@@ -33,7 +33,7 @@ func TestChatAboutItem(t *testing.T) {
 	msgID := regexp.MustCompile(`#(\d+)`).FindStringSubmatch(out)[1]
 	// Waiting before reading chat, the human learns what the message is about.
 	waitOut := e.ok(human, "wait", "--timeout", "10")
-	if !strings.Contains(waitOut, `Ada (about item #1 "Landing page"): Hero done,`) {
+	if !strings.Contains(waitOut, `Ada (about item #1 "Landing page"`) || !strings.Contains(waitOut, "Hero done,") {
 		t.Errorf("wait = %q", waitOut)
 	}
 	e.ok(human, "chat", "send", "nice", "--reply-to", msgID)
@@ -46,14 +46,15 @@ func TestChatAboutItem(t *testing.T) {
 		t.Errorf("chat log =\n%s", log)
 	}
 	show := e.ok(human, "backlog", "show", "1")
-	if !strings.Contains(show, "Chat about #1:") || !strings.Contains(show, "Ada: Hero done, …") || strings.Contains(show, "nice") {
+	if !strings.Contains(show, "Comments  1") || !strings.Contains(show, "Ada: Hero done,") || !strings.Contains(show, "starting the footer") || strings.Contains(show, "nice") {
 		t.Errorf("backlog show =\n%s", show)
 	}
 	var detail struct {
 		Item     store.Item      `json:"item"`
+		Comments []store.Message `json:"comments"`
 		Messages []store.Message `json:"messages"`
 	}
-	if err := json.Unmarshal([]byte(e.ok(human, "backlog", "show", "1", "--json")), &detail); err != nil || detail.Item.MessageCount != 1 || len(detail.Messages) != 1 {
+	if err := json.Unmarshal([]byte(e.ok(human, "backlog", "show", "1", "--json")), &detail); err != nil || detail.Item.MessageCount != 1 || detail.Item.CommentCount != 1 || len(detail.Comments) != 1 || len(detail.Messages) != 1 {
 		t.Errorf("backlog show --json = %+v %v", detail, err)
 	}
 }

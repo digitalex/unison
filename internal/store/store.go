@@ -131,8 +131,9 @@ type Message struct {
 	CreatedAt   int64  `json:"created_at"`
 	// ItemID ties the message to a backlog item of the same workspace (a
 	// status update about it, say); Item summarizes that item.
-	ItemID *int64       `json:"item_id,omitempty"`
-	Item   *MessageItem `json:"item,omitempty"`
+	ItemID     *int64       `json:"item_id,omitempty"`
+	ItemNumber int64        `json:"item_number,omitempty"`
+	Item       *MessageItem `json:"item,omitempty"`
 	// Reactions are the emoji on the message, in ReactionEmoji order.
 	Reactions []Reaction `json:"reactions,omitempty"`
 	// ActionRequired marks a message that asks the participants it
@@ -141,6 +142,9 @@ type Message struct {
 	ActionRequired bool    `json:"action_required,omitempty"`
 	ActionFor      []int64 `json:"action_for,omitempty"`
 	DoneBy         []int64 `json:"done_by,omitempty"`
+	// Legacy marks historical comments from the read-only item_comments table
+	// returned alongside chat messages in unified item threads (#916).
+	Legacy bool `json:"legacy,omitempty"`
 }
 
 // NewMessage is a chat message to post: a reply in ParentID's thread,
@@ -155,10 +159,11 @@ type NewMessage struct {
 
 // MessageItem is the backlog item a message is about, in brief.
 type MessageItem struct {
-	ID     int64  `json:"id"`
-	Number int64  `json:"number"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
+	ID         int64  `json:"id"`
+	Number     int64  `json:"number"`
+	Title      string `json:"title"`
+	Status     string `json:"status"`
+	AssigneeID *int64 `json:"assignee_id,omitempty"`
 }
 
 // Backlog item statuses.
@@ -1032,14 +1037,14 @@ func (s *Store) UpdateParticipant(ctx context.Context, p *Participant, patch Par
 // ---- Chat ----
 
 // selectMessages selects messages (alias m) with the item each is about.
-const selectMessages = `SELECT m.id, m.workspace_id, m.author_id, m.parent_id, m.body, m.created_at, m.item_id, COALESCE(i.number, m.item_id), i.title, i.status
+const selectMessages = `SELECT m.id, m.workspace_id, m.author_id, m.parent_id, m.body, m.created_at, m.item_id, COALESCE(i.number, m.item_id) AS item_number, i.title, i.status, i.assignee_id
 	FROM messages m LEFT JOIN items i ON i.id = m.item_id`
 
 func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	var m Message
-	var parent, item, itemNum sql.NullInt64
+	var parent, item, itemNum, assignee sql.NullInt64
 	var title, status sql.NullString
-	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt, &item, &itemNum, &title, &status); err != nil {
+	if err := row.Scan(&m.ID, &m.WorkspaceID, &m.AuthorID, &parent, &m.Body, &m.CreatedAt, &item, &itemNum, &title, &status, &assignee); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, ErrNotFound
 		}
@@ -1050,7 +1055,13 @@ func scanMessage(row interface{ Scan(...any) error }) (*Message, error) {
 	}
 	if item.Valid {
 		m.ItemID = &item.Int64
-		m.Item = &MessageItem{ID: item.Int64, Number: itemNum.Int64, Title: title.String, Status: status.String}
+		m.ItemNumber = itemNum.Int64
+		mi := &MessageItem{ID: item.Int64, Number: itemNum.Int64, Title: title.String, Status: status.String}
+		if assignee.Valid {
+			a := assignee.Int64
+			mi.AssigneeID = &a
+		}
+		m.Item = mi
 	}
 	return &m, nil
 }
@@ -1100,6 +1111,7 @@ func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (
 			}
 		}
 		var resolvedItemID *int64
+		var itemNumber int64
 		var about *MessageItem
 		if itemID != nil {
 			it, err := getItem(t, author.WorkspaceID, *itemID)
@@ -1109,14 +1121,15 @@ func (s *Store) Post(ctx context.Context, author *Participant, msg NewMessage) (
 				return err
 			}
 			resolvedItemID = &it.ID
-			about = &MessageItem{ID: it.ID, Number: it.DisplayNumber(), Title: it.Title, Status: it.Status}
+			itemNumber = it.DisplayNumber()
+			about = &MessageItem{ID: it.ID, Number: itemNumber, Title: it.Title, Status: it.Status, AssigneeID: it.AssigneeID}
 		}
 		id, err := t.insert(`INSERT INTO messages (workspace_id, author_id, parent_id, body, created_at, item_id) VALUES (?, ?, ?, ?, ?, ?)`, "id",
 			author.WorkspaceID, author.ID, parentID, body, log.now, resolvedItemID)
 		if err != nil {
 			return err
 		}
-		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: resolvedItemID, Item: about}
+		m = &Message{ID: id, WorkspaceID: author.WorkspaceID, AuthorID: author.ID, ParentID: parentID, Body: body, CreatedAt: log.now, ItemID: resolvedItemID, ItemNumber: itemNumber, Item: about}
 		if msg.ActionRequired {
 			if err := addActions(t, m); err != nil {
 				return err

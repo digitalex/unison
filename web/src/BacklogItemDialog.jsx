@@ -1,7 +1,8 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { Check, CheckSquare, CircleAlert, Ellipsis, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
 import { STATUS_LABELS, ago, blockerTitle, blockersOf, hoursLeft, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
+import { ActionLine, REACTIONS, Reactions, withDone, withReaction } from "./Chat.jsx";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { itemHref, itemLink, messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
@@ -11,7 +12,7 @@ import Checkbox from "./ui/Checkbox.jsx";
 import CopyLinkButton from "./ui/CopyLinkButton.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
-import { MentionTextarea } from "./mentions.jsx";
+import { MentionProvider, MentionTextarea } from "./mentions.jsx";
 import { Input, Select } from "./ui/Input.jsx";
 
 function ChoicesField({ choices, setChoices, closeOnAnswer, setCloseOnAnswer }) {
@@ -163,7 +164,7 @@ export function NewItemDialog({ initial, section = null, sections = [], particip
 
 // ItemDialog shows one item with everything you can do to it. It renders
 // whatever the live list holds, so other people's changes show up here.
-export function ItemDialog({ item, items = [], sections = [], todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onClose }) {
+export function ItemDialog({ item, items = [], sections = [], messages = [], updateMessages, todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onError, onClose }) {
   const num = itemNum(item);
   const path = `/backlog/${num}`;
   const [editing, setEditing] = useState(false);
@@ -228,8 +229,18 @@ export function ItemDialog({ item, items = [], sections = [], todos = [], setTod
         run={run}
         onNavigate={onClose}
       />
-      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={stableParticipants} call={call} />}
-      <Comments key={path} item={item} path={path} participants={stableParticipants} me={me} call={call} run={run} />
+      <ItemThread
+        key={path}
+        item={item}
+        path={path}
+        messages={messages}
+        updateMessages={updateMessages}
+        participants={stableParticipants}
+        me={me}
+        call={call}
+        run={run}
+        onError={onError}
+      />
     </Dialog>
   );
 }
@@ -735,56 +746,404 @@ function ItemTodos({ item, items, todos, setTodos, onReloadMe, participants, me,
   );
 }
 
-// ChatLinks lists the chat messages about the item (one line each); each
-// link shows the message in chat (route transition unmounts the dialog).
-function ChatLinks({ item, path, participants, call }) {
-  const [messages, setMessages] = useState(null);
+function entryKey(m) {
+  return m.pending ? m.id : m.legacy ? `legacy-${m.id}` : `msg-${m.id}`;
+}
+
+function compareEntries(a, b) {
+  if (a.created_at !== b.created_at) return a.created_at - b.created_at;
+  if (Boolean(a.legacy) !== Boolean(b.legacy)) return a.legacy ? -1 : 1;
+  return Number(a.id) - Number(b.id);
+}
+
+// withEntry returns list (chronological) with entry m inserted or updated.
+function withEntry(list, m) {
+  const base = list || [];
+  const k = entryKey(m);
+  if (base.some((x) => entryKey(x) === k)) {
+    return base.map((x) => (entryKey(x) === k ? m : x));
+  }
+  return [...base, m].sort(compareEntries);
+}
+
+// mergeAddedEntries keeps entries just returned by POST visible if an earlier
+// in-flight GET finishes before the live-update refetch.
+function mergeAddedEntries(fetched, addedMap) {
+  let out = fetched;
+  for (const [k, m] of addedMap) {
+    if (out.some((x) => entryKey(x) === k)) addedMap.delete(k);
+    else out = withEntry(out, m);
+  }
+  return out;
+}
+
+const ThreadEntryRow = memo(function ThreadEntryRow({
+  entry: m,
+  author,
+  authorName,
+  participants,
+  me,
+  canDelete,
+  hasMixedLegacy,
+  actionsOpen,
+  onToggleActions,
+  onReact,
+  onDone,
+  onDelete,
+}) {
+  const isChat = !m.legacy && !m.pending;
+  const asksMe = Boolean(isChat && me && (m.action_for || []).includes(me.id));
+  const needsMe = Boolean(asksMe && !(m.done_by || []).includes(me.id));
+  return (
+    <div
+      className={[
+        "comment",
+        "thread-entry",
+        m.pending && "comment-pending",
+        needsMe && "needs-me",
+        actionsOpen && "msg-actions-open",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      aria-busy={m.pending || undefined}
+    >
+      <div className="comment-head">
+        <span className="who">{authorName}</span>
+        {author?.sponsor && <span className="agent-of">· agent of {author.sponsor.display_name}</span>}
+        <span className="time" title={m.pending ? undefined : new Date(m.created_at).toLocaleString()}>
+          {m.pending ? "sending…" : ago(m.created_at)}
+        </span>
+        {isChat && (
+          <a className="thread-entry-id" {...messageLink(m.id)} title="Show in chat">
+            #{m.id}
+          </a>
+        )}
+        {m.legacy && hasMixedLegacy && (
+          <span className="item-thread-legacy" title="Historical comment from before unified threads">
+            legacy
+          </span>
+        )}
+        {m.legacy && canDelete && (
+          <Button
+            iconOnly
+            variant="ghost"
+            className="comment-delete"
+            aria-label="Delete comment"
+            title="Delete comment"
+            onClick={() => onDelete(m)}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+      <div className="comment-body">
+        <MemoMarkdown text={m.body} />
+      </div>
+      {isChat && m.action_required && (
+        <ActionLine message={m} participants={participants} me={me} asksMe={asksMe} needsMe={needsMe} onDone={(done) => onDone(m, done)} />
+      )}
+      {isChat && (
+        <Reactions reactions={m.reactions || []} participants={participants} me={me} onReact={(emoji) => onReact(m, emoji)} />
+      )}
+      {isChat && (
+        <>
+          <div className="msg-actions" role="toolbar" aria-label={`Message #${m.id}`}>
+            {REACTIONS.map(({ emoji, label }) => {
+              const mine = m.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
+              return (
+                <button
+                  key={emoji}
+                  type="button"
+                  className="msg-action msg-emoji"
+                  aria-label={`React ${label}`}
+                  aria-pressed={Boolean(mine)}
+                  title={label}
+                  onClick={() => onReact(m, emoji)}
+                >
+                  {emoji}
+                </button>
+              );
+            })}
+            {canDelete && (
+              <button
+                type="button"
+                className="msg-action"
+                aria-label="Delete comment"
+                title="Delete comment"
+                onClick={() => onDelete(m)}
+              >
+                <Trash2 aria-hidden="true" />
+              </button>
+            )}
+          </div>
+          <button
+            type="button"
+            className="msg-more"
+            aria-label="Message actions"
+            aria-expanded={actionsOpen}
+            onClick={() => onToggleActions(m.id)}
+          >
+            <Ellipsis aria-hidden="true" />
+          </button>
+        </>
+      )}
+    </div>
+  );
+});
+
+// Isolated from ItemThread so typing in the box never re-renders the thread
+// list or re-parses Markdown on every keystroke (#181).
+function ItemThreadComposer({ onSend, mentionPrefill, onMentionConsumed }) {
+  const [text, setText] = useState("");
+  const [needsAction, setNeedsAction] = useState(false);
+  const inputRef = useRef(null);
+  const canAsk = /@\S/.test(text);
+
+  useEffect(() => {
+    if (!mentionPrefill) return;
+    const prefix = `@${mentionPrefill.name} `;
+    setText((t) => (t.startsWith(prefix) ? t : prefix + t));
+    onMentionConsumed?.();
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      el?.focus();
+      el?.setSelectionRange(el.value.length, el.value.length);
+    });
+  }, [mentionPrefill?.at]);
+
+  const send = async (e) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    const sent = text;
+    const ask = needsAction && canAsk;
+    setText("");
+    setNeedsAction(false);
+    const ok = await onSend(sent, ask);
+    if (!ok) {
+      setText((t) => t || sent);
+      setNeedsAction(ask);
+    }
+  };
+  return (
+    <form className="item-thread-composer" onSubmit={send} onKeyDown={submitOnModEnter}>
+      <MentionTextarea
+        ref={inputRef}
+        rows={2}
+        aria-label="Comment"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Add to thread…  @Name to mention, paste/drop images, ⌘/Ctrl+Enter to send"
+      />
+      <div className="item-thread-composer-foot">
+        {canAsk ? (
+          <button
+            type="button"
+            className={needsAction ? "chip needs-action-toggle on" : "chip needs-action-toggle"}
+            aria-pressed={needsAction}
+            title="Ask the people you @mention to act: it stands out for them until they're done"
+            onClick={() => {
+              setNeedsAction(!needsAction);
+              inputRef.current?.focus();
+            }}
+          >
+            <CircleAlert aria-hidden="true" />
+            Needs action
+          </button>
+        ) : (
+          <span className="muted item-thread-hint">⌘/Ctrl+Enter to send · paste or drop images</span>
+        )}
+        <Button type="submit" variant="primary">
+          Comment
+        </Button>
+      </div>
+    </form>
+  );
+}
+
+// ItemThread renders the item's unified conversation thread (#916): chat
+// messages tied to the item (with @mentions, reactions, Needs action, and
+// image attachments) alongside any historical legacy comments, oldest first.
+function ItemThread({ item, path, messages = [], updateMessages, participants, me, call, run, onError }) {
+  const [entries, setEntries] = useState(null);
+  const [pending, setPending] = useState([]);
+  const [removing, setRemoving] = useState([]);
+  const [actionsFor, setActionsFor] = useState(null);
+  const [mentionPrefill, setMentionPrefill] = useState(null);
+  const added = useRef(new Map());
+  const seq = useRef(0);
+
+  // Refetch when the unified count changes (live updates reload the item).
   useEffect(() => {
     let current = true;
-    call("GET", `${path}/messages`).then(
-      (list) => current && setMessages(list),
-      () => current && setMessages([]),
+    call("GET", `${path}/comments`).then(
+      (list) => current && setEntries(mergeAddedEntries(list, added.current)),
+      () => current && setEntries((prev) => prev || []),
     );
     return () => {
       current = false;
     };
-  }, [path, item.message_count]);
-  return (
-    <section className="detail-section">
-      <h3>
-        Chat <span className="muted">({item.message_count})</span>
-      </h3>
-      <ul className="chat-links">
-        {messages?.map((m) => (
-          <li key={m.id}>
-            <a {...messageLink(m.id)} title="Show in chat">
-              <MessagesSquare aria-hidden="true" />
-              <span className="who">{name(participants, m.author_id)}</span>
-              <span className="time">{ago(m.created_at)}</span>
-              <span className="chat-link-text">{m.body.split("\n")[0]}</span>
-            </a>
-          </li>
-        ))}
-      </ul>
-    </section>
+  }, [call, path, item.comment_count, item.message_count]);
+
+  const participantById = useMemo(() => new Map(participants.map((p) => [p.id, p])), [participants]);
+
+  // Overlay live workspace messages (reactions, action done state, newly
+  // received item messages) so changes from Chat or other tabs appear at once.
+  const merged = useMemo(() => {
+    const base = entries || [];
+    const liveById = new Map();
+    const liveForItem = [];
+    for (const m of messages) {
+      liveById.set(m.id, m);
+      if (m.item_id === item.id) liveForItem.push(m);
+    }
+    const seenMsgIds = new Set();
+    const out = base.map((e) => {
+      if (e.legacy) return e;
+      seenMsgIds.add(e.id);
+      return liveById.get(e.id) || e;
+    });
+    for (const m of liveForItem) {
+      if (!seenMsgIds.has(m.id)) out.push(m);
+    }
+    return out.sort(compareEntries);
+  }, [entries, messages, item.id]);
+
+  const sendComment = useCallback(
+    async (sent, actionRequired) => {
+      const temp = {
+        id: `pending-${++seq.current}`,
+        pending: true,
+        author_id: me?.id,
+        body: sent,
+        created_at: Date.now(),
+        reactions: [],
+      };
+      setPending((list) => [...list, temp]);
+      const payload = actionRequired ? { body: sent, action_required: true } : { body: sent };
+      const m = await run("POST", `${path}/comments`, payload);
+      setPending((list) => list.filter((x) => x !== temp));
+      if (m) {
+        added.current.set(entryKey(m), m);
+        setEntries((list) => withEntry(list, m));
+        updateMessages?.((list) => (list.some((x) => x.id === m.id) ? list : [...list, m].sort((a, b) => a.id - b.id)));
+        return true;
+      }
+      return false;
+    },
+    [me?.id, path, run, updateMessages],
   );
-}
 
-// withComment returns list (oldest first) with comment c in it.
-function withComment(list, c) {
-  const base = list || [];
-  return base.some((x) => x.id === c.id) ? base : [...base, c].sort((a, b) => a.id - b.id);
-}
+  const react = useCallback(
+    async (m, emoji) => {
+      const mine = m.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
+      const apply = (on) => {
+        const patch = (x) => (x.id === m.id && !x.legacy ? { ...x, reactions: withReaction(x.reactions || [], emoji, me?.id, on) } : x);
+        setEntries((list) => list?.map(patch) ?? null);
+        updateMessages?.((list) => list.map((x) => (x.id === m.id ? { ...x, reactions: withReaction(x.reactions || [], emoji, me?.id, on) } : x)));
+      };
+      apply(!mine);
+      try {
+        await call(mine ? "DELETE" : "PUT", `/messages/${m.id}/reactions/${encodeURIComponent(emoji)}`);
+      } catch (err) {
+        apply(mine);
+        onError?.(err.message);
+      }
+    },
+    [call, me?.id, onError, updateMessages],
+  );
 
-// mergeAddedComments keeps comments just returned by POST visible if an
-// earlier in-flight GET finishes before the live-update refetch.
-function mergeAddedComments(fetched, addedMap) {
-  let out = fetched;
-  for (const [id, c] of addedMap) {
-    if (out.some((x) => x.id === id)) addedMap.delete(id);
-    else out = withComment(out, c);
-  }
-  return out;
+  const setDone = useCallback(
+    async (m, done) => {
+      const apply = (on) => {
+        const patch = (x) => (x.id === m.id && !x.legacy ? { ...x, done_by: withDone(x, me?.id, on) } : x);
+        setEntries((list) => list?.map(patch) ?? null);
+        updateMessages?.((list) => list.map((x) => (x.id === m.id ? { ...x, done_by: withDone(x, me?.id, on) } : x)));
+      };
+      apply(done);
+      try {
+        await call(done ? "POST" : "DELETE", `/messages/${m.id}/done`);
+      } catch (err) {
+        apply(!done);
+        onError?.(err.message);
+      }
+    },
+    [call, me?.id, onError, updateMessages],
+  );
+
+  const remove = useCallback(
+    async (m) => {
+      if (!window.confirm("Delete this comment?")) return;
+      const k = entryKey(m);
+      setRemoving((keys) => [...keys, k]);
+      const suffix = m.legacy ? `${path}/comments/${m.id}?legacy=1` : `${path}/comments/${m.id}`;
+      const ok = await run("DELETE", suffix);
+      if (ok) {
+        added.current.delete(k);
+        setEntries((list) => list?.filter((x) => entryKey(x) !== k) ?? null);
+        if (!m.legacy) {
+          updateMessages?.((list) => list.filter((x) => x.id !== m.id));
+        }
+      }
+      setRemoving((keys) => keys.filter((x) => x !== k));
+    },
+    [path, run, updateMessages],
+  );
+
+  const toggleActions = useCallback((id) => {
+    setActionsFor((cur) => (cur === id ? null : id));
+  }, []);
+
+  const insertMention = useCallback((who) => {
+    setMentionPrefill({ name: who, at: Date.now() });
+  }, []);
+
+  const confirmed = merged.filter((m) => !removing.includes(entryKey(m)));
+  const shown = pending.length ? [...confirmed, ...pending] : confirmed;
+  const rootMessage = confirmed.find((m) => !m.legacy && !m.parent_id) || confirmed.find((m) => !m.legacy) || null;
+  const hasMixedLegacy = confirmed.some((m) => m.legacy) && confirmed.some((m) => !m.legacy);
+
+  return (
+    <MentionProvider onMentionClick={insertMention}>
+      <section className="detail-section item-thread">
+        <div className="item-thread-head">
+          <h3>
+            Thread {shown.length > 0 && <span className="muted">({shown.length})</span>}
+          </h3>
+          {rootMessage && (
+            <a className="item-thread-open-chat" {...messageLink(rootMessage.id)} title="Open this thread in Chat">
+              <MessagesSquare aria-hidden="true" />
+              Open in chat
+            </a>
+          )}
+        </div>
+        {entries !== null && shown.length === 0 && <p className="muted">No comments yet.</p>}
+        <div className="item-thread-list">
+          {shown.map((m) => (
+            <ThreadEntryRow
+              key={entryKey(m)}
+              entry={m}
+              author={participantById.get(m.author_id)}
+              authorName={name(participants, m.author_id)}
+              participants={participants}
+              me={me}
+              canDelete={!m.pending && me?.id === m.author_id}
+              hasMixedLegacy={hasMixedLegacy}
+              actionsOpen={actionsFor === m.id}
+              onToggleActions={toggleActions}
+              onReact={react}
+              onDone={setDone}
+              onDelete={remove}
+            />
+          ))}
+        </div>
+        <ItemThreadComposer
+          onSend={sendComment}
+          mentionPrefill={mentionPrefill}
+          onMentionConsumed={() => setMentionPrefill(null)}
+        />
+      </section>
+    </MentionProvider>
+  );
 }
 
 const CommentRow = memo(function CommentRow({ comment: c, authorName, canDelete, onDelete }) {
@@ -815,8 +1174,6 @@ const CommentRow = memo(function CommentRow({ comment: c, authorName, canDelete,
   );
 });
 
-// Isolated from Comments so typing in the comment box never re-renders the
-// comment list or re-parses comment Markdown on every keystroke.
 function CommentComposer({ onSend }) {
   const [text, setText] = useState("");
   const send = async (e) => {
@@ -841,10 +1198,8 @@ function CommentComposer({ onSend }) {
   );
 }
 
-// Comments lists and edits an item's comments. Adding and deleting update
-// the list at once (#156); live updates keep other people's changes in sync.
-// An idea's discussion (#917) uses it too: item is then the idea, path its
-// API path, and title names the section.
+// Comments lists and edits comments on a non-chat-threaded resource such as an
+// idea's discussion (#917).
 export function Comments({ item, path, participants, me, call, run, title = "Comments" }) {
   const [comments, setComments] = useState(null);
   const [pending, setPending] = useState([]);
@@ -852,11 +1207,18 @@ export function Comments({ item, path, participants, me, call, run, title = "Com
   const added = useRef(new Map());
   const seq = useRef(0);
 
-  // Refetch when the count changes (live updates reload the item list).
   useEffect(() => {
     let current = true;
     call("GET", `${path}/comments`).then(
-      (list) => current && setComments(mergeAddedComments(list, added.current)),
+      (list) => {
+        if (!current) return;
+        let out = list;
+        for (const [id, c] of added.current) {
+          if (out.some((x) => x.id === id)) added.current.delete(id);
+          else out = [...out, c].sort((a, b) => a.id - b.id);
+        }
+        setComments(out);
+      },
       () => current && setComments((prev) => prev || []),
     );
     return () => {
@@ -878,7 +1240,10 @@ export function Comments({ item, path, participants, me, call, run, title = "Com
       setPending((list) => list.filter((x) => x !== temp));
       if (c) {
         added.current.set(c.id, c);
-        setComments((list) => withComment(list, c));
+        setComments((list) => {
+          const base = list || [];
+          return base.some((x) => x.id === c.id) ? base : [...base, c].sort((a, b) => a.id - b.id);
+        });
         return true;
       }
       return false;

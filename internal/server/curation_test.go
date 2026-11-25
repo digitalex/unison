@@ -24,21 +24,32 @@ func TestCommentsAndPRsAPI(t *testing.T) {
 	if status != http.StatusCreated || c["body"] != "Where is the bug?" {
 		t.Fatalf("add comment = %d %v", status, c)
 	}
+	status, c2 := call(t, "POST", item+"/comments", bob, `{"body":"@Ada check login.go","action_required":true}`)
+	if status != http.StatusCreated || c2["parent_id"] != c["id"] || c2["action_required"] != true {
+		t.Fatalf("second comment = %d %v (want reply to %v with action_required)", status, c2, c["id"])
+	}
 	if status, _ := call(t, "POST", item+"/comments", ada, `{"body":"  "}`); status != http.StatusBadRequest {
 		t.Errorf("empty comment = %d, want 400", status)
 	}
 	if status, _ := call(t, "POST", base+"/999/comments", ada, `{"body":"x"}`); status != http.StatusNotFound {
 		t.Errorf("comment on missing item = %d, want 404", status)
 	}
-	if _, body := getAs(t, item+"/comments", ada); !strings.Contains(body, "Where is the bug?") {
+	if _, body := getAs(t, item+"/comments", ada); !strings.Contains(body, "Where is the bug?") || !strings.Contains(body, "check login.go") {
 		t.Errorf("list comments = %s", body)
 	}
+	if _, body := getAs(t, item+"/messages", ada); !strings.Contains(body, "Where is the bug?") || !strings.Contains(body, "check login.go") {
+		t.Errorf("list item messages = %s", body)
+	}
 	commentURL := item + "/comments/" + strconv.Itoa(int(c["id"].(float64)))
+	comment2URL := item + "/comments/" + strconv.Itoa(int(c2["id"].(float64)))
 	if status, _ := call(t, "DELETE", commentURL, bob, ""); status != http.StatusForbidden {
 		t.Errorf("deleting another's comment = %d, want 403", status)
 	}
 	if status, _ := call(t, "DELETE", commentURL, ada, ""); status != http.StatusOK {
 		t.Errorf("deleting own comment = %d, want 200", status)
+	}
+	if status, _ := call(t, "DELETE", comment2URL, bob, ""); status != http.StatusOK {
+		t.Errorf("deleting second comment = %d, want 200", status)
 	}
 
 	pr := "https://github.com/digitalex/unison/pull/4"

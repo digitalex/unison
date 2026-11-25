@@ -249,6 +249,15 @@ func TestMergeAccountParticipants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var legacyCID int64
+	if _, err := s.tx(ctx, func(t *tx, log *eventLog) error {
+		var err error
+		legacyCID, err = t.insert(`INSERT INTO item_comments (item_id, workspace_id, author_id, body, created_at) VALUES (?, ?, ?, ?, ?)`, "id",
+			it.ID, ws.ID, laptop.ID, "legacy note", log.now)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	for _, r := range []struct {
 		p     *Participant
 		emoji string
@@ -322,8 +331,11 @@ func TestMergeAccountParticipants(t *testing.T) {
 		if got.AssigneeID == nil || *got.AssigneeID != keep.ID || count(s, `SELECT COUNT(*) FROM items WHERE id = ? AND created_by = ?`, it.ID, keep.ID) != 1 {
 			t.Errorf("boot %d: item = %+v, want created by and assigned to Alex", boot, got)
 		}
-		if count(s, `SELECT COUNT(*) FROM item_comments WHERE id = ? AND author_id = ?`, c.ID, keep.ID) != 1 {
-			t.Errorf("boot %d: the comment didn't move to Alex", boot)
+		if count(s, `SELECT COUNT(*) FROM item_comments WHERE id = ? AND author_id = ?`, legacyCID, keep.ID) != 1 {
+			t.Errorf("boot %d: the legacy comment didn't move to Alex", boot)
+		}
+		if count(s, `SELECT COUNT(*) FROM messages WHERE id = ? AND author_id = ?`, c.ID, keep.ID) != 1 {
+			t.Errorf("boot %d: the thread comment didn't move to Alex", boot)
 		}
 		if n := count(s, `SELECT COUNT(*) FROM events WHERE actor_id IN (?, ?)`, phone.ID, laptop.ID); n != 0 {
 			t.Errorf("boot %d: %d events still name the merged participants", boot, n)
