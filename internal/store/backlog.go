@@ -560,6 +560,9 @@ func (s *Store) DeleteItem(ctx context.Context, actor *Participant, id int64) ([
 		if err := unlinkTodos(t, log, actor, id); err != nil {
 			return err
 		}
+		if err := unlinkArtifacts(t, log, actor, id); err != nil {
+			return err
+		}
 		if _, err := t.Exec(`DELETE FROM items WHERE id = ?`, id); err != nil {
 			return err
 		}

@@ -33,6 +33,8 @@ var (
 	ErrConflict = errors.New("conflict")
 	// ErrInvalid is returned for malformed input.
 	ErrInvalid = errors.New("invalid input")
+	// ErrTooLarge is returned when an uploaded payload exceeds the allowed limit.
+	ErrTooLarge = errors.New("payload too large")
 	// ErrForbidden is returned when the actor may not perform an operation
 	// (e.g. deleting someone else's comment).
 	ErrForbidden = errors.New("forbidden")
@@ -427,6 +429,7 @@ var CollaborationTypes = []string{
 	"pr.linked", "pr.unlinked",
 	"schedule.added", "schedule.updated", "schedule.removed",
 	"todo.created", "todo.done", "todo.reopened",
+	"artifact.created", "artifact.updated",
 	"participant.joined", "participant.revoked", "member.removed",
 }
 
@@ -586,6 +589,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM workspace_repos WHERE workspace_id = ?`,
 		`DELETE FROM workspace_links WHERE workspace_id = ?`,
 		`DELETE FROM images WHERE workspace_id = ?`,
+		`DELETE FROM artifacts WHERE workspace_id = ?`,
 		`DELETE FROM schedules WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,
 		`DELETE FROM item_prs WHERE workspace_id = ?`,

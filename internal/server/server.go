@@ -304,6 +304,12 @@ func (s *Server) routes() {
 	h("GET "+ws+"/deliveries/{id}", s.auth(s.getDelivery))
 	h("POST "+ws+"/images", s.auth(s.uploadImage))
 	h("GET "+ws+"/images/{id}", s.getImage)
+	h("GET "+ws+"/artifacts", s.listArtifacts)
+	h("POST "+ws+"/artifacts", s.auth(s.uploadArtifact))
+	h("GET "+ws+"/artifacts/{file}", s.getArtifact)
+	h("PUT "+ws+"/artifacts/{file}", s.auth(s.replaceArtifact))
+	h("PATCH "+ws+"/artifacts/{file}", s.auth(s.patchArtifact))
+	h("DELETE "+ws+"/artifacts/{file}", s.auth(s.deleteArtifact))
 	h("GET "+ws+"/events", s.events)
 	h("GET "+ws+"/events/peek", s.auth(s.peek))
 	h("GET "+ws+"/activity", s.listActivity)
@@ -410,6 +416,8 @@ func storeError(w http.ResponseWriter, err error) {
 		writeError(w, http.StatusConflict, err.Error())
 	case errors.Is(err, store.ErrInvalid):
 		writeError(w, http.StatusBadRequest, err.Error())
+	case errors.Is(err, store.ErrTooLarge):
+		writeError(w, http.StatusRequestEntityTooLarge, err.Error())
 	case errors.Is(err, store.ErrForbidden):
 		writeError(w, http.StatusForbidden, err.Error())
 	case errors.Is(err, context.Canceled):

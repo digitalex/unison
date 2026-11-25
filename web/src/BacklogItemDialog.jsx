@@ -1,5 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
+import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { messageLink, spaLink } from "./nav.js";
@@ -58,7 +59,7 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
 
 // ItemDialog shows one item with everything you can do to it. It renders
 // whatever the live list holds, so other people's changes show up here.
-export function ItemDialog({ item, items = [], todos = [], setTodos, onReloadMe, participants, me, call, run, onClose }) {
+export function ItemDialog({ item, items = [], todos = [], setTodos, artifacts = [], setArtifacts, workspace, token = "", onReloadMe, participants, me, call, run, onClose }) {
   const path = `/backlog/${item.id}`;
   const [editing, setEditing] = useState(false);
   const stableParticipants = useStableParticipants(participants);
@@ -90,6 +91,14 @@ export function ItemDialog({ item, items = [], todos = [], setTodos, onReloadMe,
       <ItemFacts item={item} participants={stableParticipants} />
       <ItemActions item={item} path={path} participants={stableParticipants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
+      <ItemArtifacts
+        item={item}
+        items={items}
+        artifacts={artifacts}
+        setArtifacts={setArtifacts}
+        workspaceId={workspace?.id || item.workspace_id}
+        token={token}
+      />
       <ItemTodos
         item={item}
         items={items}
@@ -259,6 +268,47 @@ function PRList({ item, path, run }) {
         />
         <Button type="submit">Link PR</Button>
       </form>
+    </section>
+  );
+}
+
+function ItemArtifacts({ item, items, artifacts, setArtifacts, workspaceId, token }) {
+  const [uploading, setUploading] = useState(false);
+  const linkedArtifacts = useMemo(() => artifacts.filter((a) => a.item_id === item.id), [artifacts, item.id]);
+
+  return (
+    <section className="detail-section">
+      <div className="detail-section-head">
+        <h3>
+          Artifacts {linkedArtifacts.length > 0 && <span className="muted">({linkedArtifacts.length})</span>}
+        </h3>
+        <Button type="button" size="small" variant="ghost" onClick={() => setUploading(true)}>
+          <Plus aria-hidden="true" />
+          Upload artifact
+        </Button>
+      </div>
+      {linkedArtifacts.map((art) => (
+        <div key={art.id} className="pr-line">
+          <span className="muted artifact-inline-icon">
+            <ArtifactTypeIcon artifact={art} />
+          </span>
+          <a {...spaLink(art.url)}>
+            {art.title && art.title !== art.name ? `${art.title} (${art.name})` : art.name}
+          </a>
+          <span className="chip">v{art.version}</span>
+          <span className="muted">{formatArtifactSize(art.size)}</span>
+        </div>
+      ))}
+      {uploading && (
+        <UploadArtifactDialog
+          workspaceId={workspaceId}
+          token={token}
+          items={items.length ? items : [item]}
+          initialItemId={item.id}
+          onClose={() => setUploading(false)}
+          onUploaded={(created) => setArtifacts?.((list) => withArtifact(list, created))}
+        />
+      )}
     </section>
   );
 }

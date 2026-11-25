@@ -2,7 +2,7 @@ import { Fragment, memo } from "react";
 import { sameParticipantDirectory } from "./backlogFormat.js";
 import { MdImage, imagePath } from "./images.jsx";
 import { matchMention, participantTooltip, useMentions } from "./mentions.jsx";
-import { itemLink } from "./nav.js";
+import { itemLink, spaLink } from "./nav.js";
 
 // A small Markdown renderer for chat. It builds React elements only — no
 // HTML strings, no dangerouslySetInnerHTML — so raw HTML in a message stays
@@ -252,6 +252,25 @@ export function refersToPR(before) {
   return /\b(?:PRs?|pull(?: request)?s?)\s*$/i.test(before);
 }
 
+const ARTIFACT_SPA_PATH = /^\/w\/([\w-]+)\/artifacts\/([^/\s<>"'`?#]+)$/;
+
+// artifactSpaPath returns a same-origin /w/<ws>/artifacts/<file> SPA path for a
+// relative artifact path or a full URL on the current origin (#918).
+export function artifactSpaPath(url) {
+  const u = url.trim();
+  if (!u || /[\s\u0000-\u001f]/.test(u)) return null;
+  if (ARTIFACT_SPA_PATH.test(u)) return u;
+  if (/^https?:\/\//i.test(u) && typeof window !== "undefined") {
+    try {
+      const parsed = new URL(u);
+      if (parsed.origin === window.location.origin && !parsed.search && !parsed.hash && ARTIFACT_SPA_PATH.test(parsed.pathname)) {
+        return parsed.pathname;
+      }
+    } catch {}
+  }
+  return null;
+}
+
 // safeHref returns an allowed href for url, or null.
 export function safeHref(url) {
   const u = url.trim();
@@ -262,6 +281,14 @@ export function safeHref(url) {
 }
 
 function link(href, children, key) {
+  const spa = artifactSpaPath(href);
+  if (spa) {
+    return (
+      <a key={key} className="md-artifact" {...spaLink(spa)}>
+        {children}
+      </a>
+    );
+  }
   return (
     <a key={key} href={href} target="_blank" rel="noopener noreferrer">
       {children}
@@ -389,7 +416,8 @@ function renderInline(s, depth = 0, mentions = {}) {
           if (next === -1 || next - close > 2048) break;
           end = next;
         }
-        const href = end !== -1 ? safeHref(s.slice(close + 2, end)) : null;
+        const rawTarget = end !== -1 ? s.slice(close + 2, end) : "";
+        const href = rawTarget ? artifactSpaPath(rawTarget) || safeHref(rawTarget) : null;
         const label = s.slice(i + 1, close);
         if (href && label.trim()) {
           push(link(href, depth < MAX_DEPTH ? renderInline(label, MAX_DEPTH, mentions) : label, i));
@@ -408,6 +436,27 @@ function renderInline(s, depth = 0, mentions = {}) {
       if (href) {
         push(link(href, url, i));
         i += url.length;
+        continue;
+      }
+    }
+    if (
+      c === "/" &&
+      depth < MAX_DEPTH &&
+      !isWord(s[i - 1]) &&
+      s[i - 1] !== "/" &&
+      s[i - 1] !== ":" &&
+      s.slice(i, i + 3) === "/w/"
+    ) {
+      URL_CHARS.lastIndex = i;
+      const candidate = trimUrl(URL_CHARS.exec(s)[0]);
+      const spa = artifactSpaPath(candidate);
+      if (spa) {
+        push(
+          <a key={i} className="md-artifact" {...spaLink(spa)}>
+            {candidate}
+          </a>,
+        );
+        i += candidate.length;
         continue;
       }
     }
