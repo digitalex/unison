@@ -6157,5 +6157,49 @@ button.md-mention-chip.md-mention-me:hover {
   font-size: var(--size-xs);
 }
 
+/* ---- Per-event desktop notification settings (#279) ---- */
+.notify-settings {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+}
+
+.notify-settings > .account-theme {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.notify-events {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  margin-top: var(--space-xxs);
+  padding: var(--space-s);
+  border-radius: var(--radius-s);
+  background: var(--surface);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.notify-events-inactive {
+  opacity: 0.72;
+}
+
+.notify-event-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.notify-event-desc {
+  margin: 0;
+  padding-left: calc(15px + var(--space-xs));
+  font-size: var(--size-xs);
+}
+
+.notify-test-row {
+  margin-top: var(--space-xxs);
+}
+
+
 
 
