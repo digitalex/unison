@@ -4,9 +4,10 @@ import { ago, itemNum, name, submitOnModEnter, useStableParticipants } from "./b
 import { Comments } from "./BacklogItemDialog.jsx";
 import { MemoMarkdown } from "./Markdown.jsx";
 import { MentionTextarea } from "./mentions.jsx";
-import { itemLink } from "./nav.js";
+import { ideaHref, itemLink } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import Button from "./ui/Button.jsx";
+import CopyLinkButton from "./ui/CopyLinkButton.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { Input } from "./ui/Input.jsx";
@@ -41,8 +42,33 @@ function ItemChip({ id }) {
   );
 }
 
+function ideaFromURL() {
+  if (typeof window === "undefined") return null;
+  const v = new URLSearchParams(window.location.search).get("idea");
+  return v && /^\d+$/.test(v) ? Number(v) : null;
+}
+
+function urlWithIdea(id) {
+  const u = new URL(window.location.href);
+  if (id && id !== "new") u.searchParams.set("idea", id);
+  else u.searchParams.delete("idea");
+  return u.pathname + u.search + u.hash;
+}
+
 export default function Ideas({ ideas, setIdeas, participants, me, call, onError, head, error }) {
-  const [opened, setOpened] = useState(null); // An idea id, or "new".
+  const [opened, setOpenedState] = useState(ideaFromURL); // An idea id, or "new".
+  const seenIdea = useRef(null);
+  const setOpened = useCallback((next) => {
+    setOpenedState(next);
+    if (typeof window !== "undefined") {
+      window.history.replaceState(null, "", urlWithIdea(next));
+    }
+  }, []);
+  useEffect(() => {
+    const onPop = () => setOpenedState(ideaFromURL());
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   useKeyShortcut(
     (e) => !e.shiftKey && (e.key === "c" || e.key === "C"),
     () => setOpened("new"),
@@ -74,8 +100,12 @@ export default function Ideas({ ideas, setIdeas, participants, me, call, onError
   const done = ideas.filter((d) => d.status === "promoted");
 
   useEffect(() => {
-    if (opened !== null && opened !== "new" && !activeIdea) setOpened(null);
-  }, [opened, activeIdea]);
+    if (opened === null || opened === "new" || activeIdea) {
+      seenIdea.current = activeIdea ? opened : null;
+      return;
+    }
+    if (seenIdea.current === opened || ideas.length > 0) setOpened(null);
+  }, [opened, activeIdea, ideas.length, setOpened]);
 
   useEffect(() => {
     if (!moved) return;
@@ -260,11 +290,18 @@ function IdeaDialog({ idea, participants, me, call, run, saved, removed, promote
         </>
       }
       head={
-        !editing && (
-          <Button iconOnly variant="ghost" aria-label="Edit title and description" title="Edit" onClick={() => setEditing(true)}>
-            <Pencil aria-hidden="true" />
-          </Button>
-        )
+        <>
+          <CopyLinkButton
+            href={ideaHref(idea.id, idea.workspace_id)}
+            label={`Copy link to idea ${idea.id}`}
+            title="Copy link to idea"
+          />
+          {!editing && (
+            <Button iconOnly variant="ghost" aria-label="Edit title and description" title="Edit" onClick={() => setEditing(true)}>
+              <Pencil aria-hidden="true" />
+            </Button>
+          )}
+        </>
       }
       onClose={onClose}
       className="item-dialog"

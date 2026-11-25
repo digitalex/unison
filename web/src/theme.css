@@ -679,8 +679,10 @@ textarea.control {
   display: flex;
   flex-direction: column;
   gap: var(--space-m);
+  min-width: 0;
   padding: var(--space-l);
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 
@@ -767,6 +769,12 @@ html.dialog-open {
   background: var(--panel);
   color: var(--text);
   box-shadow: var(--control-shadow);
+}
+
+.theme-switch button:focus-visible,
+.seg button:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
 }
 
 .seg {
@@ -911,7 +919,7 @@ html.dialog-open {
    rest. Phones swap the sidebar for a tab bar at the bottom and go flat. */
 .shell {
   display: grid;
-  grid-template-columns: 232px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-w, 232px) minmax(0, 1fr);
   height: 100vh;
   height: 100dvh;
   overflow: hidden;
@@ -935,6 +943,7 @@ html.dialog-open {
 
 /* ---- Sidebar ---- */
 .sidebar {
+  position: relative;
   display: flex;
   flex-direction: column;
   min-height: 0;
@@ -946,14 +955,45 @@ html.dialog-open {
   padding: var(--space-s) var(--space-xs) var(--space-s) var(--space-s);
 }
 
+.sidebar-resizer {
+  position: absolute;
+  top: var(--space-s);
+  bottom: var(--space-s);
+  right: -4px;
+  z-index: 3;
+  width: 9px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+.sidebar-resizer::after {
+  content: "";
+  position: absolute;
+  inset: 0 3.5px;
+  border-radius: var(--radius-full);
+  background: transparent;
+  transition: background 120ms;
+}
+
+.sidebar-resizer:hover::after,
+.sidebar-resizer:focus-visible::after,
+.sidebar-resizer[data-dragging]::after {
+  background: var(--focus);
+}
+
+.sidebar-resizer:focus-visible {
+  outline: none;
+}
+
 .sidebar-content {
   display: flex;
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  margin: -3px;
+  padding: 3px 5px 3px 3px;
   overflow-y: auto;
   overflow-x: hidden;
-  padding-right: 2px;
   scrollbar-width: thin;
   scrollbar-color: var(--panel-edge) transparent;
 }
@@ -1021,6 +1061,12 @@ html.dialog-open {
   background: var(--panel-edge);
   color: var(--text);
   text-decoration: none;
+}
+
+.nav-link:focus-visible,
+.nav-heading-button:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
 }
 
 .nav-link[aria-current="page"] {
@@ -1199,6 +1245,8 @@ html.dialog-open {
 /* People: who's here, in the sidebar. A long list scrolls on its own. */
 .people {
   max-height: 40vh;
+  margin: -2px -3px;
+  padding: 2px 3px;
   overflow-y: auto;
 }
 
@@ -1448,6 +1496,7 @@ button.nav-link {
   display: flex;
   flex-direction: column;
   flex: 1;
+  min-width: 0;
   min-height: 0;
 }
 
@@ -1481,8 +1530,10 @@ button.nav-link {
 
 .screen-body {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
 }
 
@@ -1609,10 +1660,15 @@ button.nav-link {
 }
 
 .switcher-item:hover,
-.switcher-item:focus-visible,
 .switcher-item:focus {
   outline: none;
   background: var(--surface-hover);
+}
+
+.switcher-item:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 var(--border-l) var(--focus);
 }
 
 .switcher-item .lucide {
@@ -1856,6 +1912,11 @@ button.group-head:hover {
   background: var(--surface-hover);
 }
 
+.group-head:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
+}
+
 .group-head > .lucide:first-child {
   width: 14px;
   height: 14px;
@@ -1896,6 +1957,11 @@ button.group-head:hover {
   background: var(--surface-hover);
 }
 
+.row:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
+}
+
 .rank {
   flex: none;
   width: 18px;
@@ -1910,6 +1976,7 @@ button.group-head:hover {
   min-width: 0;
   padding: 0;
   border: 0;
+  border-radius: var(--radius-xs);
   background: none;
   color: inherit;
   font: inherit;
@@ -1918,6 +1985,11 @@ button.group-head:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
   cursor: pointer;
+}
+
+.row-title:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: 1px;
 }
 
 .item.done .row-title {
@@ -2067,7 +2139,7 @@ button.group-head:hover {
 
 .thread-resizer:hover::after,
 .thread-resizer:focus-visible::after,
-html.resizing .thread-resizer::after {
+.thread-resizer[data-dragging]::after {
   background: var(--focus);
 }
 
@@ -2118,8 +2190,10 @@ html.resizing * {
 
 .thread-log {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-xs) 0;
 }
@@ -2258,8 +2332,10 @@ html.resizing * {
 
 .chat-log {
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--space-xs) 0;
 }
@@ -2399,11 +2475,77 @@ html.resizing * {
 }
 
 /* Long lines stay readable on wide screens. */
+.msg > div {
+  min-width: 0;
+}
+
 .msg .text {
-  max-width: 80ch;
+  max-width: min(80ch, 100%);
   color: var(--text-secondary);
   min-width: 0;
   overflow-wrap: anywhere;
+}
+
+/* Long-message folding (MessageFold.jsx, #280). */
+.msg-fold {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  min-width: 0;
+  max-width: 100%;
+}
+
+.msg-fold-clip {
+  width: 100%;
+  min-width: 0;
+}
+
+.msg-fold-clip.msg-fold-collapsed {
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), transparent);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - 56px), transparent);
+}
+
+.msg-fold-content {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.msg-fold-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  padding: 2px 8px;
+  border: 0;
+  border-radius: var(--radius-s);
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: var(--size-xs);
+  font-weight: var(--weight-ui-medium);
+  cursor: pointer;
+  transition: background-color var(--motion-duration) var(--motion-easing), color var(--motion-duration) var(--motion-easing);
+}
+
+.msg-fold-toggle:hover {
+  background: var(--surface-hover);
+  color: var(--text);
+}
+
+.msg-fold-toggle:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: 1px;
+}
+
+.msg-fold-toggle .lucide {
+  width: 13px;
+  height: 13px;
+}
+
+.copy-link-btn.copied {
+  color: var(--presence-active);
 }
 
 /* A message about a backlog item links to it (Chat.jsx). */
@@ -2578,6 +2720,23 @@ html.resizing * {
   font-size: var(--size-xxs);
 }
 
+.msg-action.button.button-icon {
+  width: 22px;
+  height: 18px;
+  padding: 0;
+}
+
+.msg-action.button.button-icon .lucide {
+  width: 13px;
+  height: 13px;
+}
+
+.msg-action:focus-visible,
+.msg-more:focus-visible {
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
+}
+
 .msg-emoji {
   display: grid;
   place-items: center;
@@ -2592,10 +2751,14 @@ html.resizing * {
   cursor: pointer;
 }
 
-.msg-emoji:hover,
-.msg-emoji:focus-visible {
-  outline: none;
+.msg-emoji:hover {
   background: var(--surface-hover);
+}
+
+.msg-emoji:focus-visible {
+  background: var(--surface-hover);
+  outline: var(--focus-ring-outline);
+  outline-offset: -2px;
 }
 
 .msg-emoji[aria-pressed="true"] {
@@ -2648,6 +2811,16 @@ html.resizing * {
 
   .msg-action.button {
     height: 34px;
+  }
+
+  .msg-action.button.button-icon {
+    width: 34px;
+    height: 34px;
+  }
+
+  .msg-action.button.button-icon .lucide {
+    width: 16px;
+    height: 16px;
   }
 }
 
@@ -2925,7 +3098,8 @@ html.reordering * {
   display: inline-flex;
   align-items: center;
   gap: var(--space-xs);
-  margin-left: var(--space-xs);
+  margin: -3px 0 -3px calc(var(--space-xs) - 3px);
+  padding: 3px;
   min-width: 0;
 }
 
@@ -3303,6 +3477,18 @@ html.reordering * {
 }
 
 /* ---- Backlog item dialog (BacklogItemDialog.jsx) ---- */
+@media (min-width: 641px) {
+  .dialog.item-dialog {
+    width: min(760px, calc(100vw - 32px));
+    max-width: 760px;
+  }
+}
+
+.item-dialog .detail-form,
+.item-dialog .needs-picker-list {
+  max-width: 100%;
+}
+
 .item-dialog .dialog-title {
   display: flex;
   align-items: center;
@@ -3639,6 +3825,59 @@ html.reordering * {
   flex-direction: column;
   gap: var(--space-xxs);
   min-width: 0;
+  max-width: 100%;
+  overflow-wrap: break-word;
+}
+
+.md-math {
+  display: inline;
+  max-width: 100%;
+}
+
+.md-math-block {
+  display: block;
+  min-width: 0;
+  max-width: 100%;
+  margin: var(--space-xxs) 0;
+  padding: var(--space-xs) var(--space-s);
+  overflow-x: auto;
+  overflow-y: hidden;
+  text-align: center;
+}
+
+.md math {
+  font-size: 1.04em;
+}
+
+.md-math-block math {
+  font-size: 1.12em;
+}
+
+.md math .math-bf {
+  font-weight: var(--weight-ui-heavy);
+  font-style: normal;
+}
+
+.md math .math-it {
+  font-style: italic;
+}
+
+.md math .math-tt {
+  font-family: var(--font-mono);
+  font-style: normal;
+}
+
+.md math .math-sf {
+  font-family: var(--font-ui);
+  font-style: normal;
+}
+
+.md math mtable mtd {
+  padding: 0.15em 0.4em;
+}
+
+.md math mtable.math-cases mtd {
+  text-align: left;
 }
 
 .md-p,
@@ -3768,6 +4007,7 @@ html.reordering * {
 }
 
 .md-pre {
+  min-width: 0;
   max-width: 100%;
   margin: 2px 0;
   padding: var(--space-xs) var(--space-s);
@@ -3911,6 +4151,12 @@ button.md-mention-chip.md-mention-me:hover {
 .mention-option:hover,
 .mention-option.active {
   background: var(--surface-hover);
+}
+
+.mention-option:focus-visible {
+  outline: none;
+  background: var(--surface-hover);
+  box-shadow: inset 0 0 0 var(--border-l) var(--focus);
 }
 
 .mention-option-name {
@@ -4942,7 +5188,8 @@ button.md-mention-chip.md-mention-me:hover {
     background: var(--panel);
   }
 
-  .sidebar {
+  .sidebar,
+  .sidebar-resizer {
     display: none;
   }
 
@@ -4970,8 +5217,8 @@ button.md-mention-chip.md-mention-me:hover {
   .screen-head .backlog-tools {
     order: 2;
     width: 100%;
-    margin-left: 0;
-    padding-bottom: var(--space-xxs);
+    margin: 0;
+    padding: 3px 3px calc(var(--space-xxs) + 2px);
     overflow-x: auto;
     scrollbar-width: none;
   }
@@ -6138,10 +6385,14 @@ button.md-mention-chip.md-mention-me:hover {
   cursor: pointer;
 }
 
-.needs-picker-option:hover,
+.needs-picker-option:hover {
+  background: var(--surface-hover);
+}
+
 .needs-picker-option:focus-visible {
   background: var(--surface-hover);
   outline: none;
+  box-shadow: inset 0 0 0 var(--border-l) var(--focus);
 }
 
 .needs-picker-title {

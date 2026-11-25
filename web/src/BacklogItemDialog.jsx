@@ -3,11 +3,12 @@ import { Check, CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash
 import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
 import { STATUS_LABELS, ago, blockerTitle, blockersOf, hoursLeft, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
-import { itemLink, messageLink, spaLink } from "./nav.js";
+import { itemHref, itemLink, messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import { NewTodoDialog, withTodo } from "./Todos.jsx";
 import Button from "./ui/Button.jsx";
 import Checkbox from "./ui/Checkbox.jsx";
+import CopyLinkButton from "./ui/CopyLinkButton.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
 import { MentionTextarea } from "./mentions.jsx";
@@ -178,11 +179,18 @@ export function ItemDialog({ item, items = [], sections = [], todos = [], setTod
         </>
       }
       head={
-        !editing && (
-          <Button iconOnly variant="ghost" aria-label="Edit title and description" title="Edit" onClick={() => setEditing(true)}>
-            <Pencil aria-hidden="true" />
-          </Button>
-        )
+        <>
+          <CopyLinkButton
+            href={itemHref(num, workspace?.id || item.workspace_id)}
+            label={`Copy link to #${num}`}
+            title="Copy link to item"
+          />
+          {!editing && (
+            <Button iconOnly variant="ghost" aria-label="Edit title and description" title="Edit" onClick={() => setEditing(true)}>
+              <Pencil aria-hidden="true" />
+            </Button>
+          )}
+        </>
       }
       onClose={onClose}
       className="item-dialog"

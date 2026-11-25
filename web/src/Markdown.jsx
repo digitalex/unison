@@ -1,6 +1,7 @@
 import { Fragment, memo } from "react";
 import { sameParticipantDirectory } from "./backlogFormat.js";
 import { MdImage, imagePath } from "./images.jsx";
+import LatexMath from "./math.jsx";
 import { matchMention, participantTooltip, refersToPR, useMentions } from "./mentions.jsx";
 import { itemLink, spaLink } from "./nav.js";
 
@@ -67,6 +68,8 @@ export const MemoMarkdown = memo(Markdown);
 // ---- Blocks ----
 
 const FENCE = /^ {0,3}(`{3,}|~{3,})(.*)$/;
+const MATH_OPEN = /^ {0,3}\$\$(.*)$/;
+const MATH_CLOSE = /^ {0,3}\$\$[ \t]*$/;
 const HEADING = /^ {0,3}(#{1,3})(?:[ \t]+|$)/;
 const QUOTE = /^ {0,3}> ?/;
 const LIST_ITEM = /^( *)([-*+]|\d{1,9}[.)])[ \t]+/;
@@ -76,12 +79,64 @@ function isRule(line) {
   return s.length >= 3 && (/^-+$/.test(s) || /^\*+$/.test(s) || /^_+$/.test(s)) && /^ {0,3}[-*_]/.test(line);
 }
 
+function startsMathBlock(line) {
+  const m = line.match(MATH_OPEN);
+  if (!m) return false;
+  const rest = m[1].trim();
+  if (rest === "") return true;
+  if (rest.endsWith("$$")) {
+    const inner = rest.slice(0, -2).trim();
+    return inner.length > 0 && !inner.includes("$$");
+  }
+  return false;
+}
+
+function parseMathBlock(lines, start) {
+  const open = lines[start].match(MATH_OPEN);
+  if (!open) return null;
+  const firstRest = open[1];
+  const trimmedRest = firstRest.trim();
+
+  if (trimmedRest.endsWith("$$") && trimmedRest.length > 2) {
+    const inner = trimmedRest.slice(0, -2).trim();
+    if (inner.length > 0 && !inner.includes("$$")) {
+      return [{ type: "math", text: inner }, start + 1];
+    }
+    return null;
+  }
+
+  if (trimmedRest === "") {
+    let end = start + 1;
+    while (end < lines.length && !MATH_CLOSE.test(lines[end])) end++;
+    if (end < lines.length) {
+      return [{ type: "math", text: lines.slice(start + 1, end).join("\n") }, end + 1];
+    }
+    return null;
+  }
+
+  if (firstRest.includes("$$")) return null;
+  let end = start + 1;
+  while (end < lines.length) {
+    const trimmedLine = lines[end].trimEnd();
+    if (MATH_CLOSE.test(lines[end])) {
+      const body = [firstRest, ...lines.slice(start + 1, end)].join("\n").trim();
+      return [{ type: "math", text: body }, end + 1];
+    }
+    if (trimmedLine.endsWith("$$") && !trimmedLine.slice(0, -2).includes("$$")) {
+      const body = [firstRest, ...lines.slice(start + 1, end), trimmedLine.slice(0, -2)].join("\n").trim();
+      return [{ type: "math", text: body }, end + 1];
+    }
+    end++;
+  }
+  return null;
+}
+
 function startsBlock(line) {
-  return FENCE.test(line) || HEADING.test(line) || QUOTE.test(line) || isRule(line) || LIST_ITEM.test(line);
+  return FENCE.test(line) || startsMathBlock(line) || HEADING.test(line) || QUOTE.test(line) || isRule(line) || LIST_ITEM.test(line);
 }
 
 // parseBlocks turns lines into a block tree:
-// { type: "p" | "code" | "quote" | "list" | "heading" | "hr", ... }
+// { type: "p" | "code" | "math" | "quote" | "list" | "heading" | "hr", ... }
 function parseBlocks(lines, depth) {
   const blocks = [];
   let i = 0;
@@ -102,7 +157,14 @@ function parseBlocks(lines, depth) {
         continue;
       }
       // Unclosed fence: fall through and treat the line as text.
-    } else if (isRule(line)) {
+    }
+    const mathBlock = parseMathBlock(lines, i);
+    if (mathBlock) {
+      blocks.push(mathBlock[0]);
+      i = mathBlock[1];
+      continue;
+    }
+    if (isRule(line)) {
       blocks.push({ type: "hr" });
       i++;
       continue;
@@ -191,6 +253,12 @@ function renderBlocks(blocks, mentions) {
           <pre key={i} className="md-pre">
             <code>{b.text}</code>
           </pre>
+        );
+      case "math":
+        return (
+          <div key={i} className="md-math-block" title={b.text}>
+            <LatexMath tex={b.text} display />
+          </div>
         );
       case "hr":
         return <hr key={i} className="md-hr" />;
@@ -325,6 +393,57 @@ function count(s, ch, from, to) {
 const isSpace = (c) => c === undefined || /\s/.test(c);
 const isWord = (c) => c !== undefined && WORD.test(c);
 
+function looksLikeCurrencyProse(expr) {
+  return /^\d+(?:[.,]\d+)*\s/.test(expr) && !/[+\-*/=<>^_\\{}()[\]|]/.test(expr);
+}
+
+function findNextUnescapedDollar(s, from) {
+  let k = from;
+  while (k < s.length) {
+    const ch = s[k];
+    if (ch === "\n" || ch === "`") return -1;
+    if (ch === "\\") {
+      k += 2;
+      continue;
+    }
+    if (ch === "$") return k;
+    k++;
+  }
+  return -1;
+}
+
+function matchInlineMath(s, i, find) {
+  if (s[i + 1] === "$") {
+    if (s[i + 2] === "$") {
+      let run = 3;
+      while (s[i + run] === "$") run++;
+      return { literal: "$".repeat(run), next: i + run };
+    }
+    if (s[i - 1] !== "$") {
+      const end = find("$$", i + 2, (j) => s[j - 1] !== "\\" && s[j - 1] !== "$" && s[j + 2] !== "$");
+      if (end !== -1) {
+        const expr = s.slice(i + 2, end).trim();
+        if (expr.length > 0 && !expr.includes("\n")) {
+          return { expr, next: end + 2 };
+        }
+      }
+    }
+    return { literal: "$$", next: i + 2 };
+  }
+
+  const prev = s[i - 1];
+  const afterOpen = s[i + 1];
+  if (prev === "$" || prev === "\\" || (prev !== undefined && /\d/.test(prev)) || isSpace(afterOpen)) {
+    return null;
+  }
+  const end = findNextUnescapedDollar(s, i + 1);
+  if (end === -1 || s[end + 1] === "$") return null;
+  if (isSpace(s[end - 1]) || /\d/.test(s[end + 1] ?? "")) return null;
+  const expr = s.slice(i + 1, end);
+  if (!expr || looksLikeCurrencyProse(expr)) return null;
+  return { expr, next: end + 1 };
+}
+
 function renderInline(s, depth = 0, mentions = {}) {
   const nodes = [];
   let text = "";
@@ -376,6 +495,26 @@ function renderInline(s, depth = 0, mentions = {}) {
         text += run;
         i += n;
       }
+      continue;
+    }
+    if (c === "$") {
+      const math = matchInlineMath(s, i, find);
+      if (math?.expr !== undefined) {
+        push(
+          <span key={i} className="md-math" title={math.expr}>
+            <LatexMath tex={math.expr} />
+          </span>,
+        );
+        i = math.next;
+        continue;
+      }
+      if (math?.literal) {
+        text += math.literal;
+        i = math.next;
+        continue;
+      }
+      text += "$";
+      i++;
       continue;
     }
     if ((c === "*" || c === "_" || c === "~") && !isSpace(s[i + 1])) {

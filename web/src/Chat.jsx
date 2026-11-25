@@ -2,10 +2,12 @@ import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearDraft, getDraft, resolveImageUploadInDraft, setDraft } from "./chatDrafts.js";
 import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Pause, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemNum } from "./backlogFormat.js";
-import { itemLink } from "./nav.js";
+import { itemLink, messageHref } from "./nav.js";
 import Button from "./ui/Button.jsx";
+import CopyLinkButton from "./ui/CopyLinkButton.jsx";
 import { MentionProvider, MentionTextarea } from "./mentions.jsx";
 import Markdown, { refersToPR } from "./Markdown.jsx";
+import MessageFold from "./MessageFold.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
 // The workspace chat room, a screen of its own. Threads are one level deep.
@@ -170,6 +172,7 @@ export default function Chat({ workspaceId, messages, activity = [], updateMessa
     }
   };
   const messageProps = (m, root) => ({
+    workspaceId,
     message: m,
     onDone: (done) => setDone(m, done),
     isNew: m.id > newAfter,
@@ -599,7 +602,7 @@ function useShowMessage(shown, messages, ready = true) {
   return flashed;
 }
 
-function Message({ message, onDone, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
+function Message({ workspaceId, message, onDone, isNew, participants, me, flashed, onReply, onReact, actionsOpen, onToggleActions, children }) {
   const author = participants.find((p) => p.id === message.author_id);
   const asksMe = Boolean(me) && (message.action_for || []).includes(me.id);
   const needsMe = asksMe && !(message.done_by || []).includes(me.id);
@@ -624,7 +627,9 @@ function Message({ message, onDone, isNew, participants, me, flashed, onReply, o
           {created.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })} · {message.pending ? "sending…" : `#${message.id}`}
         </span>
         <div className="text">
-          <Markdown text={message.body} />
+          <MessageFold text={message.body} forceExpand={flashed === message.id}>
+            <Markdown text={message.body} />
+          </MessageFold>
         </div>
         {message.item && (
           <a className="chip msg-item" title={`About backlog item #${itemNum(message.item)}: ${message.item.title}`} {...itemLink(itemNum(message.item))}>
@@ -640,6 +645,14 @@ function Message({ message, onDone, isNew, participants, me, flashed, onReply, o
           <Reply aria-hidden="true" />
           Reply
         </Button>
+        {!message.pending && (
+          <CopyLinkButton
+            href={messageHref(message.id, workspaceId)}
+            className="msg-action msg-copy-link"
+            label="Copy link to message"
+            title="Copy link"
+          />
+        )}
         {REACTIONS.map(({ emoji, label }) => {
           const mine = message.reactions?.some((r) => r.emoji === emoji && r.by.includes(me?.id));
           return (
@@ -792,12 +805,14 @@ function ThreadResizer({ body, width, onWidth }) {
     e.preventDefault();
     const el = e.currentTarget;
     el.setPointerCapture(e.pointerId);
+    el.dataset.dragging = "true";
     const right = body.current.getBoundingClientRect().right;
     const move = (ev) => onWidth(clamp(right - ev.clientX));
     const up = () => {
       el.removeEventListener("pointermove", move);
       el.removeEventListener("pointerup", up);
       el.removeEventListener("pointercancel", up);
+      delete el.dataset.dragging;
       document.documentElement.classList.remove("resizing");
     };
     el.addEventListener("pointermove", move);
