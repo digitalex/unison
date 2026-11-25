@@ -3917,6 +3917,28 @@ button.md-mention-chip.md-mention-me:hover {
   font-weight: var(--weight-ui-medium);
 }
 
+.mention-option-num {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--font-mono);
+  font-size: var(--size-xs);
+  font-weight: var(--weight-data-medium);
+  font-variant-numeric: tabular-nums;
+}
+
+.mention-option-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mention-option-title + .mention-option-hint {
+  flex-shrink: 0;
+  max-width: 120px;
+}
+
 .mention-option-hint {
   margin-left: auto;
   color: var(--text-muted);

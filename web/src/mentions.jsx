@@ -1,17 +1,55 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { itemNum } from "./backlogFormat.js";
 import { ImageTextarea } from "./images.jsx";
 
-const MentionContext = createContext({ participants: [], me: null, onMentionClick: null });
+const EMPTY_ITEMS = [];
+const EMPTY_ITEMS_MAP = new Map();
 
-export function MentionProvider({ participants, me, onMentionClick, children }) {
+function buildItemsByNumber(items) {
+  if (!items || items.length === 0) return EMPTY_ITEMS_MAP;
+  const map = new Map();
+  for (const it of items) {
+    if (!it) continue;
+    if (it.id > 0 && !map.has(it.id)) map.set(it.id, it);
+    const num = itemNum(it);
+    if (num > 0) map.set(num, it);
+  }
+  return map;
+}
+
+const MentionContext = createContext({
+  participants: [],
+  items: EMPTY_ITEMS,
+  itemsByNumber: EMPTY_ITEMS_MAP,
+  me: null,
+  onMentionClick: null,
+});
+
+export function MentionProvider({ participants, items, me, onMentionClick, children }) {
   const parent = useContext(MentionContext);
+  const resolvedItems = items ?? parent.items;
+  const itemsByNumber = useMemo(
+    () => (items === undefined ? parent.itemsByNumber : buildItemsByNumber(items)),
+    [items, parent.itemsByNumber],
+  );
   const value = useMemo(
     () => ({
       participants: participants ?? parent.participants,
+      items: resolvedItems,
+      itemsByNumber,
       me: me !== undefined ? me : parent.me,
       onMentionClick: onMentionClick !== undefined ? onMentionClick : parent.onMentionClick,
     }),
-    [participants, me, onMentionClick, parent.participants, parent.me, parent.onMentionClick],
+    [
+      participants,
+      resolvedItems,
+      itemsByNumber,
+      me,
+      onMentionClick,
+      parent.participants,
+      parent.me,
+      parent.onMentionClick,
+    ],
   );
   return <MentionContext.Provider value={value}>{children}</MentionContext.Provider>;
 }
@@ -21,7 +59,16 @@ export function useMentions() {
 }
 
 const WORD_CHAR = /[\p{L}\p{N}_]/u;
+const ALNUM_CHAR = /[\p{L}\p{N}]/u;
 const DISALLOWED_BEFORE_AT = /[\p{L}\p{N}_./:@-]/u;
+const DISALLOWED_BEFORE_HASH = /[\p{L}\p{N}_./:@&#-]/u;
+const MAX_ITEM_QUERY_LEN = 32;
+
+// refersToPR says whether the text before a "#N" makes it a pull request
+// ("PR #82", "pull request #82"), not a backlog item.
+export function refersToPR(before) {
+  return /\b(?:PRs?|pull(?: request)?s?)\s*$/i.test(before);
+}
 
 export function participantTooltip(p) {
   const parts = [p.name];
@@ -129,9 +176,60 @@ export function findMentionQuery(text, cursor) {
   return null;
 }
 
+function countSpaces(s) {
+  let n = 0;
+  for (let i = 0; i < s.length; i++) {
+    if (s[i] === " ") n++;
+  }
+  return n;
+}
+
+function isValidItemQuery(query) {
+  if (query.length > MAX_ITEM_QUERY_LEN) return false;
+  if (/[\r\n\t#@/`]/.test(query)) return false;
+  if (query === "") return true;
+  if (/^\s/.test(query) || /^\d+\s/.test(query)) return false;
+  if (!/\s/.test(query)) return true;
+  if (/^\d/.test(query) || query.endsWith("  ")) return false;
+  return countSpaces(query) <= 2;
+}
+
+// findItemQuery detects an active "#query" backlog item reference before cursor,
+// ignoring headings, PR references, URL fragments, entities, and code spans/blocks.
+export function findItemQuery(text, cursor) {
+  if (cursor == null || cursor < 0 || cursor > text.length) return null;
+  const minPos = Math.max(0, cursor - (MAX_ITEM_QUERY_LEN + 1));
+  for (let i = cursor - 1; i >= minPos; i--) {
+    const ch = text[i];
+    if (ch === "\n" || ch === "\r") return null;
+    if (ch === "#") {
+      if (i > 0 && DISALLOWED_BEFORE_HASH.test(text[i - 1])) return null;
+      const query = text.slice(i + 1, cursor);
+      if (!isValidItemQuery(query)) return null;
+      if (refersToPR(text.slice(Math.max(0, i - 16), i))) return null;
+      if (isInsideFencedCode(text, i) || isInsideInlineCode(text, i)) return null;
+      return { start: i, end: cursor, query };
+    }
+  }
+  return null;
+}
+
+export function findAutocompleteQuery(text, cursor) {
+  const mention = findMentionQuery(text, cursor);
+  const item = findItemQuery(text, cursor);
+  if (mention && item) {
+    return mention.start >= item.start
+      ? { kind: "mention", ...mention }
+      : { kind: "item", ...item };
+  }
+  if (mention) return { kind: "mention", ...mention };
+  if (item) return { kind: "item", ...item };
+  return null;
+}
+
 const BROADCASTS = [
-  { id: "broadcast-all", name: "all", emoji: "📢", hint: "Notify everyone", broadcast: true },
-  { id: "broadcast-everyone", name: "everyone", emoji: "📢", hint: "Notify everyone", broadcast: true },
+  { kind: "mention", id: "broadcast-all", name: "all", emoji: "📢", hint: "Notify everyone", broadcast: true },
+  { kind: "mention", id: "broadcast-everyone", name: "everyone", emoji: "📢", hint: "Notify everyone", broadcast: true },
 ];
 
 export function rankMentionSuggestions(query, participants = []) {
@@ -147,6 +245,7 @@ export function rankMentionSuggestions(query, participants = []) {
     else if (sponsor.includes(q)) tier = 2;
     if (tier !== -1) {
       scored.push({
+        kind: "mention",
         id: `p-${p.id}`,
         name: p.name,
         emoji: p.emoji || "",
@@ -168,43 +267,143 @@ export function rankMentionSuggestions(query, participants = []) {
   return scored.slice(0, 8);
 }
 
+function insertTopK(top, candidate, limit, compare) {
+  if (limit <= 0) return;
+  if (top.length === limit && compare(candidate, top[limit - 1]) >= 0) {
+    return;
+  }
+  let pos = top.length;
+  while (pos > 0 && compare(candidate, top[pos - 1]) < 0) {
+    pos--;
+  }
+  if (top.length < limit) {
+    top.splice(pos, 0, candidate);
+  } else {
+    for (let j = limit - 1; j > pos; j--) {
+      top[j] = top[j - 1];
+    }
+    top[pos] = candidate;
+  }
+}
+
+function hasWordPrefix(titleLower, prefix) {
+  let idx = titleLower.indexOf(prefix);
+  while (idx !== -1) {
+    if (idx === 0 || !ALNUM_CHAR.test(titleLower[idx - 1])) return true;
+    idx = titleLower.indexOf(prefix, idx + 1);
+  }
+  return false;
+}
+
+function matchItemTier(q, tokens, numStr, titleLower, status) {
+  if (!q) {
+    if (status === "in_progress") return 0;
+    return status !== "done" ? 1 : 2;
+  }
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+    if (!numStr.includes(tok) && !titleLower.includes(tok)) return -1;
+  }
+  if (numStr === q) return 0;
+  if (numStr.startsWith(q)) return 1;
+  if (titleLower.startsWith(q)) return 2;
+  if (hasWordPrefix(titleLower, tokens[0])) return 3;
+  return 4;
+}
+
+function makeItemCandidateComparator(emptyQuery) {
+  return (a, b) => {
+    if (a.tier !== b.tier) return a.tier - b.tier;
+    const aDone = a.it.status === "done" ? 1 : 0;
+    const bDone = b.it.status === "done" ? 1 : 0;
+    if (aDone !== bDone) return aDone - bDone;
+    if (aDone === 0) {
+      const posDiff = (a.it.position ?? 0) - (b.it.position ?? 0);
+      if (posDiff !== 0) return posDiff;
+      return emptyQuery
+        ? (a.it.id || 0) - (b.it.id || 0) || a.num - b.num
+        : a.num - b.num || (a.it.id || 0) - (b.it.id || 0);
+    }
+    const closedDiff = (b.it.closed_at || 0) - (a.it.closed_at || 0);
+    if (closedDiff !== 0) return closedDiff;
+    return b.num - a.num;
+  };
+}
+
+function toItemSuggestion({ it, num }) {
+  return {
+    kind: "item",
+    id: `item-${it.id}`,
+    number: num,
+    title: it.title || "",
+    status: it.status || "open",
+    sectionName: it.section_name || "",
+  };
+}
+
+export function rankItemSuggestions(query, items = EMPTY_ITEMS, limit = 8) {
+  if (!items || items.length === 0 || limit <= 0) return EMPTY_SUGGESTIONS;
+  const q = query.trim().toLowerCase();
+  const tokens = q ? q.split(/\s+/).filter(Boolean) : EMPTY_ITEMS;
+  const compare = makeItemCandidateComparator(q === "");
+  const top = [];
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    if (!it) continue;
+    const num = it.number > 0 ? it.number : it.id;
+    if (!num) continue;
+    const numStr = q ? String(num) : "";
+    const titleLower = q ? (it.title || "").toLowerCase() : "";
+    const tier = matchItemTier(q, tokens, numStr, titleLower, it.status);
+    if (tier === -1) continue;
+    insertTopK(top, { it, num, tier }, limit, compare);
+  }
+  return top.map(toItemSuggestion);
+}
+
 const EMPTY_SUGGESTIONS = [];
 
-export function useMentionAutocomplete({ value, onChange, textareaRef, participants }) {
+export function useMentionAutocomplete({ value, onChange, textareaRef, participants, items = EMPTY_ITEMS }) {
   const [cursor, setCursor] = useState(null);
   const [activeIndex, setActiveIndex] = useState(0);
-  const [dismissedAt, setDismissedAt] = useState(null);
+  const [dismissedKey, setDismissedKey] = useState(null);
 
-  const match = useMemo(() => findMentionQuery(value || "", cursor), [value, cursor]);
-  const suggestions = useMemo(
-    () => (match ? rankMentionSuggestions(match.query, participants) : EMPTY_SUGGESTIONS),
-    [match?.query, participants],
-  );
-  const open = Boolean(match && suggestions.length > 0 && dismissedAt !== match.start);
+  const match = useMemo(() => findAutocompleteQuery(value || "", cursor), [value, cursor]);
+  const suggestions = useMemo(() => {
+    if (!match) return EMPTY_SUGGESTIONS;
+    return match.kind === "item"
+      ? rankItemSuggestions(match.query, items)
+      : rankMentionSuggestions(match.query, participants);
+  }, [match?.kind, match?.query, participants, items]);
+  const matchKey = match ? `${match.kind}:${match.start}` : null;
+  const open = Boolean(match && suggestions.length > 0 && dismissedKey !== matchKey);
 
   useEffect(() => {
     setActiveIndex(0);
-  }, [match?.start, match?.query]);
+  }, [match?.kind, match?.start, match?.query]);
 
   useEffect(() => {
-    if (!match) setDismissedAt(null);
+    if (!match) setDismissedKey(null);
   }, [Boolean(match)]);
 
   const syncCursor = (el) => {
     if (!el) return;
-    if (typeof el.value === "string" && !el.value.includes("@")) return;
+    if (typeof el.value === "string" && !el.value.includes("@") && !el.value.includes("#")) return;
     setCursor(el.selectionStart ?? null);
   };
 
-  const accept = (item) => {
-    if (!match || !item) return;
+  const accept = (suggestion) => {
+    if (!match || !suggestion) return;
     const cur = value || "";
-    const inserted = `@${item.name} `;
+    const inserted =
+      suggestion.kind === "item" || match.kind === "item"
+        ? `#${suggestion.number} `
+        : `@${suggestion.name} `;
     const next = cur.slice(0, match.start) + inserted + cur.slice(match.end);
     const nextPos = match.start + inserted.length;
     onChange({ target: { value: next } });
     setCursor(nextPos);
-    setDismissedAt(null);
+    setDismissedKey(null);
     requestAnimationFrame(() => {
       const el = textareaRef.current;
       if (!el) return;
@@ -236,7 +435,7 @@ export function useMentionAutocomplete({ value, onChange, textareaRef, participa
       e.preventDefault();
       e.stopPropagation();
       e.nativeEvent?.stopImmediatePropagation?.();
-      setDismissedAt(match.start);
+      setDismissedKey(matchKey);
       return true;
     }
     return false;
@@ -244,6 +443,7 @@ export function useMentionAutocomplete({ value, onChange, textareaRef, participa
 
   return {
     open,
+    kind: match?.kind || "mention",
     suggestions,
     activeIndex: Math.min(activeIndex, Math.max(0, suggestions.length - 1)),
     syncCursor,
@@ -252,21 +452,60 @@ export function useMentionAutocomplete({ value, onChange, textareaRef, participa
   };
 }
 
+function ItemOptionContent({ item }) {
+  const hint = item.sectionName || (item.status === "done" ? "done" : "");
+  return (
+    <>
+      <span className={`status ${item.status}`} aria-hidden="true" />
+      <span className="mention-option-num">#{item.number}</span>
+      <span className="mention-option-title">{item.title}</span>
+      {hint && <span className="mention-option-hint">{hint}</span>}
+    </>
+  );
+}
+
+function MentionOptionContent({ item }) {
+  return (
+    <>
+      {item.emoji && (
+        <span className="mention-option-emoji" aria-hidden="true">
+          {item.emoji}
+        </span>
+      )}
+      <span className="mention-option-name">@{item.name}</span>
+      {item.hint && <span className="mention-option-hint">{item.hint}</span>}
+    </>
+  );
+}
+
 export function MentionTextarea({ value, onChange, onKeyDown, onClick, onKeyUp, onSelect, ref: externalRef, ...props }) {
-  const { participants } = useMentions();
+  const { participants, items } = useMentions();
   const internalRef = useRef(null);
+  const menuRef = useRef(null);
   const textareaRef = externalRef || internalRef;
-  const { open, suggestions, activeIndex, syncCursor, accept, handleKeyDown } = useMentionAutocomplete({
+  const { open, kind, suggestions, activeIndex, syncCursor, accept, handleKeyDown } = useMentionAutocomplete({
     value,
     onChange,
     textareaRef,
     participants,
+    items,
   });
+
+  useEffect(() => {
+    if (!open) return;
+    const activeEl = menuRef.current?.querySelector(".mention-option.active");
+    activeEl?.scrollIntoView?.({ block: "nearest" });
+  }, [open, activeIndex]);
 
   return (
     <div className="mention-field">
       {open && (
-        <div className="mention-menu" role="listbox" aria-label="Mention a participant">
+        <div
+          ref={menuRef}
+          className="mention-menu"
+          role="listbox"
+          aria-label={kind === "item" ? "Reference a backlog item" : "Mention a participant"}
+        >
           {suggestions.map((item, i) => (
             <button
               key={item.id}
@@ -279,13 +518,7 @@ export function MentionTextarea({ value, onChange, onKeyDown, onClick, onKeyUp, 
                 accept(item);
               }}
             >
-              {item.emoji && (
-                <span className="mention-option-emoji" aria-hidden="true">
-                  {item.emoji}
-                </span>
-              )}
-              <span className="mention-option-name">@{item.name}</span>
-              {item.hint && <span className="mention-option-hint">{item.hint}</span>}
+              {item.kind === "item" ? <ItemOptionContent item={item} /> : <MentionOptionContent item={item} />}
             </button>
           ))}
         </div>

@@ -620,7 +620,7 @@ export default function Workspace({ id, view, artifactFile = null, sectionSlug =
 
   return (
     <ImageUpload.Provider value={uploader}>
-    <MentionProvider participants={stableParticipants} me={me}>
+    <MentionProvider participants={stableParticipants} items={backlog} me={me}>
     <div className={joined ? "shell" : "shell shell-unjoined"}>
       <Sidebar
         workspace={workspace}
