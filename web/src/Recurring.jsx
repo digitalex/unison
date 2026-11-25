@@ -2,11 +2,12 @@ import { useEffect, useState } from "react";
 import { Play, Plus, Repeat, Trash2 } from "lucide-react";
 import { itemNum, submitOnModEnter } from "./backlogFormat.js";
 import { itemLink } from "./nav.js";
+import { MentionTextarea } from "./mentions.jsx";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
-import { Input, Select, Textarea } from "./ui/Input.jsx";
+import { Input, Select } from "./ui/Input.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
 
 // Recurring tasks (#113, #120): a top-level screen listing the schedules that
@@ -225,7 +226,7 @@ function ScheduleDialog({ schedule, run, add, saved, removed, onRan, onClose }) 
           <Input required data-autofocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="What needs doing each time?" />
         </Field>
         <Field label="Description">
-          <Textarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Instructions for whoever picks it up (Markdown)" />
+          <MentionTextarea rows={6} value={body} onChange={(e) => setBody(e.target.value)} placeholder="Instructions for whoever picks it up (Markdown)" />
         </Field>
         <div className="schedule-when">
           <Field label="Repeats">

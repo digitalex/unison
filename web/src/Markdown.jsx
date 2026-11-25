@@ -1,8 +1,10 @@
 import { Fragment, memo } from "react";
 import { sameParticipantDirectory } from "./backlogFormat.js";
 import { MdImage, imagePath } from "./images.jsx";
-import { matchMention, participantTooltip, useMentions } from "./mentions.jsx";
+import { matchMention, participantTooltip, refersToPR, useMentions } from "./mentions.jsx";
 import { itemLink, spaLink } from "./nav.js";
+
+export { refersToPR };
 
 // A small Markdown renderer for chat. It builds React elements only — no
 // HTML strings, no dangerouslySetInnerHTML — so raw HTML in a message stays
@@ -20,19 +22,26 @@ const MAX_DEPTH = 4;
 
 function markdownPropsEqual(prev, next) {
   if (prev.text !== next.text) return false;
-  if (!String(next.text ?? "").includes("@")) return true;
-  return (
-    prev.me?.id === next.me?.id &&
-    prev.onMentionClick === next.onMentionClick &&
-    sameParticipantDirectory(prev.participants, next.participants)
-  );
+  const s = String(next.text ?? "");
+  if (s.includes("#") && prev.itemsByNumber !== next.itemsByNumber) {
+    return false;
+  }
+  if (s.includes("@")) {
+    return (
+      prev.me?.id === next.me?.id &&
+      prev.onMentionClick === next.onMentionClick &&
+      sameParticipantDirectory(prev.participants, next.participants)
+    );
+  }
+  return true;
 }
 
-const MarkdownContent = memo(function MarkdownContent({ text, participants, me, onMentionClick }) {
+const MarkdownContent = memo(function MarkdownContent({ text, participants, itemsByNumber, me, onMentionClick }) {
   return (
     <div className="md">
       {renderBlocks(parseBlocks(String(text ?? "").replace(/\r\n?/g, "\n").split("\n"), 0), {
         participants,
+        itemsByNumber,
         me,
         onMentionClick,
       })}
@@ -46,6 +55,7 @@ export default function Markdown({ text }) {
     <MarkdownContent
       text={text}
       participants={mentions.participants}
+      itemsByNumber={mentions.itemsByNumber}
       me={mentions.me}
       onMentionClick={mentions.onMentionClick}
     />
@@ -244,12 +254,6 @@ function trimUrl(url) {
   const closes = (trimmed.match(/\)/g) || []).length;
   if (opens > closes && tail.startsWith(")")) return trimmed + ")";
   return trimmed;
-}
-
-// refersToPR says whether the text before a "#N" makes it a pull request
-// ("PR #82", "pull request #82"), not a backlog item.
-export function refersToPR(before) {
-  return /\b(?:PRs?|pull(?: request)?s?)\s*$/i.test(before);
 }
 
 const ARTIFACT_SPA_PATH = /^\/w\/([\w-]+)\/artifacts\/([^/\s<>"'`?#]+)$/;
@@ -463,8 +467,13 @@ function renderInline(s, depth = 0, mentions = {}) {
     if (c === "#" && depth < MAX_DEPTH && !isWord(s[i - 1]) && s[i - 1] !== "&" && s[i - 1] !== "/") {
       const m = s.slice(i + 1, i + 11).match(/^\d{1,9}(?![\p{L}\p{N}_])/u);
       if (m && !refersToPR(s.slice(Math.max(0, i - 16), i))) {
+        const num = Number(m[0]);
+        const it = mentions.itemsByNumber?.get(num);
+        const itemTitle = it
+          ? `#${m[0]}: ${it.title} (${(it.status || "open").replace(/_/g, " ")})`
+          : `Open backlog item #${m[0]}`;
         push(
-          <a key={i} className="md-item" title={`Open backlog item #${m[0]}`} {...itemLink(Number(m[0]))}>
+          <a key={i} className="md-item" title={itemTitle} {...itemLink(num)}>
             #{m[0]}
           </a>,
         );
