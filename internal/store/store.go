@@ -162,12 +162,32 @@ type MessageItem struct {
 const (
 	StatusOpen       = "open"
 	StatusInProgress = "in_progress"
+	StatusPaused     = "paused"
 	StatusDone       = "done"
 )
 
-// Item is a backlog item. Open and in-progress items are ordered by Position
-// (1 = highest priority); done items have Position 0. Number is sequential
-// per workspace starting at 1 (#920); ID is the internal database primary key.
+// ItemNeed summarizes a prerequisite backlog item (#921).
+type ItemNeed struct {
+	ID       int64  `json:"id"`
+	Number   int64  `json:"number,omitempty"`
+	Title    string `json:"title"`
+	Status   string `json:"status"`
+	ClosedAt *int64 `json:"closed_at,omitempty"`
+}
+
+// DisplayNumber returns the prerequisite item's per-workspace number, falling
+// back to ID.
+func (n ItemNeed) DisplayNumber() int64 {
+	if n.Number > 0 {
+		return n.Number
+	}
+	return n.ID
+}
+
+// Item is a backlog item. Open, paused and in-progress items are ordered by
+// Position (1 = highest priority); done items have Position 0. Number is
+// sequential per workspace starting at 1 (#920); ID is the internal database
+// primary key.
 type Item struct {
 	ID             int64  `json:"id"`
 	Number         int64  `json:"number"`
@@ -183,6 +203,10 @@ type Item struct {
 	UpdatedAt      int64  `json:"updated_at"`
 	ClosedAt       *int64 `json:"closed_at,omitempty"`
 	CloseNote      string `json:"close_note,omitempty"`
+	// ReadyAt is when the item became unblocked (#921): CreatedAt when it has
+	// no prerequisites, max(CreatedAt, max(prereq.ClosedAt)) once all
+	// prerequisites are done, or nil when any prerequisite is not done.
+	ReadyAt *int64 `json:"ready_at"`
 	// ScheduleID is the schedule this item is a run of (#112), if any.
 	ScheduleID *int64 `json:"schedule_id,omitempty"`
 	// SectionID places the item in a custom section (#919); nil means the main Backlog.
@@ -197,6 +221,9 @@ type Item struct {
 	AnsweredChoice string   `json:"answered_choice,omitempty"`
 	AnsweredByID   *int64   `json:"answered_by_id,omitempty"`
 	AnsweredAt     *int64   `json:"answered_at,omitempty"`
+	// Needs are the prerequisite items that must finish before this item is
+	// ready (#921).
+	Needs []ItemNeed `json:"needs"`
 	// PRs are the pull requests linked to the item (several are allowed);
 	// CommentCount is how many comments it has, MessageCount how many chat
 	// messages are about it.
@@ -214,6 +241,28 @@ func (it *Item) DisplayNumber() int64 {
 		return it.Number
 	}
 	return it.ID
+}
+
+// Blockers returns the prerequisites of it whose status is not done.
+func (it *Item) Blockers() []ItemNeed {
+	if it == nil || len(it.Needs) == 0 {
+		return nil
+	}
+	var out []ItemNeed
+	for _, n := range it.Needs {
+		if n.Status != StatusDone {
+			out = append(out, n)
+		}
+	}
+	return out
+}
+
+// IsBlocked reports whether any prerequisite of it is not done.
+func (it *Item) IsBlocked() bool {
+	if it == nil {
+		return false
+	}
+	return slices.ContainsFunc(it.Needs, func(n ItemNeed) bool { return n.Status != StatusDone })
 }
 
 // Event records a change in a workspace. Seq is globally increasing.
@@ -449,8 +498,8 @@ func (s *Store) listWorkspaces(ctx context.Context, userID int64, q string, args
 var CollaborationTypes = []string{
 	"message.created",
 	"backlog.added", "backlog.updated", "backlog.moved", "backlog.deleted",
-	"backlog.assigned", "backlog.unassigned", "backlog.started", "backlog.stopped", "backlog.released",
-	"backlog.closed", "backlog.reopened", "backlog.answered",
+	"backlog.assigned", "backlog.unassigned", "backlog.started", "backlog.stopped", "backlog.paused", "backlog.resumed", "backlog.released",
+	"backlog.closed", "backlog.reopened", "backlog.answered", "backlog.needs_updated",
 	"comment.added",
 	"pr.linked", "pr.unlinked",
 	"schedule.added", "schedule.updated", "schedule.removed",
@@ -621,6 +670,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM ideas WHERE workspace_id = ?`,
 		`DELETE FROM item_comments WHERE workspace_id = ?`,
 		`DELETE FROM item_prs WHERE workspace_id = ?`,
+		`DELETE FROM item_needs WHERE workspace_id = ?`,
 		`DELETE FROM reactions WHERE workspace_id = ?`,
 		`DELETE FROM message_actions WHERE workspace_id = ?`,
 		`UPDATE messages SET parent_id = NULL WHERE workspace_id = ?`,
@@ -1143,9 +1193,10 @@ func (s *Store) EventsAfter(ctx context.Context, wsID string, after int64, limit
 }
 
 // ActivityTypes are the events chat shows as one-line activity updates
-// (#93, #97, #146, #312): backlog items added, assigned, started (not renewed),
-// closed and reopened, item comments, and people joining and leaving.
-var ActivityTypes = []string{"backlog.added", "backlog.assigned", "backlog.started", "backlog.closed", "backlog.reopened", "comment.added", "participant.joined", "member.removed"}
+// (#93, #97, #146, #312, #921): backlog items added, assigned, started (not
+// renewed), paused, resumed, closed and reopened, item comments, and people
+// joining and leaving.
+var ActivityTypes = []string{"backlog.added", "backlog.assigned", "backlog.started", "backlog.paused", "backlog.resumed", "backlog.closed", "backlog.reopened", "comment.added", "participant.joined", "member.removed"}
 
 // RecentActivity returns the workspace's latest activity events (see
 // ActivityTypes), oldest first: at most limit of them (default 200, clamped

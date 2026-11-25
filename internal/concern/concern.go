@@ -57,13 +57,13 @@ func (f *Filter) Concerns(e store.Event) bool {
 			return false
 		}
 		switch e.Type {
-		case "backlog.added":
+		case "backlog.added", "backlog.resumed":
 			if it.AssigneeID != nil {
 				return *it.AssigneeID == f.Me.ID
 			}
 			// An unassigned main-Backlog item is work to pick up (#90); custom
-			// section items are parked until assigned (#919).
-			return it.SectionID == nil
+			// section items (#919) and blocked items (#921) are parked.
+			return it.SectionID == nil && !it.IsBlocked()
 		case "backlog.assigned", "backlog.started":
 			return it.AssigneeID != nil && *it.AssigneeID == f.Me.ID
 		case "backlog.updated", "backlog.reopened":

@@ -1,7 +1,7 @@
 import { Fragment, memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
-import { itemNum, meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
+import { STATUS_LABELS, blockerLabel, blockerTitle, blockersOf, itemNum, meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
 import {
   BacklogToolbar,
   CollapsibleGroupHead,
@@ -24,7 +24,7 @@ const EMPTY_REPOS = [];
 
 // The prioritized backlog, grouped into In progress, Open, and Done: as a
 // list, or as a board (Kanban.jsx), as the header's switch picks.
-// Queued items (open + in_progress) share one priority order (the position
+// Queued items (open + paused + in_progress) share one priority order (the position
 // numbers); done items follow. Rows are compact: clicking one opens the item
 // dialog (also deep-linkable as ?item=12), and dragging reorders. It fills
 // the workspace's main pane: head is the header's shared controls (who's
@@ -63,11 +63,18 @@ export default function Backlog({ section = null, sections = [], items, allItems
   const canReorder = sort === "priority" && effectiveGroupBy === "status";
   const lookupItems = allItems || items;
   const { queued, groups, extraStatuses, done } = useMemo(() => buildBacklogStatusView(items, sort), [items, sort]);
+  const kanbanGroups = useMemo(
+    () => ({
+      in_progress: groups.in_progress,
+      open: queued.filter((it) => it.status !== "in_progress"),
+    }),
+    [groups.in_progress, queued],
+  );
   const sectionView = useMemo(
     () => (effectiveGroupBy === "section" ? buildBacklogSectionView(lookupItems, sections, sort) : null),
     [effectiveGroupBy, lookupItems, sections, sort],
   );
-  const reorder = useReorder(groups, moveTo, canReorder);
+  const reorder = useReorder(view === "kanban" ? kanbanGroups : groups, moveTo, canReorder);
   const openedItem = useOpenItem(openId, lookupItems, closeItem, setNotice);
   useDismiss(notice, setNotice);
   useRevealCreated(created, effectiveGroupBy === "section" ? lookupItems : items, setCreated);
@@ -79,6 +86,7 @@ export default function Backlog({ section = null, sections = [], items, allItems
       <BacklogRow
         key={it.id}
         item={it}
+        groupKey={groupKey}
         list={list}
         highlight={created === it.id}
         participants={stableParticipants}
@@ -184,7 +192,8 @@ export default function Backlog({ section = null, sections = [], items, allItems
 
         {view === "kanban" ? (
           <Kanban
-            {...{ groups, done, me, repos, run, reorder, canReorder, hintId, created }}
+            groups={kanbanGroups}
+            {...{ done, me, repos, run, reorder, canReorder, hintId, created }}
             sectionLabel={screenLabel}
             participants={stableParticipants}
             pending={statusPendingRows}
@@ -413,6 +422,7 @@ function PendingRow({ title, assigneeId, participants }) {
 
 const BacklogRow = memo(function BacklogRow({
   item,
+  groupKey,
   list,
   highlight,
   participants,
@@ -429,7 +439,9 @@ const BacklogRow = memo(function BacklogRow({
 }) {
   const num = itemNum(item);
   const queued = item.status !== "done";
-  const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
+  const blockers = blockersOf(item);
+  const canStart = item.status === "open" && blockers.length === 0 && me && (!item.assignee_id || item.assignee_id === me.id);
+  const canResume = item.status === "paused" && Boolean(me);
   const classes = ["item", item.status];
   if (dragClass) classes.push(dragClass);
   if (highlight) classes.push("item-created");
@@ -439,7 +451,7 @@ const BacklogRow = memo(function BacklogRow({
     onOpen(num);
   };
   return (
-    <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status}>
+    <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status} data-group={groupKey || item.status}>
       <div className="row" onClick={open} onPointerDown={canReorder ? (e) => onReorderPointerDown(e, item, false) : undefined}>
         <span className="rank">
           {canReorder && queued && (
@@ -462,7 +474,7 @@ const BacklogRow = memo(function BacklogRow({
           )}
           <span className="rank-number">{queued ? item.position : ""}</span>
         </span>
-        <span className={`status ${item.status}`} title={item.status} />
+        <span className={`status ${item.status}`} title={STATUS_LABELS[item.status] || item.status} />
         <span className="item-id">#{num}</span>
         <RecurringMarker item={item} />
         <button type="button" className="row-title" aria-haspopup="dialog">
@@ -471,6 +483,12 @@ const BacklogRow = memo(function BacklogRow({
         </button>
         {queued ? (
           <>
+            {item.status === "paused" && <span className="chip status-chip-paused">Paused</span>}
+            {blockers.length > 0 && (
+              <span className="chip blocker-chip" title={blockerTitle(blockers)}>
+                {blockerLabel(blockers)}
+              </span>
+            )}
             {item.choices?.length > 0 && (
               <span className={item.answered_choice ? "chip choice-chip choice-chip-answered" : "chip choice-chip"}>
                 {item.answered_choice ? `✓ ${item.answered_choice}` : `${item.choices.length} choices`}
@@ -500,11 +518,17 @@ const BacklogRow = memo(function BacklogRow({
           </>
         )}
         <span className="meta">{meta(item)}</span>
-        {canStart && (
+        {(canStart || canResume) && (
           <span className="row-actions" onClick={(e) => e.stopPropagation()}>
-            <Button title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
-              Start
-            </Button>
+            {canStart ? (
+              <Button title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
+                Start
+              </Button>
+            ) : (
+              <Button title="Resume this item back to open" onClick={() => run("POST", `/backlog/${num}/resume`)}>
+                Resume
+              </Button>
+            )}
           </span>
         )}
       </div>
@@ -633,8 +657,8 @@ const TOUCH_SLOP = 10; // px a touch may wander during the long press
 const EDGE = 48; // px from the scroller's edge where dragging scrolls
 
 // hitTest finds the row of a group under y, and which half of it.
-function hitTest(y, status) {
-  for (const el of document.querySelectorAll(`.item[data-status="${status}"]`)) {
+function hitTest(y, group) {
+  for (const el of document.querySelectorAll(`.item[data-group="${group}"]`)) {
     const r = el.getBoundingClientRect();
     if (y >= r.top && y < r.bottom) return { id: Number(el.dataset.id), where: y < r.top + r.height / 2 ? "before" : "after" };
   }
@@ -675,7 +699,7 @@ function swallowNextClick() {
 function useReorder(groups, moveTo, canReorder = true) {
   const [drag, setDrag] = useState(null); // The item being dragged.
   const [drop, setDrop] = useState(null); // { id, where: "before" | "after" }
-  const [lifted, setLifted] = useState(null); // Keyboard: { id, status, from, index }
+  const [lifted, setLifted] = useState(null); // Keyboard: { id, group, from, index }
   const [announcement, setAnnouncement] = useState("");
   const live = useRef({});
   live.current = { canReorder, drag, drop, groups, lifted, moveTo };
@@ -692,6 +716,7 @@ function useReorder(groups, moveTo, canReorder = true) {
 
   const pointerDown = useCallback((e, item, fromGrip) => {
     if (!live.current.canReorder || item.status === "done" || live.current.drag) return;
+    const group = e.currentTarget.closest(".item")?.dataset.group || item.status;
     const touch = e.pointerType === "touch";
     if (touch ? !fromGrip : e.button !== 0) return;
     if (!fromGrip && e.target.closest("a, select, input, textarea, button:not(.row-title)")) return;
@@ -705,7 +730,7 @@ function useReorder(groups, moveTo, canReorder = true) {
     };
     const commitDrop = () => {
       const target = live.current.drop;
-      const over = target && live.current.groups[item.status]?.find((it) => it.id === target.id);
+      const over = target && live.current.groups[group]?.find((it) => it.id === target.id);
       end();
       if (over) live.current.moveTo(item, dropPosition(item.position, over.position, target.where));
     };
@@ -734,7 +759,7 @@ function useReorder(groups, moveTo, canReorder = true) {
         begin();
       }
       ev.preventDefault();
-      const hit = hitTest(ev.clientY, item.status);
+      const hit = hitTest(ev.clientY, group);
       if (hit && hit.id !== item.id) setDrop((d) => (d?.id === hit.id && d.where === hit.where ? d : hit));
       else if (hit) setDrop(null);
       autoScroll(scroller, ev.clientY);
@@ -770,6 +795,7 @@ function useReorder(groups, moveTo, canReorder = true) {
 
   const keyDown = useCallback((e, item, list) => {
     if (!live.current.canReorder) return;
+    const group = e.currentTarget.closest(".item")?.dataset.group || item.status;
     const describe = (it, index, total) => `#${itemNum(it)} ${it.title}, position ${index + 1} of ${total}`;
     const curLifted = live.current.lifted;
     const idx = list.findIndex((it) => it.id === item.id);
@@ -777,7 +803,7 @@ function useReorder(groups, moveTo, canReorder = true) {
     if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (!isLifted) {
-        setLifted({ id: item.id, status: item.status, from: idx, index: idx });
+        setLifted({ id: item.id, group, from: idx, index: idx });
         setAnnouncement(`Picked up ${describe(item, idx, list.length)}. Arrow keys move it, Space drops it, Escape cancels.`);
         return;
       }
@@ -823,8 +849,8 @@ function useReorder(groups, moveTo, canReorder = true) {
   }, [lifted]);
 
   // arrange previews a keyboard move: the lifted item shown at its new index.
-  const arrange = (status, list) => {
-    if (!canReorder || !lifted || lifted.status !== status || lifted.index === lifted.from) return list;
+  const arrange = (group, list) => {
+    if (!canReorder || !lifted || lifted.group !== group || lifted.index === lifted.from) return list;
     const out = list.filter((it) => it.id !== lifted.id);
     out.splice(lifted.index, 0, list[lifted.from]);
     return out;

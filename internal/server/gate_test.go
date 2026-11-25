@@ -15,7 +15,7 @@ import (
 // with values, returning the method and path.
 func concrete(pattern, wsID string) (string, string) {
 	method, path, _ := strings.Cut(pattern, " ")
-	path = strings.NewReplacer("{ws}", wsID, "{id}", "1", "{cid}", "1", "{user}", "1", "{file}", "doc.md").Replace(path)
+	path = strings.NewReplacer("{ws}", wsID, "{id}", "1", "{cid}", "1", "{need}", "1", "{user}", "1", "{file}", "doc.md").Replace(path)
 	return method, path
 }
 

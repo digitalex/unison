@@ -60,11 +60,36 @@ export function ago(ms) {
 
 export function meta(item) {
   if (item.status === "in_progress" && item.lease_expires_at) return `lease ${hoursLeft(item.lease_expires_at)}h left`;
-  if (item.status === "open") return `added ${ago(item.created_at)}`;
+  if (item.status === "open" || item.status === "paused") return `added ${ago(item.created_at)}`;
   return item.close_note || "done";
 }
 
-export const STATUS_LABELS = { open: "Open", in_progress: "In progress", done: "Done" };
+export const STATUS_LABELS = { open: "Open", in_progress: "In progress", paused: "Paused", done: "Done" };
+
+export function groupOf(item) {
+  if (item.status === "in_progress") return "in_progress";
+  if (item.status === "done") return "done";
+  return "open";
+}
+
+export function blockersOf(item) {
+  if (!item || item.status === "done" || !item.needs?.length) return [];
+  return item.needs.filter((n) => n.status !== "done");
+}
+
+export function blockerLabel(blockers) {
+  if (!blockers?.length) return "";
+  const head = blockers
+    .slice(0, 2)
+    .map((n) => `#${itemNum(n)}`)
+    .join(", ");
+  return blockers.length > 2 ? `Needs ${head} +${blockers.length - 2}` : `Needs ${head}`;
+}
+
+export function blockerTitle(blockers) {
+  if (!blockers?.length) return "";
+  return `Blocked by ${blockers.map((n) => `#${itemNum(n)} ${n.title}`).join(", ")}`;
+}
 
 const GITHUB_PR = /^https?:\/\/github\.com\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 const GITHUB_REPO = /github\.com\/([^/]+)\/([^/#?]+?)(?:\.git)?\/?$/i;

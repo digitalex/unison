@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { clearDraft, getDraft, resolveImageUploadInDraft, setDraft } from "./chatDrafts.js";
-import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
+import { Check, CircleAlert, CircleCheck, Ellipsis, ListChecks, ListPlus, MessageSquare, Pause, Play, Repeat, Reply, RotateCcw, Undo2, UserCheck, UserMinus, UserPlus, X } from "lucide-react";
 import { itemNum } from "./backlogFormat.js";
 import { itemLink } from "./nav.js";
 import Button from "./ui/Button.jsx";
@@ -277,6 +277,8 @@ const ACTIVITY_ICONS = {
   "backlog.added": ListPlus,
   "backlog.assigned": UserCheck,
   "backlog.started": Play,
+  "backlog.paused": Pause,
+  "backlog.resumed": Play,
   "backlog.closed": CircleCheck,
   "backlog.reopened": RotateCcw,
   "comment.added": MessageSquare,
@@ -307,6 +309,10 @@ function activityText(event, participants) {
     }
     case "backlog.started":
       return [name(actor), "started working on", d];
+    case "backlog.paused":
+      return [name(actor), "paused", d];
+    case "backlog.resumed":
+      return [name(actor), "resumed", d];
     case "backlog.closed":
       return [name(actor), "closed", d];
     case "backlog.reopened":
