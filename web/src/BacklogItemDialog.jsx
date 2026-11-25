@@ -1,9 +1,10 @@
-import { memo, useCallback, useEffect, useRef, useState } from "react";
-import { GitPullRequest, MessagesSquare, Pencil, Trash2, X } from "lucide-react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
-import { messageLink } from "./nav.js";
+import { messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
+import { NewTodoDialog, withTodo } from "./Todos.jsx";
 import Button from "./ui/Button.jsx";
 import Dialog from "./ui/Dialog.jsx";
 import Field from "./ui/Field.jsx";
@@ -57,7 +58,7 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
 
 // ItemDialog shows one item with everything you can do to it. It renders
 // whatever the live list holds, so other people's changes show up here.
-export function ItemDialog({ item, participants, me, call, run, onClose }) {
+export function ItemDialog({ item, items = [], todos = [], setTodos, onReloadMe, participants, me, call, run, onClose }) {
   const path = `/backlog/${item.id}`;
   const [editing, setEditing] = useState(false);
   const stableParticipants = useStableParticipants(participants);
@@ -89,6 +90,17 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
       <ItemFacts item={item} participants={stableParticipants} />
       <ItemActions item={item} path={path} participants={stableParticipants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
+      <ItemTodos
+        item={item}
+        items={items}
+        todos={todos}
+        setTodos={setTodos}
+        onReloadMe={onReloadMe}
+        participants={stableParticipants}
+        me={me}
+        run={run}
+        onNavigate={onClose}
+      />
       {item.message_count > 0 && <ChatLinks item={item} path={path} participants={stableParticipants} call={call} />}
       <Comments key={path} item={item} path={path} participants={stableParticipants} me={me} call={call} run={run} />
     </Dialog>
@@ -247,6 +259,58 @@ function PRList({ item, path, run }) {
         />
         <Button type="submit">Link PR</Button>
       </form>
+    </section>
+  );
+}
+
+function ItemTodos({ item, items, todos, setTodos, onReloadMe, participants, me, run, onNavigate }) {
+  const [adding, setAdding] = useState(false);
+  const humans = useMemo(() => participants.filter((p) => !p.sponsor && !p.revoked_at), [participants]);
+  const linkedTodos = useMemo(() => todos.filter((t) => t.item_id === item.id), [todos, item.id]);
+
+  if (linkedTodos.length === 0 && humans.length === 0) return null;
+
+  const create = async (payload) => {
+    const td = await run("POST", "/todos", payload);
+    if (!td) return false;
+    setTodos?.((list) => withTodo(list, td));
+    onReloadMe?.();
+    return true;
+  };
+
+  return (
+    <section className="detail-section">
+      <div className="detail-section-head">
+        <h3>
+          TODOs {linkedTodos.length > 0 && <span className="muted">({linkedTodos.length})</span>}
+        </h3>
+        {humans.length > 0 && (
+          <Button type="button" size="small" variant="ghost" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            Add TODO
+          </Button>
+        )}
+      </div>
+      {linkedTodos.map((td) => (
+        <div key={td.id} className="pr-line">
+          <CheckSquare aria-hidden="true" className="muted" />
+          <a {...spaLink(`/w/${item.workspace_id}/todos`, onNavigate)}>
+            #{td.id} {td.title}
+          </a>
+          <span className="chip">{td.assignee_emoji ? `${td.assignee_emoji} ${td.assignee_name}` : name(participants, td.assignee_id)}</span>
+          {td.status === "done" && <span className="muted">done{td.done_note ? `: ${td.done_note}` : ""}</span>}
+        </div>
+      ))}
+      {adding && (
+        <NewTodoDialog
+          initial={{ item_id: item.id, pr_url: item.prs?.[0]?.url || "" }}
+          humans={humans}
+          items={items.length ? items : [item]}
+          me={me}
+          onClose={() => setAdding(false)}
+          onCreate={create}
+        />
+      )}
     </section>
   );
 }

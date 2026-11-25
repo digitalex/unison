@@ -28,7 +28,7 @@ export default function App() {
     window.history.pushState(null, "", to);
     setPath(window.location.pathname);
   };
-  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat))?/);
+  const match = path.match(/^\/w\/([^/]+)(?:\/(settings|join|recurring|chat|todos))?/);
   if (match && match[2] === "join") return <JoinPage id={match[1]} account={account} navigate={navigate} />;
   // Keyed by id: switching workspaces remounts the page, so its data, live
   // stream and dialogs start fresh for the new one.

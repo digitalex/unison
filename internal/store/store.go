@@ -426,6 +426,7 @@ var CollaborationTypes = []string{
 	"comment.added",
 	"pr.linked", "pr.unlinked",
 	"schedule.added", "schedule.updated", "schedule.removed",
+	"todo.created", "todo.done", "todo.reopened",
 	"participant.joined", "participant.revoked", "member.removed",
 }
 
@@ -592,6 +593,7 @@ func deleteWorkspace(t *tx, id string) error {
 		`DELETE FROM message_actions WHERE workspace_id = ?`,
 		`UPDATE messages SET parent_id = NULL WHERE workspace_id = ?`,
 		`DELETE FROM messages WHERE workspace_id = ?`,
+		`DELETE FROM todos WHERE workspace_id = ?`,
 		`DELETE FROM items WHERE workspace_id = ?`,
 		`DELETE FROM agent_passes WHERE workspace_id = ?`,
 		`DELETE FROM workspace_invites WHERE workspace_id = ?`,

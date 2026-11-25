@@ -2,10 +2,17 @@ import { Checkbox as GraphicalCheckbox } from "components/graphical";
 
 // Unison checkbox (gui/components/graphicaluikomore/checkbox.md): a themed
 // box with its label beside it. `onChange` gets the new checked state.
-export default function Checkbox({ checked, onChange, disabled, children }) {
+export default function Checkbox({ checked, onChange, disabled, children, ...props }) {
+  if (!children) {
+    return (
+      <GraphicalCheckbox.Root checked={checked} onCheckedChange={(next) => onChange(next)} disabled={disabled} {...props}>
+        <GraphicalCheckbox.Indicator />
+      </GraphicalCheckbox.Root>
+    );
+  }
   return (
     <GraphicalCheckbox.Row>
-      <GraphicalCheckbox.Root checked={checked} onCheckedChange={(next) => onChange(next)} disabled={disabled}>
+      <GraphicalCheckbox.Root checked={checked} onCheckedChange={(next) => onChange(next)} disabled={disabled} {...props}>
         <GraphicalCheckbox.Indicator />
       </GraphicalCheckbox.Root>
       <GraphicalCheckbox.Label>{children}</GraphicalCheckbox.Label>
