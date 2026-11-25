@@ -31,11 +31,22 @@ export function participantTooltip(p) {
   return parts.join(" · ");
 }
 
+const sortedParticipantsCache = new WeakMap();
+
+function sortedParticipants(participants) {
+  let sorted = sortedParticipantsCache.get(participants);
+  if (!sorted) {
+    sorted = [...participants].sort((a, b) => (b.name?.length || 0) - (a.name?.length || 0));
+    sortedParticipantsCache.set(participants, sorted);
+  }
+  return sorted;
+}
+
 // matchMention checks whether s[index] starts a workspace @mention or @all/@everyone broadcast.
 export function matchMention(s, index, participants = []) {
   if (s[index] !== "@" || (index > 0 && WORD_CHAR.test(s[index - 1]))) return null;
   const tail = s.slice(index + 1);
-  const sorted = [...participants].sort((a, b) => b.name.length - a.name.length);
+  const sorted = sortedParticipants(participants);
   for (const p of sorted) {
     if (!p.name) continue;
     if (tail.slice(0, p.name.length).toLowerCase() === p.name.toLowerCase()) {
@@ -157,6 +168,8 @@ export function rankMentionSuggestions(query, participants = []) {
   return scored.slice(0, 8);
 }
 
+const EMPTY_SUGGESTIONS = [];
+
 export function useMentionAutocomplete({ value, onChange, textareaRef, participants }) {
   const [cursor, setCursor] = useState(null);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -164,7 +177,7 @@ export function useMentionAutocomplete({ value, onChange, textareaRef, participa
 
   const match = useMemo(() => findMentionQuery(value || "", cursor), [value, cursor]);
   const suggestions = useMemo(
-    () => (match ? rankMentionSuggestions(match.query, participants) : []),
+    () => (match ? rankMentionSuggestions(match.query, participants) : EMPTY_SUGGESTIONS),
     [match?.query, participants],
   );
   const open = Boolean(match && suggestions.length > 0 && dismissedAt !== match.start);
@@ -179,6 +192,7 @@ export function useMentionAutocomplete({ value, onChange, textareaRef, participa
 
   const syncCursor = (el) => {
     if (!el) return;
+    if (typeof el.value === "string" && !el.value.includes("@")) return;
     setCursor(el.selectionStart ?? null);
   };
 

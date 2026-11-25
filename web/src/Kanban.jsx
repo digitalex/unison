@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { GitPullRequest, GripVertical, MessageSquare, MessagesSquare, Plus } from "lucide-react";
 import { meta, name, prLabel } from "./backlogFormat.js";
 import { RecurringMarker } from "./Recurring.jsx";
@@ -21,8 +21,16 @@ export default function Kanban({ groups, done, pending, participants, me, repos,
         item={it}
         list={list}
         highlight={created === it.id}
-        {...{ participants, me, repos, run, reorder, hintId }}
-        onOpen={() => onOpen(it.id)}
+        participants={participants}
+        me={me}
+        repos={repos}
+        run={run}
+        dragClass={reorder.classesFor(it).join(" ")}
+        lifted={reorder.isLifted(it)}
+        onReorderPointerDown={reorder.pointerDown}
+        onReorderKeyDown={reorder.keyDown}
+        hintId={hintId}
+        onOpen={onOpen}
       />
     ));
   return (
@@ -142,15 +150,30 @@ function PendingCard({ title, assigneeId, participants }) {
   );
 }
 
-function KanbanCard({ item, list, highlight, participants, me, repos, run, reorder, hintId, onOpen }) {
+const KanbanCard = memo(function KanbanCard({
+  item,
+  list,
+  highlight,
+  participants,
+  me,
+  repos,
+  run,
+  dragClass,
+  lifted,
+  onReorderPointerDown,
+  onReorderKeyDown,
+  hintId,
+  onOpen,
+}) {
   const queued = item.status !== "done";
   const canClaim = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
-  const classes = ["item", "kcard", item.status, ...reorder.classesFor(item)];
+  const classes = ["item", "kcard", item.status];
+  if (dragClass) classes.push(dragClass);
   if (highlight) classes.push("item-created");
   const open = (e) => {
     // Focus the title so closing the dialog returns focus to this card.
     e.currentTarget.querySelector(".kcard-title").focus();
-    onOpen();
+    onOpen(item.id);
   };
   return (
     <article
@@ -159,7 +182,7 @@ function KanbanCard({ item, list, highlight, participants, me, repos, run, reord
       data-id={item.id}
       data-status={item.status}
       onClick={open}
-      onPointerDown={(e) => reorder.pointerDown(e, item, false)}
+      onPointerDown={(e) => onReorderPointerDown(e, item, false)}
     >
       <div className="kcard-top">
         {queued && (
@@ -169,13 +192,13 @@ function KanbanCard({ item, list, highlight, participants, me, repos, run, reord
             data-grip={item.id}
             aria-label={`Reorder #${item.id} ${item.title}`}
             aria-describedby={hintId}
-            aria-pressed={reorder.isLifted(item)}
+            aria-pressed={lifted}
             onPointerDown={(e) => {
               e.stopPropagation();
-              reorder.pointerDown(e, item, true);
+              onReorderPointerDown(e, item, true);
             }}
             onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => reorder.keyDown(e, item, list)}
+            onKeyDown={(e) => onReorderKeyDown(e, item, list)}
           >
             <GripVertical aria-hidden="true" />
           </button>
@@ -224,4 +247,4 @@ function KanbanCard({ item, list, highlight, participants, me, repos, run, reord
       </div>
     </article>
   );
-}
+});

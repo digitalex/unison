@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useRef, useState } from "react";
 import { GitPullRequest, MessagesSquare, Pencil, Trash2, X } from "lucide-react";
-import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter } from "./backlogFormat.js";
-import Markdown from "./Markdown.jsx";
+import { STATUS_LABELS, ago, hoursLeft, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
+import { MemoMarkdown } from "./Markdown.jsx";
 import { messageLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
@@ -60,6 +60,7 @@ export function NewItemDialog({ initial, participants = [], onClose, onCreate })
 export function ItemDialog({ item, participants, me, call, run, onClose }) {
   const path = `/backlog/${item.id}`;
   const [editing, setEditing] = useState(false);
+  const stableParticipants = useStableParticipants(participants);
   return (
     <Dialog
       title={
@@ -83,13 +84,13 @@ export function ItemDialog({ item, participants, me, call, run, onClose }) {
       {editing ? (
         <EditForm item={item} path={path} run={run} onDone={() => setEditing(false)} />
       ) : (
-        <div className="item-description">{item.body ? <Markdown text={item.body} /> : <p className="muted">No description.</p>}</div>
+        <div className="item-description">{item.body ? <MemoMarkdown text={item.body} /> : <p className="muted">No description.</p>}</div>
       )}
-      <ItemFacts item={item} participants={participants} />
-      <ItemActions item={item} path={path} participants={participants} me={me} run={run} onDeleted={onClose} />
+      <ItemFacts item={item} participants={stableParticipants} />
+      <ItemActions item={item} path={path} participants={stableParticipants} me={me} run={run} onDeleted={onClose} />
       <PRList item={item} path={path} run={run} />
-      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={participants} call={call} />}
-      <Comments key={path} item={item} path={path} participants={participants} me={me} call={call} run={run} />
+      {item.message_count > 0 && <ChatLinks item={item} path={path} participants={stableParticipants} call={call} />}
+      <Comments key={path} item={item} path={path} participants={stableParticipants} me={me} call={call} run={run} />
     </Dialog>
   );
 }
@@ -302,13 +303,66 @@ function mergeAddedComments(fetched, addedMap) {
   return out;
 }
 
+const CommentRow = memo(function CommentRow({ comment: c, authorName, canDelete, onDelete }) {
+  return (
+    <div className={c.pending ? "comment comment-pending" : "comment"} aria-busy={c.pending || undefined}>
+      <div className="comment-head">
+        <span className="who">{authorName}</span>
+        <span className="time" title={c.pending ? undefined : new Date(c.created_at).toLocaleString()}>
+          {c.pending ? "sending…" : ago(c.created_at)}
+        </span>
+        {canDelete && (
+          <Button
+            iconOnly
+            variant="ghost"
+            className="comment-delete"
+            aria-label="Delete comment"
+            title="Delete comment"
+            onClick={() => onDelete(c)}
+          >
+            <X aria-hidden="true" />
+          </Button>
+        )}
+      </div>
+      <div className="comment-body">
+        <MemoMarkdown text={c.body} />
+      </div>
+    </div>
+  );
+});
+
+// Isolated from Comments so typing in the comment box never re-renders the
+// comment list or re-parses comment Markdown on every keystroke.
+function CommentComposer({ onSend }) {
+  const [text, setText] = useState("");
+  const send = async (e) => {
+    e.preventDefault();
+    if (!text.trim()) return;
+    const sent = text;
+    setText("");
+    const ok = await onSend(sent);
+    if (!ok) setText((t) => t || sent);
+  };
+  return (
+    <form className="detail-form comment-form" onSubmit={send} onKeyDown={submitOnModEnter}>
+      <MentionTextarea
+        rows={2}
+        aria-label="Comment"
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        placeholder="Add a comment…  @Name to mention, ⌘/Ctrl+Enter to send"
+      />
+      <Button type="submit">Comment</Button>
+    </form>
+  );
+}
+
 // Comments lists and edits an item's comments. Adding and deleting update
 // the list at once (#156); live updates keep other people's changes in sync.
 function Comments({ item, path, participants, me, call, run }) {
   const [comments, setComments] = useState(null);
   const [pending, setPending] = useState([]);
   const [removing, setRemoving] = useState([]);
-  const [text, setText] = useState("");
   const added = useRef(new Map());
   const seq = useRef(0);
 
@@ -322,41 +376,43 @@ function Comments({ item, path, participants, me, call, run }) {
     return () => {
       current = false;
     };
-  }, [path, item.comment_count]);
+  }, [call, path, item.comment_count]);
 
-  const send = async (e) => {
-    e.preventDefault();
-    if (!text.trim()) return;
-    const sent = text;
-    const temp = {
-      id: `pending-${++seq.current}`,
-      pending: true,
-      author_id: me?.id,
-      body: sent,
-      created_at: Date.now(),
-    };
-    setText("");
-    setPending((list) => [...list, temp]);
-    const c = await run("POST", `${path}/comments`, { body: sent });
-    setPending((list) => list.filter((x) => x !== temp));
-    if (c) {
-      added.current.set(c.id, c);
-      setComments((list) => withComment(list, c));
-    } else {
-      setText((t) => t || sent);
-    }
-  };
+  const sendComment = useCallback(
+    async (sent) => {
+      const temp = {
+        id: `pending-${++seq.current}`,
+        pending: true,
+        author_id: me?.id,
+        body: sent,
+        created_at: Date.now(),
+      };
+      setPending((list) => [...list, temp]);
+      const c = await run("POST", `${path}/comments`, { body: sent });
+      setPending((list) => list.filter((x) => x !== temp));
+      if (c) {
+        added.current.set(c.id, c);
+        setComments((list) => withComment(list, c));
+        return true;
+      }
+      return false;
+    },
+    [me?.id, path, run],
+  );
 
-  const remove = async (c) => {
-    if (!window.confirm("Delete this comment?")) return;
-    setRemoving((ids) => [...ids, c.id]);
-    const ok = await run("DELETE", `${path}/comments/${c.id}`);
-    if (ok) {
-      added.current.delete(c.id);
-      setComments((list) => list?.filter((x) => x.id !== c.id) ?? null);
-    }
-    setRemoving((ids) => ids.filter((id) => id !== c.id));
-  };
+  const remove = useCallback(
+    async (c) => {
+      if (!window.confirm("Delete this comment?")) return;
+      setRemoving((ids) => [...ids, c.id]);
+      const ok = await run("DELETE", `${path}/comments/${c.id}`);
+      if (ok) {
+        added.current.delete(c.id);
+        setComments((list) => list?.filter((x) => x.id !== c.id) ?? null);
+      }
+      setRemoving((ids) => ids.filter((id) => id !== c.id));
+    },
+    [path, run],
+  );
 
   const confirmed = comments ? comments.filter((c) => !removing.includes(c.id)) : [];
   const shown = pending.length ? [...confirmed, ...pending] : confirmed;
@@ -366,40 +422,15 @@ function Comments({ item, path, participants, me, call, run }) {
       <h3>Comments</h3>
       {comments !== null && shown.length === 0 && <p className="muted">No comments yet.</p>}
       {shown.map((c) => (
-        <div key={c.id} className={c.pending ? "comment comment-pending" : "comment"} aria-busy={c.pending || undefined}>
-          <div className="comment-head">
-            <span className="who">{name(participants, c.author_id)}</span>
-            <span className="time" title={c.pending ? undefined : new Date(c.created_at).toLocaleString()}>
-              {c.pending ? "sending…" : ago(c.created_at)}
-            </span>
-            {!c.pending && me?.id === c.author_id && (
-              <Button
-                iconOnly
-                variant="ghost"
-                className="comment-delete"
-                aria-label="Delete comment"
-                title="Delete comment"
-                onClick={() => remove(c)}
-              >
-                <X aria-hidden="true" />
-              </Button>
-            )}
-          </div>
-          <div className="comment-body">
-            <Markdown text={c.body} />
-          </div>
-        </div>
-      ))}
-      <form className="detail-form comment-form" onSubmit={send} onKeyDown={submitOnModEnter}>
-        <MentionTextarea
-          rows={2}
-          aria-label="Comment"
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="Add a comment…  @Name to mention, ⌘/Ctrl+Enter to send"
+        <CommentRow
+          key={c.id}
+          comment={c}
+          authorName={name(participants, c.author_id)}
+          canDelete={!c.pending && me?.id === c.author_id}
+          onDelete={remove}
         />
-        <Button type="submit">Comment</Button>
-      </form>
+      ))}
+      <CommentComposer onSend={sendComment} />
     </section>
   );
 }

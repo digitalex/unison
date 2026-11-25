@@ -1,4 +1,5 @@
-import { Fragment } from "react";
+import { Fragment, memo } from "react";
+import { sameParticipantDirectory } from "./backlogFormat.js";
 import { MdImage, imagePath } from "./images.jsx";
 import { matchMention, participantTooltip, useMentions } from "./mentions.jsx";
 import { itemLink } from "./nav.js";
@@ -17,10 +18,41 @@ import { itemLink } from "./nav.js";
 
 const MAX_DEPTH = 4;
 
+function markdownPropsEqual(prev, next) {
+  if (prev.text !== next.text) return false;
+  if (!String(next.text ?? "").includes("@")) return true;
+  return (
+    prev.me?.id === next.me?.id &&
+    prev.onMentionClick === next.onMentionClick &&
+    sameParticipantDirectory(prev.participants, next.participants)
+  );
+}
+
+const MarkdownContent = memo(function MarkdownContent({ text, participants, me, onMentionClick }) {
+  return (
+    <div className="md">
+      {renderBlocks(parseBlocks(String(text ?? "").replace(/\r\n?/g, "\n").split("\n"), 0), {
+        participants,
+        me,
+        onMentionClick,
+      })}
+    </div>
+  );
+}, markdownPropsEqual);
+
 export default function Markdown({ text }) {
   const mentions = useMentions();
-  return <div className="md">{renderBlocks(parseBlocks(String(text ?? "").replace(/\r\n?/g, "\n").split("\n"), 0), mentions)}</div>;
+  return (
+    <MarkdownContent
+      text={text}
+      participants={mentions.participants}
+      me={mentions.me}
+      onMentionClick={mentions.onMentionClick}
+    />
+  );
 }
+
+export const MemoMarkdown = memo(Markdown);
 
 // ---- Blocks ----
 

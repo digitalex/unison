@@ -1,4 +1,42 @@
 // Formatting shared by the backlog list and the item dialog.
+import { useRef } from "react";
+
+// sameParticipantDirectory compares the participant fields that affect backlog
+// labels, comment authors, and @mention rendering/autocomplete, ignoring
+// presence timestamps (last_seen_at) that churn on SSE updates and roster polls.
+export function sameParticipantDirectory(prev, next) {
+  if (prev === next) return true;
+  if (!prev || !next || prev.length !== next.length) return false;
+  const prevById = new Map();
+  for (const p of prev) prevById.set(p.id, p);
+  for (const p of next) {
+    const old = prevById.get(p.id);
+    if (
+      !old ||
+      old.name !== p.name ||
+      old.emoji !== p.emoji ||
+      old.status !== p.status ||
+      old.model !== p.model ||
+      old.revoked_at !== p.revoked_at ||
+      old.sponsor?.display_name !== p.sponsor?.display_name
+    ) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// useStableParticipants preserves the previous participants array reference
+// when only presence timestamps (last_seen_at) changed, preventing backlog
+// rows, mention context, and open comment threads from re-rendering during SSE
+// activity bursts.
+export function useStableParticipants(participants) {
+  const ref = useRef(participants);
+  if (!sameParticipantDirectory(ref.current, participants)) {
+    ref.current = participants;
+  }
+  return ref.current;
+}
 
 export function name(participants, id) {
   const p = participants.find((p) => p.id === id);

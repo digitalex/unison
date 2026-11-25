@@ -1,13 +1,15 @@
-import { useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, ChevronRight, Columns3, GitPullRequest, GripVertical, List, MessageSquare, Plus } from "lucide-react";
 import { ItemDialog, NewItemDialog } from "./BacklogItemDialog.jsx";
-import { meta, name, prLabel } from "./backlogFormat.js";
+import { meta, name, prLabel, useStableParticipants } from "./backlogFormat.js";
 import Kanban from "./Kanban.jsx";
 import { OPEN_ITEM } from "./nav.js";
 import { useKeyShortcut } from "./shortcuts.jsx";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 import ScreenHead from "./ui/ScreenHead.jsx";
+
+const EMPTY_REPOS = [];
 
 // The prioritized backlog, grouped into In progress, Open, and Done: as a
 // list, or as a board (Kanban.jsx), as the header's switch picks.
@@ -30,19 +32,35 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
   const [adding, setAdding] = useState([]);
   const [notice, setNotice] = useState("");
   const [openId, openItem, closeItem] = useItemParam();
-  const run = (method, suffix, payload) => call(method, suffix, payload).catch((e) => onError(e.message));
-  const moveTo = (item, position) => {
-    if (position !== item.position) run("POST", `/backlog/${item.id}/move`, { position });
-  };
-  const queued = items.filter((it) => it.status !== "done");
-  const groups = { in_progress: queued.filter((it) => it.status === "in_progress"), open: queued.filter((it) => it.status === "open") };
-  // Most recently closed first (items closed live are added at the end).
-  const done = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
+  const onErrorRef = useRef(onError);
+  onErrorRef.current = onError;
+  const run = useCallback(
+    (method, suffix, payload) => call(method, suffix, payload).catch((e) => onErrorRef.current(e.message)),
+    [call],
+  );
+  const moveTo = useCallback(
+    (item, position) => {
+      if (position !== item.position) run("POST", `/backlog/${item.id}/move`, { position });
+    },
+    [run],
+  );
+  const stableParticipants = useStableParticipants(participants);
+  const { queued, groups, done } = useMemo(() => {
+    const nextQueued = items.filter((it) => it.status !== "done");
+    const nextGroups = {
+      in_progress: nextQueued.filter((it) => it.status === "in_progress"),
+      open: nextQueued.filter((it) => it.status === "open"),
+    };
+    // Most recently closed first (items closed live are added at the end).
+    const nextDone = items.filter((it) => it.status === "done").sort((a, b) => (b.closed_at || 0) - (a.closed_at || 0));
+    return { queued: nextQueued, groups: nextGroups, done: nextDone };
+  }, [items]);
   const reorder = useReorder(groups, moveTo);
   const openedItem = useOpenItem(openId, items, closeItem, setNotice);
   useDismiss(notice, setNotice);
   useRevealCreated(created, items, setCreated);
   const hintId = useId();
+  const repos = useMemo(() => workspace?.repos || EMPTY_REPOS, [workspace?.repos]);
 
   const rows = (status, list) =>
     reorder.arrange(status, list).map((it) => (
@@ -51,9 +69,16 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         item={it}
         list={list}
         highlight={created === it.id}
-        {...{ participants, me, run, reorder, hintId }}
-        repos={workspace?.repos || []}
-        onOpen={() => openItem(it.id)}
+        participants={stableParticipants}
+        me={me}
+        run={run}
+        dragClass={reorder.classesFor(it).join(" ")}
+        lifted={reorder.isLifted(it)}
+        onReorderPointerDown={reorder.pointerDown}
+        onReorderKeyDown={reorder.keyDown}
+        hintId={hintId}
+        repos={repos}
+        onOpen={openItem}
       />
     ));
   const create = async ({ title, body, assignee_id }) => {
@@ -76,8 +101,6 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
   useEffect(() => {
     if (pendingRows.length < adding.length) setAdding(pendingRows);
   }, [pendingRows.length, adding.length]);
-
-  const repos = workspace?.repos || [];
 
   return (
     <section className="screen" aria-label="Backlog">
@@ -107,7 +130,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
 
         {view === "kanban" ? (
           <Kanban
-            {...{ groups, done, participants, me, repos, run, reorder, hintId, created }}
+            {...{ groups, done, me, repos, run, reorder, hintId, created }}
+            participants={stableParticipants}
             pending={pendingRows}
             onOpen={openItem}
             onAdd={create}
@@ -121,7 +145,7 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
             {queued.length === 0 && pendingRows.length === 0 && <p className="empty-row">Nothing queued.</p>}
             {rows("open", groups.open)}
             {pendingRows.map((x) => (
-              <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={participants} />
+              <PendingRow key={x.id} title={x.title} assigneeId={x.assignee_id} participants={stableParticipants} />
             ))}
 
             <button type="button" className="group-head" aria-expanded={showDone} onClick={() => setShowDone(!showDone)}>
@@ -135,8 +159,8 @@ export default function Backlog({ items, participants, me, workspace, call, onEr
         )}
       </div>
 
-      {creating && <NewItemDialog initial={creating === true ? null : creating} participants={participants} onClose={() => setCreating(false)} onCreate={create} />}
-      {openedItem && <ItemDialog item={openedItem} {...{ participants, me, call, run }} onClose={closeItem} />}
+      {creating && <NewItemDialog initial={creating === true ? null : creating} participants={stableParticipants} onClose={() => setCreating(false)} onCreate={create} />}
+      {openedItem && <ItemDialog item={openedItem} participants={stableParticipants} me={me} call={call} run={run} onClose={closeItem} />}
     </section>
   );
 }
@@ -209,19 +233,34 @@ function PendingRow({ title, assigneeId, participants }) {
   );
 }
 
-function BacklogRow({ item, list, highlight, participants, me, repos, run, reorder, hintId, onOpen }) {
+const BacklogRow = memo(function BacklogRow({
+  item,
+  list,
+  highlight,
+  participants,
+  me,
+  repos,
+  run,
+  dragClass,
+  lifted,
+  onReorderPointerDown,
+  onReorderKeyDown,
+  hintId,
+  onOpen,
+}) {
   const queued = item.status !== "done";
   const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
-  const classes = ["item", item.status, ...reorder.classesFor(item)];
+  const classes = ["item", item.status];
+  if (dragClass) classes.push(dragClass);
   if (highlight) classes.push("item-created");
   const open = (e) => {
     // Focus the title so closing the dialog returns focus to this row.
     e.currentTarget.querySelector(".row-title").focus();
-    onOpen();
+    onOpen(item.id);
   };
   return (
     <div className={classes.join(" ")} id={`item-${item.id}`} data-id={item.id} data-status={item.status}>
-      <div className="row" onClick={open} onPointerDown={(e) => reorder.pointerDown(e, item, false)}>
+      <div className="row" onClick={open} onPointerDown={(e) => onReorderPointerDown(e, item, false)}>
         <span className="rank">
           {queued && (
             <button
@@ -230,13 +269,13 @@ function BacklogRow({ item, list, highlight, participants, me, repos, run, reord
               data-grip={item.id}
               aria-label={`Reorder #${item.id} ${item.title}`}
               aria-describedby={hintId}
-              aria-pressed={reorder.isLifted(item)}
+              aria-pressed={lifted}
               onPointerDown={(e) => {
                 e.stopPropagation();
-                reorder.pointerDown(e, item, true);
+                onReorderPointerDown(e, item, true);
               }}
               onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => reorder.keyDown(e, item, list)}
+              onKeyDown={(e) => onReorderKeyDown(e, item, list)}
             >
               <GripVertical aria-hidden="true" />
             </button>
@@ -286,7 +325,7 @@ function BacklogRow({ item, list, highlight, participants, me, repos, run, reord
       </div>
     </div>
   );
-}
+});
 
 function PRChips({ prs, repos }) {
   if (prs.length === 0) return null;
@@ -327,6 +366,11 @@ function urlWithItem(id) {
 function useItemParam() {
   const [id, setId] = useState(itemFromURL);
   const pushDepth = useRef(0);
+  const open = useCallback((next) => {
+    window.history.pushState(null, "", urlWithItem(next));
+    pushDepth.current += 1;
+    setId(next);
+  }, []);
   useEffect(() => {
     const onPop = () => {
       pushDepth.current = 0;
@@ -339,13 +383,8 @@ function useItemParam() {
       window.removeEventListener("popstate", onPop);
       window.removeEventListener(OPEN_ITEM, onOpen);
     };
-  }, []);
-  function open(next) {
-    window.history.pushState(null, "", urlWithItem(next));
-    pushDepth.current += 1;
-    setId(next);
-  }
-  const close = () => {
+  }, [open]);
+  const close = useCallback(() => {
     if (pushDepth.current > 0) {
       const steps = pushDepth.current;
       pushDepth.current = 0;
@@ -354,7 +393,7 @@ function useItemParam() {
       window.history.replaceState(null, "", urlWithItem(null));
     }
     setId(null);
-  };
+  }, []);
   return [id, open, close];
 }
 
@@ -453,48 +492,43 @@ function useReorder(groups, moveTo) {
   const [lifted, setLifted] = useState(null); // Keyboard: { id, status, from, index }
   const [announcement, setAnnouncement] = useState("");
   const live = useRef({});
-  live.current = { drag, drop, groups };
+  live.current = { drag, drop, groups, lifted, moveTo };
   const refocus = useRef(null); // Keyboard: the grip to keep focused after a drop.
 
-  const end = () => {
-    setDrag(null);
-    setDrop(null);
-    document.documentElement.classList.remove("reordering");
-  };
-  const commitDrop = (item) => {
-    const target = live.current.drop;
-    const over = target && live.current.groups[item.status]?.find((it) => it.id === target.id);
-    end();
-    if (over) moveTo(item, dropPosition(item.position, over.position, target.where));
-  };
-  const begin = (item) => {
-    setDrag(item);
-    document.documentElement.classList.add("reordering");
-    window.getSelection()?.removeAllRanges();
-    navigator.vibrate?.(10);
-  };
-
-  const pointerDown = (e, item, fromGrip) => {
+  const pointerDown = useCallback((e, item, fromGrip) => {
     if (item.status === "done" || live.current.drag) return;
     const touch = e.pointerType === "touch";
     if (touch ? !fromGrip : e.button !== 0) return;
     if (!fromGrip && e.target.closest("a, select, input, textarea, button:not(.row-title)")) return;
-    trackPointer(e, item, touch);
-  };
-
-  const trackPointer = (down, item, touch) => {
-    const scroller = down.currentTarget.closest(".kanban-col-body, .screen-body");
-    const start = { x: down.clientX, y: down.clientY, id: down.pointerId };
+    const scroller = e.currentTarget.closest(".kanban-col-body, .screen-body");
+    const start = { x: e.clientX, y: e.clientY, id: e.pointerId };
     let started = false;
+    const end = () => {
+      setDrag(null);
+      setDrop(null);
+      document.documentElement.classList.remove("reordering");
+    };
+    const commitDrop = () => {
+      const target = live.current.drop;
+      const over = target && live.current.groups[item.status]?.find((it) => it.id === target.id);
+      end();
+      if (over) live.current.moveTo(item, dropPosition(item.position, over.position, target.where));
+    };
+    const begin = () => {
+      setDrag(item);
+      document.documentElement.classList.add("reordering");
+      window.getSelection()?.removeAllRanges();
+      navigator.vibrate?.(10);
+    };
     const timer = touch
       ? setTimeout(() => {
           started = true;
-          begin(item);
+          begin();
         }, LONG_PRESS_MS)
       : null;
-    const move = (e) => {
-      if (e.pointerId !== start.id) return;
-      const dist = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+    const move = (ev) => {
+      if (ev.pointerId !== start.id) return;
+      const dist = Math.hypot(ev.clientX - start.x, ev.clientY - start.y);
       if (!started) {
         if (touch) {
           if (dist > TOUCH_SLOP) stop();
@@ -502,26 +536,26 @@ function useReorder(groups, moveTo) {
         }
         if (dist < DRAG_THRESHOLD) return;
         started = true;
-        begin(item);
+        begin();
       }
-      e.preventDefault();
-      const hit = hitTest(e.clientY, item.status);
+      ev.preventDefault();
+      const hit = hitTest(ev.clientY, item.status);
       if (hit && hit.id !== item.id) setDrop((d) => (d?.id === hit.id && d.where === hit.where ? d : hit));
       else if (hit) setDrop(null);
-      autoScroll(scroller, e.clientY);
+      autoScroll(scroller, ev.clientY);
     };
-    const up = (e) => {
-      if (e.pointerId !== start.id) return;
+    const up = (ev) => {
+      if (ev.pointerId !== start.id) return;
       stop();
       if (!started) return;
       swallowNextClick();
-      if (e.type === "pointerup") commitDrop(item);
+      if (ev.type === "pointerup") commitDrop();
       else end();
     };
-    const key = (e) => {
-      if (e.key !== "Escape" || !started) return;
-      e.preventDefault();
-      e.stopPropagation();
+    const key = (ev) => {
+      if (ev.key !== "Escape" || !started) return;
+      ev.preventDefault();
+      ev.stopPropagation();
       stop();
       end();
       setAnnouncement("Reorder cancelled.");
@@ -537,12 +571,13 @@ function useReorder(groups, moveTo) {
     window.addEventListener("pointerup", up);
     window.addEventListener("pointercancel", up);
     window.addEventListener("keydown", key, true);
-  };
+  }, []);
 
-  const describe = (item, index, total) => `#${item.id} ${item.title}, position ${index + 1} of ${total}`;
-  const keyDown = (e, item, list) => {
+  const keyDown = useCallback((e, item, list) => {
+    const describe = (it, index, total) => `#${it.id} ${it.title}, position ${index + 1} of ${total}`;
+    const curLifted = live.current.lifted;
     const idx = list.findIndex((it) => it.id === item.id);
-    const isLifted = lifted?.id === item.id;
+    const isLifted = curLifted?.id === item.id;
     if (e.key === " " || e.key === "Enter") {
       e.preventDefault();
       if (!isLifted) {
@@ -552,22 +587,22 @@ function useReorder(groups, moveTo) {
       }
       setLifted(null);
       refocus.current = item.id;
-      if (lifted.index !== lifted.from) moveTo(item, list[lifted.index].position);
-      setAnnouncement(`Dropped ${describe(item, lifted.index, list.length)}.`);
+      if (curLifted.index !== curLifted.from) live.current.moveTo(item, list[curLifted.index].position);
+      setAnnouncement(`Dropped ${describe(item, curLifted.index, list.length)}.`);
       return;
     }
     if (!isLifted) return;
     if (e.key === "ArrowUp" || e.key === "ArrowDown") {
       e.preventDefault();
-      const index = Math.min(list.length - 1, Math.max(0, lifted.index + (e.key === "ArrowUp" ? -1 : 1)));
-      setLifted({ ...lifted, index });
+      const index = Math.min(list.length - 1, Math.max(0, curLifted.index + (e.key === "ArrowUp" ? -1 : 1)));
+      setLifted({ ...curLifted, index });
       setAnnouncement(`Moved to ${describe(item, index, list.length)}.`);
     } else if (e.key === "Escape" || e.key === "Tab") {
       if (e.key === "Escape") e.preventDefault();
       setLifted(null);
-      setAnnouncement(`Cancelled. ${describe(item, lifted.from, list.length)}.`);
+      setAnnouncement(`Cancelled. ${describe(item, curLifted.from, list.length)}.`);
     }
-  };
+  }, []);
 
   // Moving the lifted row in the DOM can drop focus: keep it on its grip,
   // also when the list re-renders in the new order after a drop.

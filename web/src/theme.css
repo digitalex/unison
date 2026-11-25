@@ -3134,8 +3134,13 @@ html.reordering * {
   max-width: 560px;
 }
 
-.detail-form .control {
+.detail-form .control,
+.detail-form .mention-field {
   flex: 1;
+  min-width: 0;
+}
+
+.detail-form .control {
   height: 28px;
 }
 
@@ -3714,6 +3719,9 @@ button.md-mention-chip.md-mention-me:hover {
 
 .mention-field {
   position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
 }
 
 .mention-menu {

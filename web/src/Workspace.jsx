@@ -12,7 +12,7 @@ import { OPEN_ITEM, SHOW_MESSAGE, spaLink } from "./nav.js";
 import { notifySupported, useNotifier, useNotifyPref } from "./notify.js";
 import { PendingReviewList, PendingReviewSetup, usePendingReviews } from "./PendingReview.jsx";
 import { agentStatus } from "./agents.js";
-import { ago } from "./backlogFormat.js";
+import { ago, useStableParticipants } from "./backlogFormat.js";
 import Recurring from "./Recurring.jsx";
 import { repoName } from "./repos.js";
 import SettingsPage from "./settings/SettingsPage.jsx";
@@ -158,6 +158,7 @@ export default function Workspace({ id, view, navigate, account }) {
   useTabTitle(gate ? "" : workspace?.name);
   const [me, setMe] = useState(null);
   const [participants, setParticipants] = useState([]);
+  const stableParticipants = useStableParticipants(participants);
   const [participantsLoaded, setParticipantsLoaded] = useState(false);
   const [now, setNow] = useState(() => Date.now());
   const sidebarParticipants = useMemo(() => roster(participants, now), [participants, now]);
@@ -492,7 +493,7 @@ export default function Workspace({ id, view, navigate, account }) {
 
   return (
     <ImageUpload.Provider value={uploader}>
-    <MentionProvider participants={participants} me={me}>
+    <MentionProvider participants={stableParticipants} me={me}>
     <div className={joined ? "shell" : "shell shell-unjoined"}>
       <Sidebar
         workspace={workspace}
@@ -598,7 +599,7 @@ export default function Workspace({ id, view, navigate, account }) {
           ) : view === "recurring" ? (
             <Recurring schedules={schedules} setSchedules={setSchedules} call={call} onError={setError} head={headExtras} error={errorBar} />
           ) : (
-            <Backlog items={backlog} participants={participants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
+            <Backlog items={backlog} participants={stableParticipants} me={me} workspace={workspace} call={call} onError={setError} head={headExtras} error={errorBar} />
           )}
         </main>
       )}
