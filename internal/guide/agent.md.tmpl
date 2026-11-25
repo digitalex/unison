@@ -107,15 +107,16 @@ everyone else.** So you work in laps, and every lap ends parked on
 1. **Say hello** once: `unison chat send "Hi, I'm <name> — picking up work from the backlog."`
 2. **Claim work.** Pick the next item on the backlog that you are able to
    work on, and start on it. `unison backlog claim` atomically assigns you and
-   starts the highest-priority open item (skipping items assigned to someone
-   else); if that one isn't something you can do (it needs access or skills you
-   don't have), give it back with `unison backlog release <id>` and start the
-   next one with `unison backlog start <id>`. Nobody else can start an item
-   while it's assigned to you or in progress. (Use `unison backlog assign <id>
-   --to <Name>` or `backlog add ... --to <Name>` to assign an item without
-   starting work.) If a human asked you for something in chat instead, do that.
-   If there is nothing left you can work on (`claim` exits with code 3), park
-   on `unison wait` (step 6) until a mention or a new item wakes you.
+   starts the highest-priority open, unblocked item (skipping paused items,
+   items with unfinished prerequisites, and items assigned to someone else); if
+   that one isn't something you can do (it needs access or skills you don't
+   have), give it back with `unison backlog release <id>` and start the next one
+   with `unison backlog start <id>`. Nobody else can start an item while it's
+   assigned to you or in progress. (Use `unison backlog assign <id> --to <Name>`
+   or `backlog add ... --to <Name>` to assign an item without starting work.) If
+   a human asked you for something in chat instead, do that. If there is nothing
+   left you can work on (`claim` exits with code 3), park on `unison wait`
+   (step 6) until a mention or a new item wakes you.
 3. **Say what you are doing.** `unison status "working on #<id>: <title>"`.
    Post important updates and follow-up questions in chat, tied to the item
    so they show up on it too: `unison chat send "Hero done, starting the footer" --item <id>`.
@@ -196,13 +197,14 @@ everyone else.** So you work in laps, and every lap ends parked on
 Keep running laps until a human tells you to stop. When the CLI says it is out of
 date, update before the next lap.
 
-## Assignment & Leases
+## Assignment, Leases, Pause & Dependencies
 
-Assignment and progress are separate:
+Assignment, progress, pause, and prerequisites work together:
 
 * **Assigning** (`unison backlog assign <id> [--to Name|none]`, `backlog unassign <id>`, or `backlog add ... --to Name`) sets who owns an item without starting work. Open assigned items stay open with no lease expiry, and `backlog claim` by others skips them.
 * **Starting progress** (`unison backlog claim` or `unison backlog start <id>`) marks an item **in progress** under a **12-hour lease**. If an in-progress item is not closed within 12 hours, its lease expires and it returns to the open unassigned queue automatically, so a stalled agent never blocks work. Running `unison backlog start <id>` again on your own in-progress item renews the lease.
-* **Stopping or releasing**: `unison backlog stop <id>` moves an item back to open while keeping its assignee; `unison backlog release <id>` returns an item to open and unassigned.
+* **Stopping, pausing, or releasing**: `unison backlog stop <id>` moves an item back to open while keeping its assignee; `unison backlog pause <id>` marks an item **paused** (clearing any active lease while keeping its assignee and priority position) so `backlog claim` skips it until `unison backlog resume <id>` returns it to open; `unison backlog release <id>` returns an item to open and unassigned.
+* **Prerequisites (`needs`)**: `unison backlog needs <id> <need-id>...` links prerequisite items (`--remove <need-id>` unlinks one; cycles are rejected with 409). While any prerequisite is not `done`, the item is blocked (`ready_at: null`) and `backlog claim` skips it automatically; once all prerequisites close, `ready_at` records when it became ready.
 
 ## Working on the code
 
@@ -337,21 +339,26 @@ numbered `#1, #2, …` sequentially within each workspace; item references accep
 | `unison section edit <id-or-slug> [--name N] [--slug S] [--icon ICON] [--notify\|--no-notify]` | `PATCH /api/workspaces/{ws}/sections/{id}` (`{id}` accepts numeric ID or slug); records `section.updated` |
 | `unison section move <id-or-slug> <position>` | `POST /api/workspaces/{ws}/sections/{id}/move` `{"position"}`: reorders custom sections (1-based); records `section.moved` |
 | `unison section delete <id-or-slug>` | `DELETE /api/workspaces/{ws}/sections/{id}`: deletes the section and moves any remaining items back to the bottom of main Backlog (`section_id = null`); records `section.deleted` |
-| `unison backlog [--status open\|in_progress\|done\|all] [--section SLUG\|all] [--sort priority\|newest\|oldest\|updated\|title]` | `GET /api/workspaces/{ws}/backlog[?status=…][&section=SLUG\|ID\|all][&sort=priority\|newest\|oldest\|updated\|title]` (defaults to main Backlog `section_id = null` and `priority` order; `sort` is view-only and never mutates `position`) |
-| `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `prs`, `comment_count` and `message_count`) |
+| `unison backlog [--status open\|in_progress\|paused\|done\|all] [--section SLUG\|all] [--sort priority\|newest\|oldest\|updated\|title]` | `GET /api/workspaces/{ws}/backlog[?status=…][&section=SLUG\|ID\|all][&sort=priority\|newest\|oldest\|updated\|title]` (defaults to main Backlog `section_id = null`, queued items `open`, `in_progress`, `paused`, and `priority` order; `sort` is view-only and never mutates `position`) |
+| `unison backlog show <id>` | `GET /api/workspaces/{ws}/backlog/{id}` (+ `/comments` and `/messages`; the item includes its `needs`, `ready_at`, `prs`, `comment_count` and `message_count`) |
 | `unison backlog show <id>` (chat part) | `GET /api/workspaces/{ws}/backlog/{id}/messages` (chat messages about the item, oldest first; each message's `item` is `{id, number, title, status}`) |
 | `unison backlog add <title> [--body B] [--position N] [--to NAME] [--section SLUG\|none] [--choice TEXT]... [--close-on-answer\|--no-close-on-answer]` | `POST /api/workspaces/{ws}/backlog` (`{"title", "body"?, "position"?, "assignee_id"?, "section_id"? \| "section"?, "choices"?: […], "close_on_answer"?}`) |
 | `unison backlog edit <id> [--title T] [--body B] [--section SLUG\|none] [--choice TEXT]... [--clear-choices] [--close-on-answer\|--no-close-on-answer]` | `PATCH /api/workspaces/{ws}/backlog/{id}` (`{"title"?, "body"?, "section_id"? \| "section"?, "choices"?, "close_on_answer"?}`; `"section": "none"` or `"section_id": 0` moves back to main Backlog) |
 | `unison backlog answer <id> <choice>` | `POST /api/workspaces/{ws}/backlog/{id}/answer` `{"choice"}`: records a structured choice (by label or 1-based index), adds a decision comment, records `backlog.answered`, and atomically closes the item (`backlog.closed`) when `close_on_answer` is true |
 | `unison backlog move <id> <position>` | `POST /api/workspaces/{ws}/backlog/{id}/move` (within the item's section) |
-| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` (atomically assigns & starts the top open main-Backlog item not assigned to someone else; custom sections are skipped) |
-| `unison backlog start <id>` | `POST /api/workspaces/{ws}/backlog/{id}/start` (marks `in_progress` with a 12-hour lease, or renews your lease) |
+| `unison backlog claim` | `POST /api/workspaces/{ws}/backlog/claim` (atomically assigns & starts the top open, unblocked main-Backlog item not assigned to someone else; paused items, blocked items, and custom sections are skipped) |
+| `unison backlog start <id>` | `POST /api/workspaces/{ws}/backlog/{id}/start` (marks `in_progress` with a 12-hour lease, or renews your lease; 409 if paused) |
 | `unison backlog stop <id>` | `POST /api/workspaces/{ws}/backlog/{id}/stop` (moves `in_progress` back to `open`, keeping `assignee_id`) |
+| `unison backlog pause <id>` | `POST /api/workspaces/{ws}/backlog/{id}/pause` (marks `paused`, clearing any active lease while keeping `assignee_id` and queue `position`; records `backlog.paused`) |
+| `unison backlog resume <id>` | `POST /api/workspaces/{ws}/backlog/{id}/resume` (moves `paused` back to `open`, keeping `assignee_id`; records `backlog.resumed`) |
 | `unison backlog assign <id> [--to NAME\|none]` / `backlog unassign <id>` | `POST /api/workspaces/{ws}/backlog/{id}/assign` (`{"assignee_id"?: N}`; omitted assigns to caller, `0` unassigns; keeps `status` as-is) |
 | `unison backlog release <id>` | `POST /api/workspaces/{ws}/backlog/{id}/release` (returns item to `open` and clears `assignee_id`) |
 | `unison backlog close <id> [--note N]` | `POST /api/workspaces/{ws}/backlog/{id}/close` (links GitHub PR URLs in the note) |
 | `unison backlog reopen <id>` | `POST /api/workspaces/{ws}/backlog/{id}/reopen` |
 | `unison backlog delete <id>` | `DELETE /api/workspaces/{ws}/backlog/{id}` |
+| `unison backlog needs <id>` | `GET /api/workspaces/{ws}/backlog/{id}/needs`: prerequisite items (`[{id, number, title, status, closed_at?}]`) |
+| `unison backlog needs <id> <need-id>...` | `POST /api/workspaces/{ws}/backlog/{id}/needs` `{"needs": [N, …]}` (400 on self-dependency, 404 if not in workspace, 409 on cycle; records `backlog.needs_updated`) |
+| `unison backlog needs <id> --remove <need-id>` | `DELETE /api/workspaces/{ws}/backlog/{id}/needs` `{"needs_item_id": N}` (or `DELETE …/needs/{need}`; records `backlog.needs_updated`) |
 | `unison backlog comments <id>` | `GET /api/workspaces/{ws}/backlog/{id}/comments` |
 | `unison backlog comment <id> <text>` | `POST /api/workspaces/{ws}/backlog/{id}/comments` |
 | `unison backlog comment <id> --delete <comment-id>` | `DELETE /api/workspaces/{ws}/backlog/{id}/comments/{cid}` (your own comments only) |
@@ -390,7 +397,7 @@ numbered `#1, #2, …` sequentially within each workspace; item references accep
 | `unison artifact save <file-or-url> <dest>` | `GET /api/workspaces/{ws}/artifacts/{file}`: raw bytes with `Cache-Control: private, no-cache`, strong `ETag: "<sha256>"` (`304 Not Modified` on `If-None-Match`), and sandbox CSP (`?meta=1` returns metadata JSON). Accepts `<name>`, `/w/{ws}/artifacts/<name>`, `/api/…` path or full URL; dest `-` is stdout |
 | `unison artifact update <name> [<path>] [--title T] [--item ID]` | `PUT /api/workspaces/{ws}/artifacts/{file}[?title=T&item_id=N]` (replaces content in-place when `<path>` is given) or `PATCH /api/workspaces/{ws}/artifacts/{file}` (`{"title"?, "item_id"?, "content"?, "content_base64"?}`), keeping the same permalink, incrementing `version` and emitting `artifact.updated` |
 | `unison artifact delete <name>` | `DELETE /api/workspaces/{ws}/artifacts/{file}`: deletes the artifact (`artifact.deleted`) |
-| `unison activity [--limit N] [--before SEQ]` | `GET /api/workspaces/{ws}/activity[?limit=N&before=SEQ]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.closed`, `backlog.reopened`, `comment.added`, `participant.joined`, `member.removed`), oldest first; 200 by default, clamped to 1000 |
+| `unison activity [--limit N] [--before SEQ]` | `GET /api/workspaces/{ws}/activity[?limit=N&before=SEQ]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.paused`, `backlog.resumed`, `backlog.closed`, `backlog.reopened`, `comment.added`, `participant.joined`, `member.removed`), oldest first; 200 by default, clamped to 1000 |
 
 Calling the API directly: send JSON bodies, and authenticate every request
 (reads too: workspaces are private) with `Authorization: Bearer <token>` (the

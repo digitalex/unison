@@ -1,6 +1,6 @@
 import { memo, useState } from "react";
 import { GitPullRequest, GripVertical, MessageSquare, MessagesSquare, Plus } from "lucide-react";
-import { itemNum, meta, name, prLabel } from "./backlogFormat.js";
+import { blockerLabel, blockerTitle, blockersOf, groupOf, itemNum, meta, name, prLabel } from "./backlogFormat.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import Button from "./ui/Button.jsx";
 
@@ -169,7 +169,9 @@ const KanbanCard = memo(function KanbanCard({
 }) {
   const num = itemNum(item);
   const queued = item.status !== "done";
-  const canClaim = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
+  const blockers = blockersOf(item);
+  const canClaim = item.status === "open" && blockers.length === 0 && me && (!item.assignee_id || item.assignee_id === me.id);
+  const canResume = item.status === "paused" && Boolean(me);
   const classes = ["item", "kcard", item.status];
   if (dragClass) classes.push(dragClass);
   if (highlight) classes.push("item-created");
@@ -184,6 +186,7 @@ const KanbanCard = memo(function KanbanCard({
       id={`item-${item.id}`}
       data-id={item.id}
       data-status={item.status}
+      data-group={groupOf(item)}
       onClick={open}
       onPointerDown={canReorder ? (e) => onReorderPointerDown(e, item, false) : undefined}
     >
@@ -215,6 +218,7 @@ const KanbanCard = memo(function KanbanCard({
         )}
         <span className="item-id">#{num}</span>
         <RecurringMarker item={item} />
+        {item.status === "paused" && <span className="chip status-chip-paused">Paused</span>}
         <span className="meta">{meta(item)}</span>
       </div>
       <button type="button" className="row-title kcard-title" aria-haspopup="dialog">
@@ -228,6 +232,11 @@ const KanbanCard = memo(function KanbanCard({
           {item.assignee_id && <span className="chip">{name(participants, item.assignee_id)}</span>}
         </span>
         <span className="kcard-counts">
+          {blockers.length > 0 && (
+            <span className="chip blocker-chip" title={blockerTitle(blockers)}>
+              {blockerLabel(blockers)}
+            </span>
+          )}
           {item.prs.map((pr) => (
             <a key={pr.id} className="chip pr-chip" href={pr.url} target="_blank" rel="noopener noreferrer" title={pr.url} onClick={(e) => e.stopPropagation()}>
               <GitPullRequest aria-hidden="true" />
@@ -247,11 +256,17 @@ const KanbanCard = memo(function KanbanCard({
             </span>
           )}
         </span>
-        {canClaim && (
+        {(canClaim || canResume) && (
           <span className="kcard-actions" onClick={(e) => e.stopPropagation()}>
-            <Button size="small" title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
-              Claim
-            </Button>
+            {canClaim ? (
+              <Button size="small" title={item.assignee_id ? "Start working on this item" : "Assign to me and start working"} onClick={() => run("POST", `/backlog/${num}/start`)}>
+                Claim
+              </Button>
+            ) : (
+              <Button size="small" title="Resume this item back to open" onClick={() => run("POST", `/backlog/${num}/resume`)}>
+                Resume
+              </Button>
+            )}
           </span>
         )}
       </div>

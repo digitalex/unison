@@ -1,9 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Check, CheckSquare, GitPullRequest, MessagesSquare, Pencil, Plus, Trash2, X } from "lucide-react";
 import { ArtifactTypeIcon, UploadArtifactDialog, formatArtifactSize, withArtifact } from "./Artifacts.jsx";
-import { STATUS_LABELS, ago, hoursLeft, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
+import { STATUS_LABELS, ago, blockerTitle, blockersOf, hoursLeft, itemNum, name, submitOnModEnter, useStableParticipants } from "./backlogFormat.js";
 import { MemoMarkdown } from "./Markdown.jsx";
-import { messageLink, spaLink } from "./nav.js";
+import { itemLink, messageLink, spaLink } from "./nav.js";
 import { RecurringMarker } from "./Recurring.jsx";
 import { NewTodoDialog, withTodo } from "./Todos.jsx";
 import Button from "./ui/Button.jsx";
@@ -199,6 +199,7 @@ export function ItemDialog({ item, items = [], sections = [], todos = [], setTod
       )}
       <ItemFacts item={item} participants={stableParticipants} />
       <ItemActions item={item} path={path} participants={stableParticipants} me={me} run={run} onDeleted={onClose} />
+      <NeedsList key={`needs-${path}`} item={item} items={items} path={path} run={run} />
       <PRList item={item} path={path} run={run} />
       <ItemArtifacts
         item={item}
@@ -331,8 +332,22 @@ function EditForm({ item, sections = [], path, run, onReloadMe, onDone }) {
 }
 
 function ItemFacts({ item, participants }) {
-  const facts = [["Status", STATUS_LABELS[item.status]]];
+  const blockers = blockersOf(item);
+  const facts = [["Status", STATUS_LABELS[item.status] || item.status]];
   if (item.section_name) facts.push(["Section", item.section_name]);
+  if (blockers.length > 0) {
+    facts.push([
+      "Blocked by",
+      blockers.map((n, idx) => (
+        <span key={n.id}>
+          {idx > 0 ? ", " : ""}
+          <a {...itemLink(itemNum(n))}>#{itemNum(n)}</a>
+        </span>
+      )),
+    ]);
+  } else if (item.status !== "done" && item.needs?.length > 0 && item.ready_at) {
+    facts.push(["Ready", ago(item.ready_at)]);
+  }
   if (item.assignee_id) facts.push([item.status === "done" ? "Done by" : "Assignee", name(participants, item.assignee_id)]);
   if (item.status === "in_progress" && item.lease_expires_at) facts.push(["Lease", `${hoursLeft(item.lease_expires_at)}h left`]);
   if (item.status === "done" && item.close_note) facts.push(["Note", item.close_note]);
@@ -351,6 +366,7 @@ function ItemFacts({ item, participants }) {
 
 function ItemActions({ item, path, participants, me, run, onDeleted }) {
   const [closing, setClosing] = useState(false);
+  const blockers = blockersOf(item);
   const canStart = item.status === "open" && me && (!item.assignee_id || item.assignee_id === me.id);
   const changeAssignee = (e) => {
     const id = Number(e.target.value);
@@ -363,12 +379,26 @@ function ItemActions({ item, path, participants, me, run, onDeleted }) {
   return (
     <div className="item-actions">
       {canStart && (
-        <Button variant="primary" onClick={() => run("POST", `${path}/start`)}>
+        <Button
+          variant={blockers.length > 0 ? "secondary" : "primary"}
+          title={blockers.length > 0 ? blockerTitle(blockers) : undefined}
+          onClick={() => run("POST", `${path}/start`)}
+        >
           Start
         </Button>
       )}
+      {item.status === "paused" && (
+        <Button variant="primary" onClick={() => run("POST", `${path}/resume`)}>
+          Resume
+        </Button>
+      )}
+      {(item.status === "open" || item.status === "in_progress") && (
+        <Button onClick={() => run("POST", `${path}/pause`)}>Pause</Button>
+      )}
       {item.status === "in_progress" && <Button onClick={() => run("POST", `${path}/stop`)}>Move to open</Button>}
-      {item.status === "in_progress" && <Button onClick={() => run("POST", `${path}/release`)}>Release</Button>}
+      {(item.status === "in_progress" || (item.status === "paused" && item.assignee_id)) && (
+        <Button onClick={() => run("POST", `${path}/release`)}>Release</Button>
+      )}
       {item.status !== "done" && (
         <Select value={item.assignee_id || 0} onChange={changeAssignee} aria-label="Assignee">
           <option value={0}>Unassigned</option>
@@ -390,6 +420,150 @@ function ItemActions({ item, path, participants, me, run, onDeleted }) {
         Delete
       </Button>
     </div>
+  );
+}
+
+function wouldCycle(byId, targetId, candidateId) {
+  const seen = new Set([candidateId]);
+  const queue = [candidateId];
+  while (queue.length > 0) {
+    const cur = queue.shift();
+    const it = byId.get(cur);
+    for (const n of it?.needs || []) {
+      if (n.id === targetId) return true;
+      if (!seen.has(n.id)) {
+        seen.add(n.id);
+        queue.push(n.id);
+      }
+    }
+  }
+  return false;
+}
+
+function NeedsList({ item, items, path, run }) {
+  const [adding, setAdding] = useState(false);
+  const [query, setQuery] = useState("");
+  const needs = item.needs || [];
+
+  const candidates = useMemo(() => {
+    const linked = new Set(needs.map((n) => n.id));
+    const byId = new Map(items.map((it) => [it.id, it]));
+    return items.filter((it) => it.id !== item.id && !linked.has(it.id) && !wouldCycle(byId, item.id, it.id));
+  }, [items, item.id, needs]);
+
+  const matches = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    const qNum = q.startsWith("#") ? q.slice(1) : q;
+    const filtered = q
+      ? candidates.filter((it) => {
+          const numStr = String(itemNum(it));
+          return numStr.includes(qNum) || it.title.toLowerCase().includes(q);
+        })
+      : candidates;
+    return [...filtered]
+      .sort((a, b) => {
+        const aDone = a.status === "done" ? 1 : 0;
+        const bDone = b.status === "done" ? 1 : 0;
+        if (aDone !== bDone) return aDone - bDone;
+        return (a.position || 999999) - (b.position || 999999) || itemNum(a) - itemNum(b);
+      })
+      .slice(0, 8);
+  }, [candidates, query]);
+
+  const addNeed = async (target) => {
+    if (!target) return;
+    const ok = await run("POST", `${path}/needs`, { needs: [itemNum(target)] });
+    if (ok) {
+      setQuery("");
+      setAdding(false);
+    }
+  };
+
+  if (needs.length === 0 && candidates.length === 0) return null;
+
+  return (
+    <section className="detail-section">
+      <div className="detail-section-head">
+        <h3>
+          Needs {needs.length > 0 && <span className="muted">({needs.length})</span>}
+        </h3>
+        {!adding && candidates.length > 0 && (
+          <Button type="button" size="small" variant="ghost" onClick={() => setAdding(true)}>
+            <Plus aria-hidden="true" />
+            Add prerequisite
+          </Button>
+        )}
+      </div>
+      {needs.map((n) => {
+        const nNum = itemNum(n);
+        return (
+          <div key={n.id} className="pr-line need-line">
+            <span className={`status ${n.status}`} title={STATUS_LABELS[n.status] || n.status} />
+            <a {...itemLink(nNum)}>
+              #{nNum} {n.title}
+            </a>
+            <span className={n.status === "paused" ? "chip status-chip-paused" : "chip"}>{STATUS_LABELS[n.status] || n.status}</span>
+            <Button
+              iconOnly
+              variant="ghost"
+              aria-label={`Remove prerequisite #${nNum}`}
+              title="Remove prerequisite"
+              onClick={() => run("DELETE", `${path}/needs`, { needs_item_id: nNum })}
+            >
+              <X aria-hidden="true" />
+            </Button>
+          </div>
+        );
+      })}
+      {adding && (
+        <div className="needs-picker">
+          <div className="detail-form">
+            <Input
+              autoFocus
+              aria-label="Search items to add as prerequisite"
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  setQuery("");
+                  setAdding(false);
+                } else if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (matches[0]) addNeed(matches[0]);
+                }
+              }}
+              placeholder="Filter by #number or title…"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              onClick={() => {
+                setQuery("");
+                setAdding(false);
+              }}
+            >
+              Cancel
+            </Button>
+          </div>
+          <div className="needs-picker-list" role="listbox" aria-label="Matching items">
+            {matches.length === 0 ? (
+              <p className="muted needs-picker-empty">No matching items.</p>
+            ) : (
+              matches.map((c) => (
+                <button key={c.id} type="button" className="needs-picker-option" onClick={() => addNeed(c)}>
+                  <span className={`status ${c.status}`} aria-hidden="true" />
+                  <span className="item-id">#{itemNum(c)}</span>
+                  <span className="needs-picker-title">{c.title}</span>
+                  <span className={c.status === "paused" ? "chip status-chip-paused" : "chip"}>{STATUS_LABELS[c.status] || c.status}</span>
+                </button>
+              ))
+            )}
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

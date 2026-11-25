@@ -230,6 +230,7 @@
   --status-open: var(--neutral-6);
   --status-in-progress: var(--accent);
   --status-assigned: var(--accent);
+  --status-paused: var(--warning);
   --status-done: var(--success);
   --presence-active: #22a06b;
   --presence-away: var(--status-open);
@@ -1758,6 +1759,30 @@ a.ws-mark:hover {
   background: conic-gradient(var(--status-in-progress) 0 50%, transparent 0);
 }
 
+.status.paused {
+  border-color: var(--status-paused);
+  background: var(--warning-transparent);
+}
+
+.status.paused::before,
+.status.paused::after {
+  content: "";
+  position: absolute;
+  top: 2.5px;
+  width: 1.5px;
+  height: 6px;
+  border-radius: 1px;
+  background: var(--status-paused);
+}
+
+.status.paused::before {
+  left: 3px;
+}
+
+.status.paused::after {
+  right: 3px;
+}
+
 .status.done {
   border-color: var(--status-done);
   background: var(--status-done);
@@ -1928,8 +1953,8 @@ button.group-head:hover {
   display: flex;
 }
 
-.row:hover .meta,
-.row:focus-within .meta {
+.row:has(.row-actions):hover .meta,
+.row:has(.row-actions):focus-within .meta {
   display: none;
 }
 
@@ -6031,5 +6056,84 @@ button.md-mention-chip.md-mention-me:hover {
     justify-content: flex-end;
   }
 }
+
+/* ---- Backlog dependencies (Needs) and Pause/Resume (#921) ---- */
+.activity-backlog-paused .lucide {
+  color: var(--status-paused);
+}
+
+.status-chip-paused {
+  background: var(--warning-transparent);
+  box-shadow: inset 0 0 0 var(--border-s) color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--text);
+  font-weight: var(--weight-ui-medium);
+}
+
+.blocker-chip {
+  background: var(--surface-muted);
+  box-shadow: inset 0 0 0 var(--border-s) var(--border-strong);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.need-line a {
+  flex: 1;
+}
+
+.needs-picker {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xxs);
+  margin-top: var(--space-xxs);
+}
+
+.needs-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-width: 560px;
+  max-height: 220px;
+  padding: var(--space-xxs);
+  overflow-y: auto;
+  border-radius: var(--radius-s);
+  background: var(--panel);
+  box-shadow: inset 0 0 0 var(--border-s) var(--panel-edge);
+}
+
+.needs-picker-option {
+  display: flex;
+  align-items: center;
+  gap: var(--space-xs);
+  width: 100%;
+  min-height: 30px;
+  padding: 4px var(--space-xs);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: none;
+  color: var(--text);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.needs-picker-option:hover,
+.needs-picker-option:focus-visible {
+  background: var(--surface-hover);
+  outline: none;
+}
+
+.needs-picker-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.needs-picker-empty {
+  padding: var(--space-xxs) var(--space-xs);
+  font-size: var(--size-xs);
+}
+
 
 

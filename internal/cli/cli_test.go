@@ -674,3 +674,93 @@ func TestBacklogListSort(t *testing.T) {
 		t.Errorf("--sort bogus: code=%d stderr=%q, want non-zero mentioning unknown sort", code, errOut)
 	}
 }
+
+func TestBacklogNeedsAndPauseCLI(t *testing.T) {
+	e := newTestEnv(t)
+	human, agent := t.TempDir(), t.TempDir()
+
+	e.login("Alex", "")
+	var ws store.Workspace
+	if err := json.Unmarshal([]byte(e.ok(human, "workspace", "create", "Unison", "--json")), &ws); err != nil {
+		t.Fatal(err)
+	}
+	invite := e.url + "/w/" + ws.ID
+	e.ok(human, "join", invite, "--name", "Alex", "--emoji", "🧑", "--account")
+	e.ok(agent, "join", invite, "--pass", e.passFor(human), "--name", "Ada", "--emoji", "🦊")
+
+	e.ok(human, "backlog", "add", "Ship UI")
+	e.ok(human, "backlog", "add", "Build API")
+	e.ok(human, "backlog", "add", "Design schema")
+
+	// Link #1 ("Ship UI") needs #2 ("Build API") and #3 ("Design schema"), and #2 needs #3.
+	if out := e.ok(human, "backlog", "needs", "1"); !strings.Contains(out, "No prerequisites on #1.") {
+		t.Fatalf("empty needs = %q", out)
+	}
+	show1 := e.ok(human, "backlog", "needs", "1", "#2", "3")
+	for _, want := range []string{`Blocked   by #2 "Build API", #3 "Design schema"`, "Needs     #2 Build API [open]", "#3 Design schema [open]"} {
+		if !strings.Contains(show1, want) {
+			t.Errorf("backlog needs 1 #2 3 missing %q:\n%s", want, show1)
+		}
+	}
+	e.ok(human, "backlog", "needs", "#2", "#3")
+
+	// Cycle detection surfaces 409 error in CLI.
+	if _, errOut, code := e.run(human, "backlog", "needs", "3", "1"); code == 0 || !strings.Contains(errOut, "cycle") {
+		t.Fatalf("cycle should fail: exit=%d stderr=%q", code, errOut)
+	}
+
+	// List shows [blocked by ...] markers.
+	list := e.ok(human, "backlog")
+	if !strings.Contains(list, "[blocked by #2, #3]") || !strings.Contains(list, "[blocked by #3]") {
+		t.Errorf("backlog list missing blocker tags:\n%s", list)
+	}
+	if needsList := e.ok(human, "backlog", "needs", "1"); !strings.Contains(needsList, "#2") || !strings.Contains(needsList, "Build API") {
+		t.Errorf("backlog needs 1 = %q", needsList)
+	}
+
+	// Pause #3; now #1 and #2 are blocked and #3 is paused -> `backlog claim` exits with code 3!
+	paused3 := e.ok(human, "backlog", "pause", "3")
+	if !strings.Contains(paused3, "[paused]") {
+		t.Fatalf("backlog pause 3 = %q", paused3)
+	}
+	if out := e.ok(human, "backlog", "--status", "paused"); !strings.Contains(out, "Design schema") {
+		t.Errorf("backlog --status paused = %q", out)
+	}
+	if _, _, code := e.run(agent, "backlog", "claim"); code != 3 {
+		t.Fatalf("claim when all items are blocked or paused: exit = %d, want 3", code)
+	}
+	if _, errOut, code := e.run(agent, "backlog", "start", "3"); code == 0 || !strings.Contains(errOut, "paused") {
+		t.Fatalf("start paused item: exit=%d stderr=%q", code, errOut)
+	}
+
+	// Resume #3 -> Ada claims #3 (skipping higher-priority blocked #1 and #2!).
+	if resumed3 := e.ok(human, "backlog", "resume", "3"); !strings.Contains(resumed3, "[open]") {
+		t.Fatalf("backlog resume 3 = %q", resumed3)
+	}
+	claimed := e.ok(agent, "backlog", "claim")
+	if !strings.Contains(claimed, "#3  Design schema") {
+		t.Fatalf("claim should skip blocked #1/#2 and pick #3:\n%s", claimed)
+	}
+
+	// Pausing in-progress #3 clears its lease while keeping assignee Ada.
+	pausedInProgress := e.ok(human, "backlog", "pause", "3")
+	if !strings.Contains(pausedInProgress, "[paused → 🦊 Ada]") || strings.Contains(pausedInProgress, "lease") {
+		t.Fatalf("pause in-progress item = %q", pausedInProgress)
+	}
+
+	// Close #3, remove #2 from #1's needs -> #1 is unblocked and claimable.
+	e.ok(agent, "backlog", "close", "3", "--note", "schema merged")
+	afterRemove := e.ok(human, "backlog", "needs", "1", "--remove", "#2")
+	if strings.Contains(afterRemove, "Blocked") || !strings.Contains(afterRemove, "#3 Design schema [done]") {
+		t.Fatalf("after removing #2 and closing #3:\n%s", afterRemove)
+	}
+	if claimed1 := e.ok(agent, "backlog", "claim"); !strings.Contains(claimed1, "#1  Ship UI") {
+		t.Fatalf("expected claim to pick newly unblocked #1:\n%s", claimed1)
+	}
+
+	// Activity feed renders paused and resumed events.
+	act := e.ok(human, "activity")
+	if !strings.Contains(act, `paused #3 "Design schema"`) || !strings.Contains(act, `resumed #3 "Design schema"`) {
+		t.Errorf("activity missing paused/resumed:\n%s", act)
+	}
+}

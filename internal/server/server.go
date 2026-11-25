@@ -290,6 +290,8 @@ func (s *Server) routes() {
 	h("POST "+ws+"/backlog/{id}/assign", s.auth(s.assignItem))
 	h("POST "+ws+"/backlog/{id}/start", s.auth(s.startItem))
 	h("POST "+ws+"/backlog/{id}/stop", s.auth(s.stopItem))
+	h("POST "+ws+"/backlog/{id}/pause", s.auth(s.pauseItem))
+	h("POST "+ws+"/backlog/{id}/resume", s.auth(s.resumeItem))
 	h("POST "+ws+"/backlog/{id}/release", s.auth(s.releaseItem))
 	h("POST "+ws+"/backlog/{id}/close", s.auth(s.closeItem))
 	h("POST "+ws+"/backlog/{id}/reopen", s.auth(s.reopenItem))
@@ -300,6 +302,10 @@ func (s *Server) routes() {
 	h("DELETE "+ws+"/backlog/{id}/comments/{cid}", s.auth(s.deleteComment))
 	h("POST "+ws+"/backlog/{id}/prs", s.auth(s.linkPR))
 	h("DELETE "+ws+"/backlog/{id}/prs", s.auth(s.unlinkPR))
+	h("GET "+ws+"/backlog/{id}/needs", s.listItemNeeds)
+	h("POST "+ws+"/backlog/{id}/needs", s.auth(s.addItemNeeds))
+	h("DELETE "+ws+"/backlog/{id}/needs", s.auth(s.removeItemNeed))
+	h("DELETE "+ws+"/backlog/{id}/needs/{need}", s.auth(s.removeItemNeedByPath))
 	h("GET "+ws+"/ideas", s.listIdeas)
 	h("POST "+ws+"/ideas", s.auth(s.addIdea))
 	h("GET "+ws+"/ideas/{id}", s.getIdea)
@@ -1004,6 +1010,24 @@ func (s *Server) stopItem(w http.ResponseWriter, r *http.Request) {
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 
+func (s *Server) pauseItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.PauseItem(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) resumeItem(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.ResumeItem(r.Context(), actor(r), id)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
 func (s *Server) claimNext(w http.ResponseWriter, r *http.Request) {
 	it, evs, err := s.store.ClaimNext(r.Context(), actor(r))
 	s.respond(w, http.StatusOK, it, evs, err)
@@ -1131,6 +1155,83 @@ func (s *Server) unlinkPR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	it, evs, err := s.store.UnlinkPR(r.Context(), actor(r), id, u)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) listItemNeeds(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	list, evs, err := s.store.ListItemNeeds(r.Context(), r.PathValue("ws"), id)
+	s.respond(w, http.StatusOK, list, evs, err)
+}
+
+func (s *Server) addItemNeeds(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		Needs       []int64 `json:"needs"`
+		NeedsItemID int64   `json:"needs_item_id"`
+		ID          int64   `json:"id"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	needIDs := req.Needs
+	if len(needIDs) == 0 {
+		if req.NeedsItemID > 0 {
+			needIDs = []int64{req.NeedsItemID}
+		} else if req.ID > 0 {
+			needIDs = []int64{req.ID}
+		}
+	}
+	it, evs, err := s.store.AddItemNeeds(r.Context(), actor(r), id, needIDs...)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) removeItemNeed(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	var req struct {
+		NeedsItemID int64 `json:"needs_item_id"`
+		ID          int64 `json:"id"`
+	}
+	if !decode(w, r, &req) {
+		return
+	}
+	needID := req.NeedsItemID
+	if needID == 0 {
+		needID = req.ID
+	}
+	if needID == 0 {
+		if raw := firstNonEmpty(r.URL.Query().Get("needs_item_id"), r.URL.Query().Get("id")); raw != "" {
+			parsed, err := strconv.ParseInt(strings.TrimPrefix(raw, "#"), 10, 64)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "id must be a number")
+				return
+			}
+			needID = parsed
+		}
+	}
+	it, evs, err := s.store.RemoveItemNeed(r.Context(), actor(r), id, needID)
+	s.respond(w, http.StatusOK, it, evs, err)
+}
+
+func (s *Server) removeItemNeedByPath(w http.ResponseWriter, r *http.Request) {
+	id, ok := pathID(w, r)
+	if !ok {
+		return
+	}
+	needID, ok := pathInt(w, r, "need")
+	if !ok {
+		return
+	}
+	it, evs, err := s.store.RemoveItemNeed(r.Context(), actor(r), id, needID)
 	s.respond(w, http.StatusOK, it, evs, err)
 }
 

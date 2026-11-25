@@ -221,7 +221,7 @@ Sections (optional custom sections alongside Backlog, e.g. Triage, Decisions):
   section delete <id-or-slug>        delete section (items move back to Backlog)
 
 Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also resolve):
-  backlog [list] [--status open|in_progress|done|all] [--section SLUG|all]
+  backlog [list] [--status open|in_progress|paused|done|all] [--section SLUG|all]
                  [--sort priority|newest|oldest|updated|title]
   backlog show <id>                  the item, its comments and the chat
                                      messages about it
@@ -232,11 +232,14 @@ Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also re
   backlog answer <id> <choice>       record a structured decision choice (label
                                      or 1-based index; closes item if configured)
   backlog move <id> <position>
-  backlog claim                      atomically assign & start the top open item
-                                     not assigned to someone else
+  backlog claim                      atomically assign & start the top open
+                                     unblocked item not assigned to someone else
   backlog start <id>                 start working on an item (or renew your
                                      12-hour lease)
   backlog stop <id>                  move back to open, keeping the assignee
+  backlog pause <id>                 pause an item (clears any active lease;
+                                     skipped by claim until resumed)
+  backlog resume <id>                resume a paused item back to open
   backlog assign <id> [--to NAME|none]
                                      set or clear assignee without starting work
   backlog unassign <id>              clear the assignee
@@ -245,6 +248,9 @@ Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also re
                                      also linked to the item as PRs)
   backlog reopen <id>
   backlog delete <id>
+  backlog needs <id> [<need-id>...]  list or link prerequisite items (blocks
+                                     claim until done)
+  backlog needs <id> --remove <id>   remove a prerequisite item
   backlog comments <id>              an item's comments
   backlog comment <id> <text>        comment on an item (@Name mentions)
   backlog comment <id> --delete CID  delete one of your comments
@@ -1902,6 +1908,8 @@ func (a *app) backlog(args []string) error {
 		return a.backlogComment(args)
 	case "pr":
 		return a.backlogPR(args)
+	case "needs":
+		return a.backlogNeeds(args)
 	case "add":
 		return a.backlogAdd(args)
 	case "edit":
@@ -1934,9 +1942,13 @@ func (a *app) backlog(args []string) error {
 	case "unassign":
 		return a.itemCommand(args, "POST", "/assign", map[string]int64{"assignee_id": 0}, true)
 	case "start":
-		return a.itemCommand(args, "POST", "/start", nil, true)
+		return a.backlogStart(args)
 	case "stop":
 		return a.itemCommand(args, "POST", "/stop", nil, true)
+	case "pause":
+		return a.itemCommand(args, "POST", "/pause", nil, true)
+	case "resume":
+		return a.itemCommand(args, "POST", "/resume", nil, true)
 	case "release":
 		return a.itemCommand(args, "POST", "/release", nil, true)
 	case "close":
@@ -1975,6 +1987,26 @@ func (a *app) backlog(args []string) error {
 	return fmt.Errorf("%w: unknown backlog subcommand %q", errUsage, sub)
 }
 
+func (a *app) backlogStart(args []string) error {
+	if len(args) != 1 {
+		return fmt.Errorf("%w: expected exactly one item id", errUsage)
+	}
+	id, err := parseID(args[0])
+	if err != nil {
+		return err
+	}
+	var it store.Item
+	if ok, err := a.call("POST", fmt.Sprintf("/backlog/%d/start", id), nil, &it, true); !ok {
+		return err
+	}
+	if !a.jsonOut {
+		if blockers := it.Blockers(); len(blockers) > 0 && a.errOut != nil {
+			fmt.Fprintf(a.errOut, "Note: #%d has unfinished prerequisites (%s).\n", itemNum(&it), formatNeedIDs(blockers))
+		}
+	}
+	return a.printItemDetail(&it)
+}
+
 // itemCommand runs method on /backlog/{id}{suffix} and prints the item.
 func (a *app) itemCommand(args []string, method, suffix string, body any, auth bool) error {
 	if len(args) != 1 {
@@ -1993,7 +2025,7 @@ func (a *app) itemCommand(args []string, method, suffix string, body any, auth b
 
 func (a *app) backlogList(args []string) error {
 	fs := flag.NewFlagSet("backlog list", flag.ContinueOnError)
-	status := fs.String("status", "", "open, in_progress, done or all (default: open and in_progress)")
+	status := fs.String("status", "", "open, in_progress, paused, done or all (default: queued items)")
 	section := fs.String("section", "", "section slug or id, or all (default: main Backlog)")
 	sortBy := fs.String("sort", "", "view sort order: priority, newest, oldest, updated or title (default: priority)")
 	pos, err := parseFlags(fs, args)
@@ -2001,7 +2033,7 @@ func (a *app) backlogList(args []string) error {
 		return err
 	}
 	if len(pos) != 0 {
-		return fmt.Errorf("%w: backlog [list] [--status open|in_progress|done|all] [--section SLUG|all] [--sort priority|newest|oldest|updated|title]", errUsage)
+		return fmt.Errorf("%w: backlog [list] [--status open|in_progress|paused|done|all] [--section SLUG|all] [--sort priority|newest|oldest|updated|title]", errUsage)
 	}
 	q := url.Values{}
 	q.Set("status", *status)
@@ -2032,12 +2064,23 @@ func (a *app) backlogList(args []string) error {
 	return nil
 }
 
+func formatNeedIDs(needs []store.ItemNeed) string {
+	parts := make([]string, len(needs))
+	for i, n := range needs {
+		parts[i] = fmt.Sprintf("#%d", n.DisplayNumber())
+	}
+	return strings.Join(parts, ", ")
+}
+
 func itemLine(people map[int64]store.Participant, it *store.Item) string {
 	pos := "  "
 	if it.Status != store.StatusDone {
 		pos = fmt.Sprintf("%d.", it.Position)
 	}
 	extra := ""
+	if blockers := it.Blockers(); len(blockers) > 0 {
+		extra += fmt.Sprintf("  [blocked by %s]", formatNeedIDs(blockers))
+	}
 	if it.SectionName != "" {
 		extra += fmt.Sprintf("  [%s]", it.SectionName)
 	}
@@ -2061,6 +2104,11 @@ func itemState(people map[int64]store.Participant, it *store.Item) string {
 			return fmt.Sprintf("[in progress%s, lease %dh%02dm left]", who, int(left.Hours()), int(left.Minutes())%60)
 		}
 		return fmt.Sprintf("[in progress%s]", who)
+	case store.StatusPaused:
+		if it.AssigneeID != nil {
+			return fmt.Sprintf("[paused → %s]", label(people, *it.AssigneeID))
+		}
+		return "[paused]"
 	case store.StatusDone:
 		s := "[done"
 		if it.AssigneeID != nil {
@@ -2077,6 +2125,13 @@ func itemState(people map[int64]store.Participant, it *store.Item) string {
 	return "[open]"
 }
 
+func needStatusLabel(status string) string {
+	if status == store.StatusInProgress {
+		return "in progress"
+	}
+	return status
+}
+
 func (a *app) printItemDetail(it *store.Item) error {
 	people, err := a.participants()
 	if err != nil {
@@ -2091,6 +2146,13 @@ func (a *app) printItemDetail(it *store.Item) error {
 		a.printf("Priority  %d\n", it.Position)
 	}
 	a.printf("State     %s\n", itemState(people, it))
+	if blockers := it.Blockers(); len(blockers) > 0 {
+		parts := make([]string, len(blockers))
+		for i, b := range blockers {
+			parts[i] = fmt.Sprintf("#%d %q", b.DisplayNumber(), b.Title)
+		}
+		a.printf("Blocked   by %s\n", strings.Join(parts, ", "))
+	}
 	a.printf("Created   by %s, %s\n", label(people, it.CreatedBy), ago(it.CreatedAt))
 	if len(it.Choices) > 0 {
 		var formatted []string
@@ -2116,6 +2178,13 @@ func (a *app) printItemDetail(it *store.Item) error {
 			dec += ", " + ago(*it.AnsweredAt)
 		}
 		a.printf("Decision  %s\n", dec)
+	}
+	for i, n := range it.Needs {
+		heading := "Needs    "
+		if i > 0 {
+			heading = "         "
+		}
+		a.printf("%s #%d %s [%s]\n", heading, n.DisplayNumber(), n.Title, needStatusLabel(n.Status))
 	}
 	for i, pr := range it.PRs {
 		heading := "PRs      "
@@ -2284,6 +2353,56 @@ func (a *app) backlogPR(args []string) error {
 		return a.itemCommand(pos[:1], "POST", "/prs", map[string]string{"url": pos[1]}, true)
 	}
 	return fmt.Errorf("%w: backlog pr <id> <url> | backlog pr <id> --remove <url>", errUsage)
+}
+
+func (a *app) backlogNeeds(args []string) error {
+	fs := flag.NewFlagSet("backlog needs", flag.ContinueOnError)
+	remove := fs.String("remove", "", "prerequisite item id to remove")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	switch {
+	case *remove != "" && len(pos) == 1:
+		needID, err := parseID(*remove)
+		if err != nil {
+			return err
+		}
+		return a.itemCommand(pos, "DELETE", "/needs", map[string]int64{"needs_item_id": needID}, true)
+	case *remove == "" && len(pos) == 1:
+		id, err := parseID(pos[0])
+		if err != nil {
+			return err
+		}
+		if a.jsonOut {
+			_, err := a.call("GET", fmt.Sprintf("/backlog/%d/needs", id), nil, nil, false)
+			return err
+		}
+		var it store.Item
+		if ok, err := a.call("GET", fmt.Sprintf("/backlog/%d", id), nil, &it, false); !ok {
+			return err
+		}
+		num := itemNum(&it)
+		if len(it.Needs) == 0 {
+			a.printf("No prerequisites on #%d.\n", num)
+			return nil
+		}
+		for _, n := range it.Needs {
+			a.printf("#%-4d %-40s [%s]\n", n.DisplayNumber(), n.Title, needStatusLabel(n.Status))
+		}
+		return nil
+	case *remove == "" && len(pos) >= 2:
+		needIDs := make([]int64, 0, len(pos)-1)
+		for _, raw := range pos[1:] {
+			nid, err := parseID(raw)
+			if err != nil {
+				return err
+			}
+			needIDs = append(needIDs, nid)
+		}
+		return a.itemCommand(pos[:1], "POST", "/needs", map[string][]int64{"needs": needIDs}, true)
+	}
+	return fmt.Errorf("%w: backlog needs <id> [<need-id>...] | backlog needs <id> --remove <need-id>", errUsage)
 }
 
 func (a *app) backlogAdd(args []string) error {
@@ -2984,15 +3103,18 @@ func describeEvent(people map[int64]store.Participant, e store.Event) string {
 		if e.Type == "backlog.answered" {
 			return fmt.Sprintf("📋 %s answered #%d %q → %q", who, num, it.Title, it.AnsweredChoice)
 		}
+		if e.Type == "backlog.needs_updated" {
+			return fmt.Sprintf("📋 %s updated prerequisites on #%d %q", who, num, it.Title)
+		}
 		line := fmt.Sprintf("📋 %s %s #%d %q", who, verb, num, it.Title)
 		if it.SectionName != "" {
 			line += fmt.Sprintf(" [%s]", it.SectionName)
 		}
 		switch e.Type {
-		case "backlog.added":
+		case "backlog.added", "backlog.resumed":
 			if it.AssigneeID != nil {
 				line += " → " + label(people, *it.AssigneeID)
-			} else if it.SectionID == nil {
+			} else if it.SectionID == nil && !it.IsBlocked() {
 				line += fmt.Sprintf(" (pick it up with `unison backlog start %d` if you're free)", num)
 			}
 		case "backlog.assigned":

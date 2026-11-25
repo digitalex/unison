@@ -232,3 +232,60 @@ func itoa(n int64) string {
 	raw, _ := json.Marshal(n)
 	return string(raw)
 }
+
+func TestBacklogNeedsAndPauseAPI(t *testing.T) {
+	ts, st := newServer(t)
+	ws, _, _ := st.CreateWorkspace(t.Context(), "W", "", "")
+	_, ada, _, _ := joinMember(t, st, ws.ID, "Ada", "")
+	base := ts.URL + "/api/workspaces/" + ws.ID + "/backlog"
+
+	_, it1 := call(t, "POST", base, ada, `{"title":"Prerequisite"}`)
+	_, it2 := call(t, "POST", base, ada, `{"title":"Dependent"}`)
+	if it1["ready_at"] == nil || it2["ready_at"] == nil {
+		t.Fatalf("new items should have non-nil ready_at: %v / %v", it1["ready_at"], it2["ready_at"])
+	}
+
+	// Self-dependency -> 400.
+	if status, _ := call(t, "POST", base+"/1/needs", ada, `{"needs":[1]}`); status != http.StatusBadRequest {
+		t.Errorf("self-dependency status = %d, want 400", status)
+	}
+	// Missing item -> 404.
+	if status, _ := call(t, "POST", base+"/2/needs", ada, `{"needs":[99]}`); status != http.StatusNotFound {
+		t.Errorf("missing prerequisite status = %d, want 404", status)
+	}
+	// Link #2 needs #1 -> 200, ready_at becomes null.
+	status, linked := call(t, "POST", base+"/2/needs", ada, `{"needs":[1]}`)
+	if status != http.StatusOK || linked["ready_at"] != nil || len(linked["needs"].([]any)) != 1 {
+		t.Fatalf("POST /needs = %d %v", status, linked)
+	}
+	// Cycle #1 needs #2 -> 409.
+	if status, _ := call(t, "POST", base+"/1/needs", ada, `{"needs":[2]}`); status != http.StatusConflict {
+		t.Errorf("cycle status = %d, want 409", status)
+	}
+	// GET /needs returns the prerequisite list.
+	if status, body := getAs(t, base+"/2/needs", ada); status != http.StatusOK || !strings.Contains(body, `"Prerequisite"`) {
+		t.Errorf("GET /needs = %d %s", status, body)
+	}
+
+	// Pause #1; now #1 is paused and #2 is blocked on #1 -> POST /backlog/claim returns 404.
+	status, paused := call(t, "POST", base+"/1/pause", ada, "")
+	if status != http.StatusOK || paused["status"] != store.StatusPaused {
+		t.Fatalf("POST /pause = %d %v", status, paused)
+	}
+	if status, _ := call(t, "POST", base+"/claim", ada, ""); status != http.StatusNotFound {
+		t.Errorf("POST /claim with only paused+blocked items = %d, want 404", status)
+	}
+	if status, _ := call(t, "POST", base+"/1/start", ada, ""); status != http.StatusConflict {
+		t.Errorf("POST /start on paused item = %d, want 409", status)
+	}
+
+	// Resume #1 -> 200 open; remove need via DELETE /needs/{need} -> #2 ready again.
+	status, resumed := call(t, "POST", base+"/1/resume", ada, "")
+	if status != http.StatusOK || resumed["status"] != store.StatusOpen {
+		t.Fatalf("POST /resume = %d %v", status, resumed)
+	}
+	status, unlinked := call(t, "DELETE", base+"/2/needs/1", ada, "")
+	if status != http.StatusOK || unlinked["ready_at"] == nil || len(unlinked["needs"].([]any)) != 0 {
+		t.Fatalf("DELETE /needs/1 = %d %v", status, unlinked)
+	}
+}

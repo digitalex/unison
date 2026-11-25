@@ -59,10 +59,22 @@ function lastSeen(p) {
 
 // The events chat shows as one-line activity updates (#93); the server's
 // store.ActivityTypes.
-const ACTIVITY_TYPES = ["backlog.added", "backlog.assigned", "backlog.started", "backlog.closed", "backlog.reopened", "comment.added", "participant.joined", "member.removed"];
+const ACTIVITY_TYPES = [
+  "backlog.added",
+  "backlog.assigned",
+  "backlog.started",
+  "backlog.paused",
+  "backlog.resumed",
+  "backlog.closed",
+  "backlog.reopened",
+  "comment.added",
+  "participant.joined",
+  "member.removed",
+];
 
-// Item events after which other items' positions may have changed.
+// Item events after which other items' positions or readiness may have changed.
 const RENUMBERS = ["backlog.added", "backlog.moved", "backlog.closed", "backlog.reopened", "backlog.deleted"];
+const QUEUE_RELOADS = [...RENUMBERS, "backlog.updated", "backlog.paused", "backlog.resumed", "backlog.needs_updated"];
 
 // Which collections each event invalidates.
 function collectionFor({ type, data }) {
@@ -75,10 +87,10 @@ function collectionFor({ type, data }) {
     return type === "message.done" || type === "message.undone" || data.action_required ? ["me"] : [];
   }
   // Item events carry the item and are applied in place too (#105). Those
-  // that renumber the queue (adding, moving, closing, reopening, deleting, or
-  // moving between sections via updated) also reload open and assigned items.
+  // that renumber the queue or update dependencies/pause state also reload
+  // queued items.
   if (type.startsWith("backlog.") || type.startsWith("comment.") || type.startsWith("pr.")) {
-    const reloads = RENUMBERS.includes(type) || type === "backlog.updated" || !(data?.id || data?.item?.id) ? ["queued"] : [];
+    const reloads = QUEUE_RELOADS.includes(type) || !(data?.id || data?.item?.id) ? ["queued"] : [];
     if (ACTIVITY_TYPES.includes(type)) reloads.push("activity");
     if (data?.section_notify || type === "backlog.updated") reloads.push("me");
     return reloads;
@@ -114,9 +126,19 @@ function withMessage(list, m) {
   return list.length && list[list.length - 1].id > m.id ? out.sort((a, b) => a.id - b.id) : out;
 }
 
-// withItem returns the backlog with item it in it (replaced by id, or added).
+// withItem returns the backlog with item it in it (replaced by id, or added),
+// also syncing any dependent items' prerequisite summary for it.
 function withItem(list, it) {
-  return list.some((x) => x.id === it.id) ? list.map((x) => (x.id === it.id ? it : x)) : [...list, it];
+  const next = list.some((x) => x.id === it.id) ? list.map((x) => (x.id === it.id ? it : x)) : [...list, it];
+  return next.map((x) => {
+    if (!x.needs?.some((n) => n.id === it.id)) return x;
+    return {
+      ...x,
+      needs: x.needs.map((n) =>
+        n.id === it.id ? { ...n, number: it.number || n.number, title: it.title, status: it.status, closed_at: it.closed_at } : n,
+      ),
+    };
+  });
 }
 
 // withQueued returns the backlog with its open and assigned items replaced by
