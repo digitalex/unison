@@ -16,6 +16,9 @@ import (
 
 // image uploads and downloads workspace images (#292).
 func (a *app) image(args []string) error {
+	if err := dispatcherHelp("image", args); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("%w: image upload <file> [--name N] | image save <id-or-url> <dest>", errUsage)
 	}

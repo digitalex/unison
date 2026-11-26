@@ -43,7 +43,11 @@ func buildVersion() string {
 }
 
 func (a *app) version(args []string) error {
-	if len(args) != 0 {
+	pos, err := positionalArgs("version", args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 {
 		return fmt.Errorf("%w: version", errUsage)
 	}
 	v := buildVersion()

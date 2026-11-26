@@ -12,6 +12,9 @@ import (
 )
 
 func (a *app) todo(args []string) error {
+	if err := dispatcherHelp("todo", args); err != nil {
+		return err
+	}
 	sub := "ls"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -196,6 +199,10 @@ func (a *app) todoDone(args []string) error {
 }
 
 func (a *app) todoReopen(args []string) error {
+	args, err := positionalArgs("todo reopen", args)
+	if err != nil {
+		return err
+	}
 	id, err := oneID(args, "todo reopen <id>")
 	if err != nil {
 		return err
@@ -209,6 +216,10 @@ func (a *app) todoReopen(args []string) error {
 }
 
 func (a *app) todoSnooze(args []string) error {
+	args, err := positionalArgs("todo snooze", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 2 {
 		return fmt.Errorf("%w: todo snooze <id> (1d | 1w | off)", errUsage)
 	}
@@ -233,6 +244,10 @@ func (a *app) todoSnooze(args []string) error {
 }
 
 func (a *app) todoDelete(args []string) error {
+	args, err := positionalArgs("todo delete", args)
+	if err != nil {
+		return err
+	}
 	id, err := oneID(args, "todo delete <id>")
 	if err != nil {
 		return err

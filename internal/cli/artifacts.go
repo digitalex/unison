@@ -19,6 +19,9 @@ import (
 // artifact manages workspace artifacts (#918): design docs, HTML prototypes,
 // reports, and screenshots served at /w/{ws}/artifacts/{file}.
 func (a *app) artifact(args []string) error {
+	if err := dispatcherHelp("artifact", args); err != nil {
+		return err
+	}
 	sub := "ls"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -415,7 +418,7 @@ func (a *app) artifactUpdate(args []string) error {
 		return err
 	}
 	if len(pos) < 1 || len(pos) > 2 {
-		return fmt.Errorf("%w: artifact update <name> [<path>] [--title T] [--item ID]", errUsage)
+		return fmt.Errorf("%w: artifact update <name> [<path>] [--title T] [--item ID|none]", errUsage)
 	}
 	name, err := extractArtifactName(pos[0])
 	if err != nil {
@@ -461,7 +464,7 @@ func (a *app) artifactUpdate(args []string) error {
 	}
 
 	if !hasTitle && !hasItem {
-		return fmt.Errorf("%w: artifact update <name> [<path>] [--title T] [--item ID]", errUsage)
+		return fmt.Errorf("%w: artifact update <name> [<path>] [--title T] [--item ID|none]", errUsage)
 	}
 	patch := map[string]any{}
 	if hasTitle {

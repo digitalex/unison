@@ -16,6 +16,9 @@ import (
 // ---- feedback (#281) ----
 
 func (a *app) feedback(args []string) error {
+	if err := dispatcherHelp("feedback", args); err != nil {
+		return err
+	}
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -36,7 +39,11 @@ func (a *app) feedback(args []string) error {
 	case "reopen":
 		return a.feedbackSetStatus(args, "reopen", "Reopened")
 	case "delete", "rm":
-		id, err := oneID(args, "feedback rm <id>")
+		args, err := positionalArgs("feedback delete", args)
+		if err != nil {
+			return err
+		}
+		id, err := oneID(args, "feedback delete|rm <id>")
 		if err != nil {
 			return err
 		}
@@ -47,15 +54,15 @@ func (a *app) feedback(args []string) error {
 		a.printf("Deleted feedback %d.\n", id)
 		return nil
 	case "enable":
-		return a.feedbackToggle(args, true)
+		return a.feedbackToggle("feedback enable", args, true)
 	case "disable":
-		return a.feedbackToggle(args, false)
+		return a.feedbackToggle("feedback disable", args, false)
 	}
 	return fmt.Errorf("%w: unknown feedback subcommand %q", errUsage, sub)
 }
 
-func (a *app) feedbackToggle(args []string, enabled bool) error {
-	if _, err := parseFlags(flag.NewFlagSet("feedback", flag.ContinueOnError), args); err != nil {
+func (a *app) feedbackToggle(topic string, args []string, enabled bool) error {
+	if _, err := parseFlags(flag.NewFlagSet(topic, flag.ContinueOnError), args); err != nil {
 		return err
 	}
 	var ws store.Workspace
@@ -152,6 +159,10 @@ func (a *app) printFeedbackDetail(f *store.Feedback) error {
 }
 
 func (a *app) feedbackShow(args []string) error {
+	args, err := positionalArgs("feedback show", args)
+	if err != nil {
+		return err
+	}
 	id, err := oneID(args, "feedback show <id>")
 	if err != nil {
 		return err
@@ -291,6 +302,10 @@ func (a *app) feedbackPromote(args []string) error {
 }
 
 func (a *app) feedbackSetStatus(args []string, action, past string) error {
+	args, err := positionalArgs("feedback "+action, args)
+	if err != nil {
+		return err
+	}
 	id, err := oneID(args, fmt.Sprintf("feedback %s <id>", action))
 	if err != nil {
 		return err

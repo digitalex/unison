@@ -25,14 +25,28 @@ func (a *app) needUserToken() (string, error) {
 }
 
 func (a *app) members(args []string) error {
+	if err := dispatcherHelp("members", args); err != nil {
+		return err
+	}
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
 	}
 	switch sub {
 	case "list", "ls":
+		pos, err := positionalArgs("members list", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: members", errUsage)
+		}
 		return a.membersList()
 	case "remove", "rm":
+		args, err := positionalArgs("members remove", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
 			return fmt.Errorf("%w: members remove <user-id>", errUsage)
 		}
@@ -142,12 +156,38 @@ func (a *app) pass(args []string) error {
 
 // invites handles `unison invite …` and `unison invites`.
 func (a *app) invites(cmd string, args []string) error {
-	if cmd == "invites" || len(args) == 0 || args[0] == "list" {
+	if cmd == "invites" {
+		pos, err := positionalArgs("invites", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: invites", errUsage)
+		}
+		return a.invitesList()
+	}
+	if err := dispatcherHelp("invite", args); err != nil {
+		return err
+	}
+	if len(args) == 0 {
 		return a.invitesList()
 	}
 	sub, args := args[0], args[1:]
 	switch sub {
+	case "list", "ls":
+		pos, err := positionalArgs("invites", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: invite list", errUsage)
+		}
+		return a.invitesList()
 	case "email":
+		args, err := positionalArgs("invite email", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
 			return fmt.Errorf("%w: invite email <address>", errUsage)
 		}
@@ -160,6 +200,10 @@ func (a *app) invites(cmd string, args []string) error {
 		a.printf("Invited %s (invite %d): they can join within 48 hours by signing in with that verified email.\n", resp.Invite.Email, resp.Invite.ID)
 		return nil
 	case "link":
+		args, err := positionalArgs("invite link", args)
+		if err != nil {
+			return err
+		}
 		if len(args) > 0 {
 			return fmt.Errorf("%w: invite link takes no options (every invite works for 48 hours)", errUsage)
 		}
@@ -174,6 +218,10 @@ func (a *app) invites(cmd string, args []string) error {
 			resp.Invite.ID, time.UnixMilli(resp.Invite.ExpiresAt).Format("2006-01-02 15:04"), resp.URL)
 		return nil
 	case "revoke":
+		args, err := positionalArgs("invite revoke", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
 			return fmt.Errorf("%w: invite revoke <id>", errUsage)
 		}

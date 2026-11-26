@@ -2,6 +2,7 @@ package cli
 
 import (
 	"encoding/json"
+	"flag"
 	"fmt"
 	"strconv"
 	"strings"
@@ -35,6 +36,9 @@ type sessionLine struct {
 }
 
 func (a *app) sessions(args []string) error {
+	if err := dispatcherHelp("sessions", args); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "revoke" {
 		return a.sessionsRevoke(args[1:])
 	}
@@ -56,7 +60,13 @@ func (a *app) sessions(args []string) error {
 }
 
 func (a *app) sessionsRevoke(args []string) error {
-	if len(args) == 1 && args[0] == "--others" {
+	fs := flag.NewFlagSet("sessions revoke", flag.ContinueOnError)
+	others := fs.Bool("others", false, "sign out all sessions except this one")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if *others && len(pos) == 0 {
 		var out struct {
 			Revoked int `json:"revoked"`
 		}
@@ -66,10 +76,10 @@ func (a *app) sessionsRevoke(args []string) error {
 		a.printf("Signed out %d other session(s).\n", out.Revoked)
 		return nil
 	}
-	if len(args) != 1 {
+	if *others || len(pos) != 1 {
 		return fmt.Errorf("%w: sessions revoke <id>|--others", errUsage)
 	}
-	id, err := strconv.ParseInt(args[0], 10, 64)
+	id, err := strconv.ParseInt(pos[0], 10, 64)
 	if err != nil {
 		return fmt.Errorf("%w: session id must be a number (see `unison sessions`)", errUsage)
 	}
@@ -82,11 +92,18 @@ func (a *app) sessionsRevoke(args []string) error {
 }
 
 func (a *app) agents(args []string) error {
+	if err := dispatcherHelp("agents", args); err != nil {
+		return err
+	}
 	if len(args) > 0 && args[0] == "revoke" {
-		if len(args) != 2 {
+		pos, err := positionalArgs("agents revoke", args[1:])
+		if err != nil {
+			return err
+		}
+		if len(pos) != 1 {
 			return fmt.Errorf("%w: agents revoke <participant-id>", errUsage)
 		}
-		id, err := strconv.ParseInt(strings.TrimPrefix(args[1], "#"), 10, 64)
+		id, err := strconv.ParseInt(strings.TrimPrefix(pos[0], "#"), 10, 64)
 		if err != nil {
 			return fmt.Errorf("%w: participant id must be a number (see `unison agents`)", errUsage)
 		}
@@ -120,11 +137,18 @@ func (a *app) agents(args []string) error {
 // devices lists the iOS devices registered for push notifications, or
 // removes one. (The app registers them; there is no `devices add`.)
 func (a *app) devices(args []string) error {
-	if len(args) > 0 && args[0] == "remove" {
-		if len(args) != 2 {
+	if err := dispatcherHelp("devices", args); err != nil {
+		return err
+	}
+	if len(args) > 0 && (args[0] == "remove" || args[0] == "rm") {
+		pos, err := positionalArgs("devices remove", args[1:])
+		if err != nil {
+			return err
+		}
+		if len(pos) != 1 {
 			return fmt.Errorf("%w: devices remove <id>", errUsage)
 		}
-		id, err := strconv.ParseInt(strings.TrimPrefix(args[1], "#"), 10, 64)
+		id, err := strconv.ParseInt(strings.TrimPrefix(pos[0], "#"), 10, 64)
 		if err != nil {
 			return fmt.Errorf("%w: device id must be a number (see `unison devices`)", errUsage)
 		}
