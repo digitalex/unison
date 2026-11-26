@@ -44,43 +44,35 @@ func (a *app) todoList(args []string) error {
 	fs := flag.NewFlagSet("todo ls", flag.ContinueOnError)
 	status := fs.String("status", store.TodoFilterActive, "active, snoozed, open, done or all")
 	mine := fs.Bool("mine", false, "only TODOs assigned to you")
+	var toVal string
+	hasTo := false
+	fs.Func("to", "filter by assignee name or participant id", func(v string) error {
+		toVal, hasTo = v, true
+		return nil
+	})
 	allWorkspaces := fs.Bool("all-workspaces", false, "your TODOs across all workspaces (uses `unison login`)")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
 	if len(pos) != 0 {
-		return fmt.Errorf("%w: todo [ls] [--status active|snoozed|open|done|all] [--mine] [--all-workspaces]", errUsage)
+		return fmt.Errorf("%w: todo [ls] [--status active|snoozed|open|done|all] [--mine | --to <Name|ID>] [--all-workspaces]", errUsage)
+	}
+	assignee := strings.TrimPrefix(strings.TrimSpace(toVal), "@")
+	if hasTo {
+		if assignee == "" {
+			return fmt.Errorf("%w: --to requires a participant name or id", errUsage)
+		}
+		if *mine {
+			return fmt.Errorf("%w: --mine and --to cannot be combined", errUsage)
+		}
+		if *allWorkspaces {
+			return fmt.Errorf("%w: --to cannot be combined with --all-workspaces", errUsage)
+		}
 	}
 
 	if *allWorkspaces {
-		tok, err := a.accountToken()
-		if err != nil {
-			return err
-		}
-		path := "/api/me/todos"
-		if *status != "" {
-			path += "?status=" + url.QueryEscape(*status)
-		}
-		var raw json.RawMessage
-		if err := a.clientWithToken(tok).do("GET", path, nil, &raw); err != nil {
-			return err
-		}
-		if a.jsonOut {
-			return a.printJSON(raw)
-		}
-		var list []store.UserTodo
-		if err := json.Unmarshal(raw, &list); err != nil {
-			return err
-		}
-		if len(list) == 0 {
-			a.printf("No TODOs.\n")
-			return nil
-		}
-		for _, ut := range list {
-			a.printf("[%s (%s)]  %s\n", ut.WorkspaceName, ut.WorkspaceID, todoLine(&ut.Todo))
-		}
-		return nil
+		return a.todoListAllWorkspaces(*status)
 	}
 
 	q := url.Values{}
@@ -89,6 +81,8 @@ func (a *app) todoList(args []string) error {
 	}
 	if *mine {
 		q.Set("assignee", "me")
+	} else if hasTo {
+		q.Set("assignee", assignee)
 	}
 	suffix := "/todos"
 	if enc := q.Encode(); enc != "" {
@@ -104,6 +98,36 @@ func (a *app) todoList(args []string) error {
 	}
 	for _, td := range list {
 		a.printf("%s\n", todoLine(&td))
+	}
+	return nil
+}
+
+func (a *app) todoListAllWorkspaces(status string) error {
+	tok, err := a.accountToken()
+	if err != nil {
+		return err
+	}
+	path := "/api/me/todos"
+	if status != "" {
+		path += "?status=" + url.QueryEscape(status)
+	}
+	var raw json.RawMessage
+	if err := a.clientWithToken(tok).do("GET", path, nil, &raw); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var list []store.UserTodo
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return err
+	}
+	if len(list) == 0 {
+		a.printf("No TODOs.\n")
+		return nil
+	}
+	for _, ut := range list {
+		a.printf("[%s (%s)]  %s\n", ut.WorkspaceName, ut.WorkspaceID, todoLine(&ut.Todo))
 	}
 	return nil
 }

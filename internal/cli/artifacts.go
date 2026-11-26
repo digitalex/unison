@@ -26,6 +26,8 @@ func (a *app) artifact(args []string) error {
 	switch sub {
 	case "ls", "list":
 		return a.artifactList(args)
+	case "show":
+		return a.artifactShow(args)
 	case "add", "upload":
 		return a.artifactAdd(args)
 	case "save":
@@ -85,14 +87,7 @@ func (a *app) artifactList(args []string) error {
 	for _, art := range list {
 		itemTag := ""
 		if art.ItemID != nil {
-			num := art.ItemNumber
-			if num <= 0 && art.Item != nil && art.Item.Number > 0 {
-				num = art.Item.Number
-			}
-			if num <= 0 {
-				num = *art.ItemID
-			}
-			itemTag = fmt.Sprintf("  [item #%d]", num)
+			itemTag = fmt.Sprintf("  [item #%d]", artifactItemNum(&art))
 		}
 		titlePart := ""
 		if art.Title != "" && art.Title != art.Name {
@@ -107,6 +102,95 @@ func (a *app) artifactList(args []string) error {
 			art.Name, art.Version, formatArtifactBytes(art.Size), titlePart, itemTag, ago(art.UpdatedAt), byPart, art.URL)
 	}
 	return nil
+}
+
+type artifactDetail struct {
+	store.Artifact
+	Content *string `json:"content,omitempty"`
+}
+
+func artifactItemNum(art *store.Artifact) int64 {
+	if art.ItemNumber > 0 {
+		return art.ItemNumber
+	}
+	if art.Item != nil && art.Item.Number > 0 {
+		return art.Item.Number
+	}
+	if art.ItemID != nil {
+		return *art.ItemID
+	}
+	return 0
+}
+
+func (a *app) artifactShow(args []string) error {
+	fs := flag.NewFlagSet("artifact show", flag.ContinueOnError)
+	showContent := fs.Bool("content", false, "include UTF-8 text content")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 1 {
+		return fmt.Errorf("%w: artifact show <file-or-url> [--content]", errUsage)
+	}
+	path, err := a.resolveArtifactDownloadPath(pos[0])
+	if err != nil {
+		return err
+	}
+	q := url.Values{"meta": {"1"}}
+	if *showContent {
+		q.Set("content", "1")
+	}
+	path += "?" + q.Encode()
+	var raw json.RawMessage
+	if err := a.client().do("GET", path, nil, &raw); err != nil {
+		return err
+	}
+	if a.jsonOut {
+		return a.printJSON(raw)
+	}
+	var art artifactDetail
+	if err := json.Unmarshal(raw, &art); err != nil {
+		return err
+	}
+	a.printArtifactDetail(&art, *showContent)
+	return nil
+}
+
+func (a *app) printArtifactDetail(art *artifactDetail, showContent bool) {
+	a.printf("%s  (v%d)\n", art.Name, art.Version)
+	if art.Title != "" && art.Title != art.Name {
+		a.printf("Title     %s\n", art.Title)
+	}
+	a.printf("Type      %s\n", art.MimeType)
+	a.printf("Size      %s\n", formatArtifactBytes(art.Size))
+	a.printf("SHA-256   %s\n", art.SHA256)
+	if art.ItemID != nil {
+		num := artifactItemNum(&art.Artifact)
+		if art.Item != nil && art.Item.Title != "" {
+			a.printf("Item      #%d %s\n", num, art.Item.Title)
+		} else {
+			a.printf("Item      #%d\n", num)
+		}
+	}
+	if art.UploadedBy != nil {
+		a.printf("Uploaded  by %s, %s\n", todoPersonLabel(art.UploaderEmoji, art.UploaderName, *art.UploadedBy), ago(art.CreatedAt))
+	} else if art.CreatedAt > 0 {
+		a.printf("Uploaded  %s\n", ago(art.CreatedAt))
+	}
+	if art.Version > 1 || art.UpdatedAt > art.CreatedAt {
+		if art.UpdatedBy != nil {
+			a.printf("Updated   by %s, %s\n", todoPersonLabel(art.UpdaterEmoji, art.UpdaterName, *art.UpdatedBy), ago(art.UpdatedAt))
+		} else if art.UpdatedAt > 0 {
+			a.printf("Updated   %s\n", ago(art.UpdatedAt))
+		}
+	}
+	a.printf("URL       %s\n", art.URL)
+	if showContent && art.Content != nil {
+		a.printf("\n%s", *art.Content)
+		if !strings.HasSuffix(*art.Content, "\n") {
+			a.printf("\n")
+		}
+	}
 }
 
 func (a *app) readArtifactSource(src string) ([]byte, error) {
