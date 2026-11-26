@@ -185,6 +185,8 @@ Images (screenshots to show inline in chat, items and comments):
 
 Artifacts (design docs, HTML prototypes, reports and screenshots at /w/{ws}/artifacts/{file}):
   artifact [ls] [--item ID]          list workspace artifacts (newest updated first)
+  artifact show <file-or-url> [--content]
+                                     show artifact metadata (and UTF-8 text with --content)
   artifact add <path> [--name FILE] [--title T] [--item ID]
                                      upload a file (or - for stdin with --name, up to
                                      10 MiB); prints /w/{ws}/artifacts/{name}
@@ -201,7 +203,7 @@ Actions (chat messages sent with --action that ask you to act):
                                      reacting to it does too); --undo reopens it
 
 TODOs (actionable tasks for humans, with 1d/1w snooze):
-  todo [ls] [--status active|snoozed|open|done|all] [--mine] [--all-workspaces]
+  todo [ls] [--status active|snoozed|open|done|all] [--mine | --to <Name|ID>] [--all-workspaces]
                                      active (unsnoozed open) TODOs by default;
                                      --all-workspaces lists your TODOs across
                                      every workspace (uses unison login)
@@ -255,7 +257,9 @@ Backlog (items are numbered #1, #2, … per workspace; legacy global IDs also re
   backlog comments <id>              an item's unified thread (chat + legacy comments)
   backlog comment <id> <text> [--action]
                                      comment on an item (posts into its chat thread)
-  backlog comment <id> --delete CID  delete one of your comments
+  backlog comment <id> --delete CID [--legacy]
+                                     delete one of your comments (--legacy targets
+                                     historical item_comments rows)
   backlog pr <id> <url>              link a pull request (several are allowed)
   backlog pr <id> --remove <url>     unlink a pull request
 
@@ -306,7 +310,8 @@ plain-text instructions):
   webhook url <id>                   the receive URL (keep it secret)
   webhook rotate <id>                issue a new receive URL; the old one stops working
   webhook delete <id>                (also deletes its deliveries)
-  webhook deliveries <id>            recent deliveries
+  webhook deliveries <id> [--limit N]
+                                     recent deliveries
   webhook delivery <delivery-id>     headers and payload
 
 Real time:
@@ -2317,29 +2322,24 @@ func (a *app) backlogComments(args []string) error {
 func (a *app) backlogComment(args []string) error {
 	fs := flag.NewFlagSet("backlog comment", flag.ContinueOnError)
 	del := fs.String("delete", "", "comment id to delete (your own)")
+	legacy := fs.Bool("legacy", false, "delete a legacy comment row when combined with --delete")
 	action := fs.Bool("action", false, "ask the @mentioned people to act")
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
 	}
-	if len(pos) == 0 || (*del == "" && len(pos) < 2) || (*del != "" && *action) {
-		return fmt.Errorf("%w: backlog comment <id> <text> [--action] | backlog comment <id> --delete <comment-id>", errUsage)
+	if *legacy && *del == "" {
+		return fmt.Errorf("%w: --legacy requires --delete", errUsage)
+	}
+	if len(pos) == 0 || (*del == "" && len(pos) < 2) || (*del != "" && (len(pos) != 1 || *action)) {
+		return fmt.Errorf("%w: backlog comment <id> <text> [--action] | backlog comment <id> --delete <comment-id> [--legacy]", errUsage)
 	}
 	id, err := parseID(pos[0])
 	if err != nil {
 		return err
 	}
 	if *del != "" {
-		cid, err := parseID(*del)
-		if err != nil {
-			return err
-		}
-		var out map[string]any
-		if ok, err := a.call("DELETE", fmt.Sprintf("/backlog/%d/comments/%d", id, cid), nil, &out, true); !ok {
-			return err
-		}
-		a.printf("Deleted comment %d on #%d.\n", cid, id)
-		return nil
+		return a.deleteBacklogComment(id, *del, *legacy)
 	}
 	req := map[string]any{"body": strings.Join(pos[1:], " ")}
 	if *action {
@@ -2358,6 +2358,26 @@ func (a *app) backlogComment(args []string) error {
 	} else {
 		a.printf("Commented on #%d (message #%d).\n", shown, m.ID)
 	}
+	return nil
+}
+
+func (a *app) deleteBacklogComment(id int64, rawCID string, legacy bool) error {
+	cid, err := parseID(rawCID)
+	if err != nil {
+		return err
+	}
+	if cid <= 0 {
+		return fmt.Errorf("%w: comment id must be positive", errUsage)
+	}
+	suffix := fmt.Sprintf("/backlog/%d/comments/%d", id, cid)
+	if legacy {
+		suffix += "?legacy=1"
+	}
+	var out map[string]any
+	if ok, err := a.call("DELETE", suffix, nil, &out, true); !ok {
+		return err
+	}
+	a.printf("Deleted comment %d on #%d.\n", cid, id)
 	return nil
 }
 
@@ -2604,21 +2624,7 @@ func (a *app) webhook(args []string) error {
 		a.printf("Deleted webhook %d and its deliveries.\n", id)
 		return nil
 	case "deliveries":
-		id, err := oneID(args, "webhook deliveries <id>")
-		if err != nil {
-			return err
-		}
-		var list []store.Delivery
-		if ok, err := a.call("GET", fmt.Sprintf("/webhooks/%d/deliveries", id), nil, &list, false); !ok {
-			return err
-		}
-		if len(list) == 0 {
-			a.printf("No deliveries yet.\n")
-		}
-		for _, d := range list {
-			a.printf("%-5d %s  %s\n", d.ID, time.UnixMilli(d.ReceivedAt).Format("Jan 2 15:04:05"), d.Summary)
-		}
-		return nil
+		return a.webhookDeliveries(args)
 	case "delivery":
 		id, err := oneID(args, "webhook delivery <delivery-id>")
 		if err != nil {
@@ -2739,6 +2745,37 @@ func (a *app) webhookEdit(args []string) error {
 		return err
 	}
 	return a.webhookCommand(pos, "PATCH", "", patch, true)
+}
+
+func (a *app) webhookDeliveries(args []string) error {
+	fs := flag.NewFlagSet("webhook deliveries", flag.ContinueOnError)
+	limit := fs.Int("limit", 0, "maximum number of recent deliveries")
+	pos, err := parseFlags(fs, args)
+	if err != nil {
+		return err
+	}
+	if *limit < 0 {
+		return fmt.Errorf("%w: --limit must be non-negative", errUsage)
+	}
+	id, err := oneID(pos, "webhook deliveries <id> [--limit N]")
+	if err != nil {
+		return err
+	}
+	suffix := fmt.Sprintf("/webhooks/%d/deliveries", id)
+	if *limit > 0 {
+		suffix += fmt.Sprintf("?limit=%d", *limit)
+	}
+	var list []store.Delivery
+	if ok, err := a.call("GET", suffix, nil, &list, false); !ok {
+		return err
+	}
+	if len(list) == 0 {
+		a.printf("No deliveries yet.\n")
+	}
+	for _, d := range list {
+		a.printf("%-5d %s  %s\n", d.ID, time.UnixMilli(d.ReceivedAt).Format("Jan 2 15:04:05"), d.Summary)
+	}
+	return nil
 }
 
 func (a *app) printDelivery(d *store.Delivery) {
