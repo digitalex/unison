@@ -16,6 +16,9 @@ import (
 // (which is a backlog item).
 
 func (a *app) idea(args []string) error {
+	if err := dispatcherHelp("idea", args); err != nil {
+		return err
+	}
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -34,6 +37,10 @@ func (a *app) idea(args []string) error {
 	case "promote":
 		return a.ideaPromote(args)
 	case "delete", "rm":
+		args, err := positionalArgs("idea delete", args)
+		if err != nil {
+			return err
+		}
 		id, err := oneID(args, "idea delete <id>")
 		if err != nil {
 			return err
@@ -125,6 +132,10 @@ func (a *app) printIdeaDetail(d *store.Idea) error {
 
 // ideaShow prints an idea with its discussion.
 func (a *app) ideaShow(args []string) error {
+	args, err := positionalArgs("idea show", args)
+	if err != nil {
+		return err
+	}
 	id, err := oneID(args, "idea show <id>")
 	if err != nil {
 		return err

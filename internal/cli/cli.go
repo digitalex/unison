@@ -192,9 +192,10 @@ Artifacts (design docs, HTML prototypes, reports and screenshots at /w/{ws}/arti
                                      10 MiB); prints /w/{ws}/artifacts/{name}
   artifact save <file-or-url> <dest> download one (<name>, /w/{ws}/artifacts/<name>,
                                      /api/… path or full URL); dest - writes to stdout
-  artifact update <name> [<path>] [--title T] [--item ID]
-                                     replace content in-place (PUT) and/or update
-                                     title/item metadata (PATCH), keeping permalink
+  artifact update <name> [<path>] [--title T] [--item ID|none]
+                                     replace content in-place (PUT; <path> - reads
+                                     stdin) and/or update title/item metadata
+                                     (PATCH; --item none unlinks), keeping permalink
   artifact delete <name>             delete an artifact (or rm)
 
 Actions (chat messages sent with --action that ask you to act):
@@ -288,7 +289,7 @@ and promote to backlog):
                                      move feedback report to the backlog
   feedback dismiss <id>              dismiss an open report
   feedback reopen <id>               reopen a dismissed report
-  feedback rm <id>                   delete a feedback report
+  feedback delete|rm <id>            delete a feedback report
   feedback enable | disable          turn Send feedback & triage on or off
 
 Recurring tasks (a run comes due at 00:00 server time, or hourly at the top of
@@ -318,11 +319,17 @@ Real time:
   wait [--mentions] [--timeout SECONDS]
                                      block until workspace activity or chat
                                      (wakes immediately on unread messages);
-                                     --mentions wakes only for @mentions,
-                                     replies to your threads, open --action
-                                     requests, your items, new open items, and
-                                     webhook deliveries. Rides out server
-                                     restarts; exit 2 when --timeout passes
+                                     --mentions wakes only for @mentions
+                                     (@Name, @all, @everyone), replies to your
+                                     threads, open --action requests for you,
+                                     comments/messages on items assigned to you
+                                     or ideas you added, answers on items you
+                                     created or own, TODOs and items assigned
+                                     to you (including --notify section items
+                                     for humans), new/resumed unblocked main
+                                     Backlog items, and webhook deliveries.
+                                     Rides out server restarts; exit 2 when
+                                     --timeout passes
   peek [--mentions]                  would wait wake right now? Prints true
                                      (exit 0) or false (exit 2) without waiting
                                      or changing anything: wait's place, what
@@ -407,11 +414,24 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 		fmt.Fprint(stdout, usage)
 		return nil
 	}
-	cmd, rest := args[0], args[1:]
+	err = a.dispatch(args[0], args[1:])
+	var he *helpError
+	if errors.As(err, &he) {
+		if he.topic == "agent-help" {
+			return a.agentHelp()
+		}
+		return writeHelp(stdout, he)
+	}
+	return err
+}
+
+func (a *app) dispatch(cmd string, rest []string) error {
 	switch cmd {
 	case "help", "-h", "--help":
-		fmt.Fprint(stdout, usage)
-		return nil
+		if len(rest) == 0 {
+			return &helpError{}
+		}
+		return helpTopicError(rest)
 	case "--agent-help", "agent-help":
 		return a.agentHelp()
 	case "version", "--version":
@@ -455,7 +475,7 @@ func run(args []string, stdin io.Reader, stdout, stderr io.Writer) error {
 	case "who":
 		return a.who(rest)
 	case "reviews":
-		return a.reviews()
+		return a.reviews(rest)
 	case "chat":
 		return a.chat(rest)
 	case "activity":
@@ -527,7 +547,14 @@ func parseFlags(fs *flag.FlagSet, args []string) ([]string, error) {
 	var positional []string
 	for {
 		if err := fs.Parse(args); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return nil, &helpError{topic: fs.Name(), fs: fs}
+			}
 			return nil, fmt.Errorf("%w: %v", errUsage, err)
+		}
+		consumed := len(args) - len(fs.Args())
+		if consumed > 0 && args[consumed-1] == "--" {
+			return append(positional, fs.Args()...), nil
 		}
 		args = fs.Args()
 		if len(args) == 0 {
@@ -693,12 +720,22 @@ func (a *app) agentHelp() error {
 // ---- workspaces & identity ----
 
 func (a *app) workspace(args []string) error {
+	if err := dispatcherHelp("workspace", args); err != nil {
+		return err
+	}
 	sub := "show"
 	if len(args) > 0 {
 		sub, args = args[0], args[1:]
 	}
 	switch sub {
 	case "show":
+		pos, err := positionalArgs("workspace show", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: workspace [show]", errUsage)
+		}
 		var ws store.Workspace
 		if ok, err := a.call("GET", "", nil, &ws, false); !ok {
 			return err
@@ -706,6 +743,13 @@ func (a *app) workspace(args []string) error {
 		a.printWorkspace(&ws)
 		return nil
 	case "list":
+		pos, err := positionalArgs("workspace list", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: workspace list", errUsage)
+		}
 		var raw json.RawMessage
 		userToken, err := a.needUserToken()
 		if err != nil {
@@ -747,6 +791,13 @@ func (a *app) workspace(args []string) error {
 	case "delete", "rm":
 		return a.workspaceDelete(args)
 	case "repos":
+		pos, err := positionalArgs("workspace repos", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: workspace repos", errUsage)
+		}
 		var repos []store.Repo
 		if ok, err := a.call("GET", "/repos", nil, &repos, false); !ok {
 			return err
@@ -761,6 +812,13 @@ func (a *app) workspace(args []string) error {
 	case "repo":
 		return a.workspaceRepo(args)
 	case "links":
+		pos, err := positionalArgs("workspace links", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: workspace links", errUsage)
+		}
 		var links []store.Link
 		if ok, err := a.call("GET", "/links", nil, &links, false); !ok {
 			return err
@@ -781,7 +839,11 @@ func (a *app) workspace(args []string) error {
 // workspaceStats prints how many workspaces this server has (#301). The
 // endpoint is public, so it needs no login and no workspace.
 func (a *app) workspaceStats(args []string) error {
-	if len(args) > 0 {
+	pos, err := positionalArgs("workspace stats", args)
+	if err != nil {
+		return err
+	}
+	if len(pos) > 0 {
 		return fmt.Errorf("%w: workspace stats takes no arguments", errUsage)
 	}
 	var raw json.RawMessage
@@ -835,7 +897,14 @@ func (a *app) printWorkspace(ws *store.Workspace) {
 
 // reviews lists the open pull requests in the workspace's GitHub
 // repositories that aren't set to auto-merge (#127).
-func (a *app) reviews() error {
+func (a *app) reviews(args []string) error {
+	pos, err := positionalArgs("reviews", args)
+	if err != nil {
+		return err
+	}
+	if len(pos) != 0 {
+		return fmt.Errorf("%w: reviews takes no arguments", errUsage)
+	}
 	var out server.PendingReviews
 	if ok, err := a.call("GET", "/reviews", nil, &out, false); !ok {
 		return err
@@ -880,10 +949,18 @@ func repoLine(r store.Repo) string {
 }
 
 func (a *app) workspaceRepo(args []string) error {
+	if err := dispatcherHelp("workspace repo", args); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("%w: workspace repo add|edit|remove", errUsage)
 	}
 	sub, args := args[0], args[1:]
+	switch sub {
+	case "add", "edit", "remove", "rm":
+	default:
+		return fmt.Errorf("%w: workspace repo add <url> | edit <id> --url U | remove <id>", errUsage)
+	}
 	fs := flag.NewFlagSet("workspace repo "+sub, flag.ContinueOnError)
 	patch := map[string]string{}
 	if sub == "edit" {
@@ -934,10 +1011,18 @@ func linkLine(l store.Link) string {
 // workspaceLink adds, edits and removes the workspace's links (#299).
 func (a *app) workspaceLink(args []string) error {
 	const usage = "workspace link add <name> <url> | edit <id> [--name N] [--url U] | remove <id>"
+	if err := dispatcherHelp("workspace link", args); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("%w: %s", errUsage, usage)
 	}
 	sub, args := args[0], args[1:]
+	switch sub {
+	case "add", "edit", "remove", "rm":
+	default:
+		return fmt.Errorf("%w: %s", errUsage, usage)
+	}
 	fs := flag.NewFlagSet("workspace link "+sub, flag.ContinueOnError)
 	patch := map[string]string{}
 	if sub == "edit" {
@@ -994,20 +1079,34 @@ func scheduleLine(sc store.Schedule) string {
 }
 
 func (a *app) schedule(args []string) error {
+	if err := dispatcherHelp("schedule", args); err != nil {
+		return err
+	}
 	sub := "list"
-	if len(args) > 0 {
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
+	}
+	switch sub {
+	case "list", "ls":
+		sub = "list"
+	case "add", "edit", "run", "remove", "rm":
+	default:
+		return fmt.Errorf("%w: schedule [list] | add <title> (--hourly | --daily | --weekly DAY) [--body B] | edit <id> … | run <id> | remove <id>", errUsage)
 	}
 	fs := flag.NewFlagSet("schedule "+sub, flag.ContinueOnError)
 	patch := map[string]any{}
-	fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
-	fs.Func("body", "the item body", func(v string) error { patch["body"] = v; return nil })
-	fs.BoolFunc("hourly", "due at the top of every hour", func(string) error { patch["cadence"] = store.CadenceHourly; return nil })
-	fs.BoolFunc("daily", "due every day", func(string) error { patch["cadence"] = store.CadenceDaily; return nil })
-	fs.Func("weekly", "due weekly on DAY (mon … sun)", func(v string) error {
-		patch["cadence"], patch["weekday"] = store.CadenceWeekly, v
-		return nil
-	})
+	if sub == "edit" {
+		fs.Func("title", "new title", func(v string) error { patch["title"] = v; return nil })
+	}
+	if sub == "add" || sub == "edit" {
+		fs.Func("body", "the item body", func(v string) error { patch["body"] = v; return nil })
+		fs.BoolFunc("hourly", "due at the top of every hour", func(string) error { patch["cadence"] = store.CadenceHourly; return nil })
+		fs.BoolFunc("daily", "due every day", func(string) error { patch["cadence"] = store.CadenceDaily; return nil })
+		fs.Func("weekly", "due weekly on DAY (mon … sun)", func(v string) error {
+			patch["cadence"], patch["weekday"] = store.CadenceWeekly, v
+			return nil
+		})
+	}
 	pos, err := parseFlags(fs, args)
 	if err != nil {
 		return err
@@ -1376,8 +1475,12 @@ func (a *app) whoami(args []string) error {
 }
 
 func (a *app) status(args []string) error {
+	pos, err := positionalArgs("status", args)
+	if err != nil {
+		return err
+	}
 	var p store.Participant
-	if ok, err := a.call("PATCH", "/me", map[string]string{"status": strings.Join(args, " ")}, &p, true); !ok {
+	if ok, err := a.call("PATCH", "/me", map[string]string{"status": strings.Join(pos, " ")}, &p, true); !ok {
 		return err
 	}
 	a.printf("%s %s: %s\n", p.Emoji, p.Name, firstNonEmpty(p.Status, "(no status)"))
@@ -1563,6 +1666,9 @@ func ago(ms int64) string {
 // ---- chat ----
 
 func (a *app) chat(args []string) error {
+	if err := dispatcherHelp("chat", args); err != nil {
+		return err
+	}
 	if len(args) == 0 {
 		return fmt.Errorf("%w: chat log | chat show <message-id> | chat send <text> | chat read [<message-id>] [--show] | chat react <message-id> <emoji>", errUsage)
 	}
@@ -1587,7 +1693,10 @@ func (a *app) chatRead(args []string) error {
 	fs := flag.NewFlagSet("chat read", flag.ContinueOnError)
 	show := fs.Bool("show", false, "only show how far you have read")
 	pos, err := parseFlags(fs, args)
-	if err != nil || len(pos) > 1 {
+	if err != nil {
+		return err
+	}
+	if len(pos) > 1 {
 		return fmt.Errorf("%w: chat read [<message-id>] | chat read --show", errUsage)
 	}
 	var out struct {
@@ -1791,6 +1900,10 @@ func reactionSummary(m store.Message) string {
 // chatReact toggles your reaction on a message: puts it there, or takes it
 // back if you already reacted with that emoji.
 func (a *app) chatReact(args []string) error {
+	args, err := positionalArgs("chat react", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 2 {
 		return fmt.Errorf("%w: chat react <message-id> <emoji> (%s, or %s)", errUsage, strings.Join(store.ReactionEmoji, " "), strings.Join(store.ReactionShortNames, " "))
 	}
@@ -1933,6 +2046,9 @@ func parseID(s string) (int64, error) {
 // ---- backlog ----
 
 func (a *app) backlog(args []string) error {
+	if err := dispatcherHelp("backlog", args); err != nil {
+		return err
+	}
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -1955,6 +2071,10 @@ func (a *app) backlog(args []string) error {
 	case "edit":
 		return a.backlogEdit(args)
 	case "move":
+		args, err := positionalArgs("backlog move", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 2 {
 			return fmt.Errorf("%w: backlog move <id> <position>", errUsage)
 		}
@@ -1964,6 +2084,10 @@ func (a *app) backlog(args []string) error {
 		}
 		return a.itemCommand(args[:1], "POST", "/move", map[string]int{"position": position}, true)
 	case "claim":
+		args, err := positionalArgs("backlog claim", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 0 {
 			return fmt.Errorf("%w: backlog claim takes no arguments (to start a specific item, run `unison backlog start <id>`)", errUsage)
 		}
@@ -1980,17 +2104,17 @@ func (a *app) backlog(args []string) error {
 	case "assign":
 		return a.backlogAssign(args)
 	case "unassign":
-		return a.itemCommand(args, "POST", "/assign", map[string]int64{"assignee_id": 0}, true)
+		return a.itemNoFlagCommand("backlog unassign", args, "POST", "/assign", map[string]int64{"assignee_id": 0}, true)
 	case "start":
 		return a.backlogStart(args)
 	case "stop":
-		return a.itemCommand(args, "POST", "/stop", nil, true)
+		return a.itemNoFlagCommand("backlog stop", args, "POST", "/stop", nil, true)
 	case "pause":
-		return a.itemCommand(args, "POST", "/pause", nil, true)
+		return a.itemNoFlagCommand("backlog pause", args, "POST", "/pause", nil, true)
 	case "resume":
-		return a.itemCommand(args, "POST", "/resume", nil, true)
+		return a.itemNoFlagCommand("backlog resume", args, "POST", "/resume", nil, true)
 	case "release":
-		return a.itemCommand(args, "POST", "/release", nil, true)
+		return a.itemNoFlagCommand("backlog release", args, "POST", "/release", nil, true)
 	case "close":
 		fs := flag.NewFlagSet("backlog close", flag.ContinueOnError)
 		note := fs.String("note", "", "closing note, e.g. the PR URL")
@@ -2000,10 +2124,14 @@ func (a *app) backlog(args []string) error {
 		}
 		return a.itemCommand(pos, "POST", "/close", map[string]string{"note": *note}, true)
 	case "reopen":
-		return a.itemCommand(args, "POST", "/reopen", nil, true)
+		return a.itemNoFlagCommand("backlog reopen", args, "POST", "/reopen", nil, true)
 	case "answer":
 		return a.backlogAnswer(args)
 	case "delete", "rm":
+		args, err := positionalArgs("backlog delete", args)
+		if err != nil {
+			return err
+		}
 		if len(args) != 1 {
 			return fmt.Errorf("%w: backlog delete <id>", errUsage)
 		}
@@ -2028,6 +2156,10 @@ func (a *app) backlog(args []string) error {
 }
 
 func (a *app) backlogStart(args []string) error {
+	args, err := positionalArgs("backlog start", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("%w: expected exactly one item id", errUsage)
 	}
@@ -2045,6 +2177,14 @@ func (a *app) backlogStart(args []string) error {
 		}
 	}
 	return a.printItemDetail(&it)
+}
+
+func (a *app) itemNoFlagCommand(topic string, args []string, method, suffix string, body any, auth bool) error {
+	pos, err := positionalArgs(topic, args)
+	if err != nil {
+		return err
+	}
+	return a.itemCommand(pos, method, suffix, body, auth)
 }
 
 // itemCommand runs method on /backlog/{id}{suffix} and prints the item.
@@ -2244,6 +2384,10 @@ func (a *app) printItemDetail(it *store.Item) error {
 
 // backlogShow prints an item with its PR links and unified thread.
 func (a *app) backlogShow(args []string) error {
+	args, err := positionalArgs("backlog show", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("%w: backlog show <id>", errUsage)
 	}
@@ -2305,6 +2449,10 @@ func (a *app) printComments(id int64) error {
 }
 
 func (a *app) backlogComments(args []string) error {
+	args, err := positionalArgs("backlog comments", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("%w: backlog comments <id>", errUsage)
 	}
@@ -2585,12 +2733,22 @@ type webhookSecret struct {
 }
 
 func (a *app) webhook(args []string) error {
+	if err := dispatcherHelp("webhook", args); err != nil {
+		return err
+	}
 	sub := "list"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
 	}
 	switch sub {
 	case "list", "ls":
+		pos, err := positionalArgs("webhook list", args)
+		if err != nil {
+			return err
+		}
+		if len(pos) != 0 {
+			return fmt.Errorf("%w: webhook [list]", errUsage)
+		}
 		var list []store.Webhook
 		if ok, err := a.call("GET", "/webhooks", nil, &list, false); !ok {
 			return err
@@ -2603,16 +2761,32 @@ func (a *app) webhook(args []string) error {
 		}
 		return nil
 	case "show":
+		args, err := positionalArgs("webhook show", args)
+		if err != nil {
+			return err
+		}
 		return a.webhookCommand(args, "GET", "", nil, false)
 	case "add":
 		return a.webhookAdd(args)
 	case "edit":
 		return a.webhookEdit(args)
 	case "url":
+		args, err := positionalArgs("webhook url", args)
+		if err != nil {
+			return err
+		}
 		return a.webhookSecretCommand(args, "GET", "/secret", "")
 	case "rotate":
+		args, err := positionalArgs("webhook rotate", args)
+		if err != nil {
+			return err
+		}
 		return a.webhookSecretCommand(args, "POST", "/rotate", "New receive URL (the old one no longer works):")
 	case "delete", "rm":
+		args, err := positionalArgs("webhook delete", args)
+		if err != nil {
+			return err
+		}
 		id, err := oneID(args, "webhook delete <id>")
 		if err != nil {
 			return err
@@ -2626,6 +2800,10 @@ func (a *app) webhook(args []string) error {
 	case "deliveries":
 		return a.webhookDeliveries(args)
 	case "delivery":
+		args, err := positionalArgs("webhook delivery", args)
+		if err != nil {
+			return err
+		}
 		id, err := oneID(args, "webhook delivery <delivery-id>")
 		if err != nil {
 			return err
@@ -2834,7 +3012,7 @@ func (a *app) wait(args []string) (err error) {
 		err = waitSessionErr(err)
 	}()
 	fs := flag.NewFlagSet("wait", flag.ContinueOnError)
-	mentions := fs.Bool("mentions", false, "wake only for @mentions, replies to your threads, open --action requests, your items, new open items, and webhook deliveries")
+	mentions := fs.Bool("mentions", false, "wake only for @mentions (@Name, @all, @everyone), replies to your threads, open --action requests, comments/messages on your items or ideas you added, answers on items you created or own, TODOs/items assigned to you (and human --notify section items), new/resumed unblocked main-Backlog items, and non-ping webhook deliveries")
 	timeout := fs.Int("timeout", 600, "give up after this many seconds (exit code 2)")
 	if _, err := parseFlags(fs, args); err != nil {
 		return err

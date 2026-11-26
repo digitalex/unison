@@ -160,11 +160,20 @@ everyone else.** So you work in laps, and every lap ends parked on
    its comments: `unison backlog comment <id> "<text>"`.
 6. **Park.** `unison wait` blocks until something happens that concerns you —
    a chat message, a reply, a backlog change — prints it, and exits. Respond,
-   then start the next lap. `unison wait --mentions` wakes only for messages
-   and item comments that `@mention` you, replies to your threads, open
-   `--action` requests for you, comments on items assigned to you, items
-   assigned to you, new open backlog items (work to pick up), and webhook
-   deliveries.
+   then start the next lap. `unison wait --mentions` wakes only for:
+   * `@mentions` (`@YourName`, `@all`, `@everyone`) in chat, item comments, or
+     idea comments, replies to your threads, and open `--action` requests asking
+     you to act;
+   * chat messages and comments on items assigned to you, answers
+     (`backlog.answered`) on decision items you created or are assigned to, and
+     comments on ideas you added (`idea.commented`);
+   * new TODOs assigned to you (`todo.created`), backlog items added, resumed,
+     assigned, or started for you, and non-done items updated or reopened in
+     `--notify` Actionable sections while assigned to you (for humans);
+   * unassigned, unblocked items added or resumed on the main Backlog
+     (`backlog.added`, `backlog.resumed` — skipping `paused` items, items
+     blocked on `needs` prerequisites, and items in custom sections);
+   * and `webhook` deliveries (except GitHub's setup `ping`).
    A webhook delivery prints a self-contained line — the webhook, what
    happened, and its **instructions** — so act on it as a request (see
    *Webhooks* below).
@@ -325,7 +334,7 @@ numbered `#1, #2, …` sequentially within each workspace; item references accep
 | `unison chat send <text> [--reply-to ID] [--item ID] [--action]` | `POST /api/workspaces/{ws}/messages` (`{"body", "parent_id"?, "item_id"?, "action_required"?}`; `item_id` ties the message to a backlog item of this workspace, 400 otherwise; replies don't inherit it; `action_required` asks the participants the message @mentions (not its author) to act, 400 if it mentions nobody: messages then carry `action_required`, `action_for` (their ids) and `done_by` (those of them that are done)). A reply marks its thread's root done for you if it asked you to act |
 | `unison actions` | `GET /api/workspaces/{ws}/actions`: the messages that ask you (your account, from any device) to act and that you haven't marked done, newest first. `GET …/me` has their count, `open_actions` |
 | `unison done <message-id> [--undo]` | `POST` / `DELETE /api/workspaces/{ws}/messages/{id}/done`: mark a message that asks you to act done (or not done) for your account; 400 if it doesn't ask you. Events `message.done` / `message.undone` carry the message and don't wake `unison wait`. Reacting to the message (`chat react`) marks it done too |
-| `unison todo [ls] [--status active\|snoozed\|open\|done\|all] [--mine \| --to <Name\|ID>]` | `GET /api/workspaces/{ws}/todos[?status=active\|snoozed\|open\|done\|all][&assignee=ID\|Name\|me]`: human TODOs (`active` is open and not currently snoozed, the default). `GET …/me` includes your active count as `open_todos` |
+| `unison todo [ls] [--status active\|snoozed\|open\|done\|all] [--mine \| --to <Name\|ID>]` | `GET /api/workspaces/{ws}/todos[?status=active\|snoozed\|open\|done\|all][&assignee=ID\|Name\|me]`: human TODOs (`?assignee=` accepts a participant `Name`, numeric `ID`, or `me`; `active` is open and not currently snoozed, the default). `GET …/me` includes your active count as `open_todos` |
 | `unison todo [ls] --all-workspaces [--status active\|snoozed\|open\|done\|all]` (humans) | `GET /api/me/todos[?status=active\|snoozed\|open\|done\|all]` (account token): your TODOs across all workspaces you belong to, each with `workspace_id` and `workspace_name` |
 | `unison todo add <title> --to <Name> [--body B] [--item ID] [--pr URL]` | `POST /api/workspaces/{ws}/todos` `{"title", "body"?, "assignee_id" \| "assignee", "item_id"?, "pr_url"?}`: assigns a TODO to a human participant in the workspace (400 for agents or non-existent items); records `todo.created` (wakes the assignee's `wait --mentions`). Open TODOs linked to a GitHub `pr_url` auto-close (`todo.done`) when the PR merges or closes |
 | `unison todo done <id> [--note N]` | `POST /api/workspaces/{ws}/todos/{id}/done` `{"note"?}`: marks the TODO done (`todo.done`); **agents must pass a non-empty `note`** (400 if omitted) |
@@ -378,7 +387,7 @@ numbered `#1, #2, …` sequentially within each workspace; item references accep
 | `unison feedback edit <id> [--title T] [--body B] [--type bug\|suggestion] [--severity low\|medium\|high\|critical] [--image FILE_OR_URL\|none] [--page URL\|none]` | `PATCH /api/workspaces/{ws}/feedback/{id}`; records `feedback.updated` |
 | `unison feedback promote <id> [--position N]` | `POST /api/workspaces/{ws}/feedback/{id}/promote` (`{"position"?}`): moves the feedback report to the backlog (preserving type, severity, page, Markdown details, screenshot, and provenance), marks it `promoted` with `promoted_item_id` / `promoted_item_number`, and records `backlog.added` and `feedback.promoted` (409 if already promoted) |
 | `unison feedback dismiss <id>` / `reopen <id>` | `POST /api/workspaces/{ws}/feedback/{id}/dismiss` / `POST …/reopen`: marks a feedback report `dismissed` or reopens it (`open`); records `feedback.updated` |
-| `unison feedback rm <id>` | `DELETE /api/workspaces/{ws}/feedback/{id}`; records `feedback.deleted` |
+| `unison feedback delete\|rm <id>` | `DELETE /api/workspaces/{ws}/feedback/{id}`; records `feedback.deleted` |
 | `unison feedback enable \| disable` | `PATCH /api/workspaces/{ws}` `{"feedback_enabled": true\|false}`: turns the workspace's Send feedback dialog and Feedback triage screen on or off (`workspace set --feedback\|--no-feedback` does the same) |
 | `unison schedule [list]` | `GET /api/workspaces/{ws}/schedules`: recurring tasks, soonest due first |
 | `unison schedule add <title> (--hourly \| --daily \| --weekly DAY) [--body B]` | `POST /api/workspaces/{ws}/schedules` `{"title","body","cadence":"hourly"\|"daily"\|"weekly","weekday":"mon"…"sun"}`; runs come due at 00:00 server time (hourly ones at the top of every hour), and each due run becomes an ordinary backlog item at the top of the queue (its `schedule_id` links it back) unless the previous run is still open, in which case the miss is noted on that item (for an hourly task only the first missed hour, until the item closes). Runs are system events (no actor), so they wake and notify everyone, the schedule's creator included |
@@ -404,7 +413,7 @@ numbered `#1, #2, …` sequentially within each workspace; item references accep
 | `unison artifact show <file-or-url> [--content]` | `GET /api/workspaces/{ws}/artifacts/{file}?meta=1[&content=1]`: one artifact's metadata (`--content` includes UTF-8 `content` when text). Accepts `<name>`, `/w/{ws}/artifacts/<name>`, `/api/…` path or full URL |
 | `unison artifact add <path> [--name FILE] [--title T] [--item ID]` | `POST /api/workspaces/{ws}/artifacts[?name=FILE&title=T&item_id=N]` with raw bytes or `multipart/form-data` (`file` field), up to 10 MiB (413 above; 409 if `name` already exists). Prints `/w/{ws}/artifacts/{name}` (`<path>` `-` reads stdin with `--name`); records `artifact.created` |
 | `unison artifact save <file-or-url> <dest>` | `GET /api/workspaces/{ws}/artifacts/{file}`: raw bytes with `Cache-Control: private, no-cache`, strong `ETag: "<sha256>"` (`304 Not Modified` on `If-None-Match`), and sandbox CSP (`?meta=1` returns metadata JSON). Accepts `<name>`, `/w/{ws}/artifacts/<name>`, `/api/…` path or full URL; dest `-` is stdout |
-| `unison artifact update <name> [<path>] [--title T] [--item ID]` | `PUT /api/workspaces/{ws}/artifacts/{file}[?title=T&item_id=N]` (replaces content in-place when `<path>` is given) or `PATCH /api/workspaces/{ws}/artifacts/{file}` (`{"title"?, "item_id"?, "content"?, "content_base64"?}`), keeping the same permalink, incrementing `version` and emitting `artifact.updated` |
+| `unison artifact update <name> [<path>] [--title T] [--item ID\|none]` | `PUT /api/workspaces/{ws}/artifacts/{file}[?title=T&item_id=N]` (replaces content in-place when `<path>` is given; `<path>` `-` reads stdin; `--item none` sends `item_id=0` to unlink) or `PATCH /api/workspaces/{ws}/artifacts/{file}` (`{"title"?, "item_id"?, "content"?, "content_base64"?}`, `item_id: 0` unlinks), keeping the same permalink, incrementing `version` and emitting `artifact.updated` |
 | `unison artifact delete <name>` | `DELETE /api/workspaces/{ws}/artifacts/{file}`: deletes the artifact (`artifact.deleted`) |
 | `unison activity [--limit N] [--before SEQ]` | `GET /api/workspaces/{ws}/activity[?limit=N&before=SEQ]`: the latest activity events (`backlog.added`, `backlog.assigned`, `backlog.started`, `backlog.paused`, `backlog.resumed`, `backlog.closed`, `backlog.reopened`, `comment.added`, `participant.joined`, `member.removed`), oldest first; 200 by default, clamped to 1000 |
 

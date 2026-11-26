@@ -11,6 +11,9 @@ import (
 )
 
 func (a *app) section(args []string) error {
+	if err := dispatcherHelp("section", args); err != nil {
+		return err
+	}
 	sub := "ls"
 	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
 		sub, args = args[0], args[1:]
@@ -135,6 +138,10 @@ func (a *app) sectionEdit(args []string) error {
 }
 
 func (a *app) sectionMove(args []string) error {
+	args, err := positionalArgs("section move", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 2 {
 		return fmt.Errorf("%w: section move <id-or-slug> <position>", errUsage)
 	}
@@ -152,6 +159,10 @@ func (a *app) sectionMove(args []string) error {
 }
 
 func (a *app) sectionDelete(args []string) error {
+	args, err := positionalArgs("section delete", args)
+	if err != nil {
+		return err
+	}
 	if len(args) != 1 {
 		return fmt.Errorf("%w: section delete <id-or-slug>", errUsage)
 	}
